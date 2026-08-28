@@ -739,6 +739,67 @@ below testable with plain data literals, no DB required.
   negotiable law #4), not UI text or seed-visible data; weakening their
   Hebrew coverage would undermine the very property they exist to prove.
 
+## 3i. Secrets & environment hardening (ad hoc, in preparation for bank integration)
+
+- **`src/server/env.ts` rewritten around per-field Zod validation**, not
+  just presence checks. Deliberately still *lazy* — one field validated
+  at a time, only when its getter is called, never a single
+  `schema.parse(process.env)` at module load — see the file's own doc
+  comment for why an eager whole-schema parse would reintroduce the
+  exact Phase 2 bug where importing a module (just to evaluate a test's
+  `skipIf`) threw before the skip condition ever ran.
+  `DATABASE_URL`/`APP_DATABASE_URL` must now be well-formed
+  `postgres(ql)://` URLs; `ENCRYPTION_KEY` must base64-decode to exactly
+  32 bytes (checked here now too, not only inside
+  `field-encryption.ts`'s `getKey()` — both checks are kept, same
+  defense-in-depth reasoning as DAL+RLS). A malformed value fails fast
+  with a clear message at first access instead of surfacing later as a
+  confusing downstream error.
+- **`SECRET_ENV_VAR_NAMES`** is a new export — the single source of
+  truth for "which env vars are secrets," which
+  `tests/guards/no-public-secrets.test.ts` now imports instead of
+  maintaining a second hardcoded regex. This closes a real drift risk:
+  before this change, adding a new secret to `env.ts` without also
+  remembering to update the guard test's separate list would have left
+  that new secret unprotected by the "never read outside `src/server`"
+  check with no warning.
+- **Tier 3 scaffolding for bank-integration credentials**
+  (`BANK_API_CLIENT_ID`/`BANK_API_CLIENT_SECRET`/`BANK_API_BASE_URL`,
+  `getBankApiCredentials()`): returns `null` when unconfigured (the
+  expected state everywhere today — nothing calls this getter yet, no
+  CSV/Open-Banking adapter exists), throws if only some of the three are
+  set (a real misconfiguration, not "not configured yet"). The two
+  credential fields are included in `SECRET_ENV_VAR_NAMES` from day one,
+  before any feature reads them — the point is deciding and locking in
+  the env-var *contract* ahead of the real integration, not building the
+  integration itself.
+- **`scripts/check-no-secrets-in-client-bundle.ts`** (`npm run
+  verify:client-bundle-secrets`, run after `npm run build`) closes the
+  build-output half of `docs/SECURITY-CHECKLIST.md` item 41, previously
+  flagged as a gap since Phase 1. Reads today's real secret values from
+  `process.env` and searches every file actually shipped to the browser
+  (`.next/static/`, never `.next/server/`) for a literal occurrence —
+  catches what a source-level name-regex structurally can't (e.g. a
+  hardcoded copy-paste of a real key into client code). Verified in both
+  directions by hand, not just written: ran clean against a real
+  production build with real local secrets loaded (0 findings across 25
+  files), then a leaked value was deliberately planted in `.next/static/`
+  to confirm the script actually catches it (1 finding, correct secret
+  name, correct file, the value itself never printed in the tool's own
+  output) — then removed. Still a manual/opt-in script, not yet wired
+  into `.github/workflows/ci.yml` as an automatic gate (that workflow
+  doesn't run `next build` at all yet) — flagged in the checklist as 🟡,
+  not ✅, rather than overclaiming.
+- **`docs/SECURITY-CHECKLIST.md`** gained a new "Secret rotation &
+  storage guidelines" section — per-secret rotation procedures (the
+  `ENCRYPTION_KEY` one is the hard case: swapping it without a
+  re-encryption migration silently makes every existing encrypted row
+  undecryptable, since there's no per-row key-version lookup yet — the
+  `v1:` ciphertext format prefix exists specifically to allow a future
+  `v2:` key-versioning scheme without an ambiguous read of old rows) and
+  a storage-by-tier table (local `.env` today, throwaway values inline
+  in CI YAML, a real secret manager at Tier 3).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
@@ -1080,7 +1141,10 @@ prisma/migrations/                init + rls_and_runtime_role
 prisma/seed/                      rng.ts, israeli-data.ts, index.ts (entry point)
 compose.yaml                     postgres:17, db pfw_local, host port 5433
 .env.example                     DATABASE_URL / APP_DATABASE_URL / ENCRYPTION_KEY /
-                                   ANTHROPIC_API_KEY / EMBEDDING_SIDECAR_URL
+                                   ANTHROPIC_API_KEY / EMBEDDING_SIDECAR_URL /
+                                   BANK_API_CLIENT_ID / _SECRET / _BASE_URL (Tier 3, unused)
+scripts/                          check-no-secrets-in-client-bundle.ts — build-output
+                                    secret-leak scanner, run after `npm run build`
 prisma.config.ts                  schema path, migrations path, seed command, admin datasource url
 vitest.config.mts                 unit / component / integration projects
 tests/guards/                     static-analysis tests — see docs/SECURITY-CHECKLIST.md
@@ -1116,6 +1180,8 @@ docker compose up -d             # starts pfw_local on localhost:5433
 npm run db:migrate               # prisma migrate dev
 npm run db:seed                  # prisma db seed (wipes + regenerates mock data)
 npm run db:studio                # prisma studio
+npm run build && npm run verify:client-bundle-secrets  # confirms no real secret
+                                    # value ended up in the client-shipped bundle
 
 # Embedding sidecar (sidecar/):
 cd sidecar && source .venv/bin/activate

@@ -60,7 +60,14 @@ describe("field-level encryption (AES-256-GCM)", () => {
   });
 
   it("throws when ENCRYPTION_KEY is the wrong length", () => {
+    // env.ts's own Zod validation (added for secrets/env hardening) now
+    // catches this before getKey()'s RangeError ever gets a chance to
+    // fire — both checks still exist (defense in depth: getKey()'s check
+    // is what protects a hypothetical future caller that reads
+    // ENCRYPTION_KEY some other way, bypassing env.ts entirely), but
+    // env.ts's is strictly earlier in the normal path, so this is what
+    // actually surfaces here now.
     process.env.ENCRYPTION_KEY = Buffer.from("too-short").toString("base64");
-    expect(() => encryptField("x")).toThrow(RangeError);
+    expect(() => encryptField("x")).toThrow(/ENCRYPTION_KEY/);
   });
 });

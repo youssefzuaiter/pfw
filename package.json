@@ -19,7 +19,8 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "verify:client-bundle-secrets": "tsx --conditions=react-server scripts/check-no-secrets-in-client-bundle.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.121.0",

@@ -74,7 +74,8 @@ lands per the gated build plan.
 | 30 | Never store bank credentials/OTPs | V8.3 (L1/L2) | ✅ | 0/design | Architectural constraint — CSV import only, no bank login flow exists |
 | 31 | Never store full account numbers/PANs (last 4 + institution only) | V8.3 | ✅ | 2 | `BankAccount.last4` (4 chars) + `institutionName`; no full-PAN field exists in the schema at all |
 | 32 | Field-level encryption (AES-256-GCM) on sensitive metadata | V8.1 | ✅ | 2 | `src/server/crypto/field-encryption.ts` (versioned `v1:iv:tag:ciphertext` format) + `src/server/db/encrypted-fields.ts` (Prisma Client extension, transparent on `BankAccount.last4`, `NotableTransaction.description`, `GoalContribution.note`). Verified two ways: unit tests (round-trip, tamper detection via auth-tag, wrong-key rejection) and a raw `psql` read showing ciphertext at rest while the app's runtime client reads back correct plaintext |
-| 33 | Secrets read only server-side, never bundled to the client | V8.3 | ✅ | 1 | `src/server/env.ts` (`server-only` guard) + `tests/guards/no-public-secrets.test.ts` (source-level). Build-output bundle grep is a Phase 8 CI item |
+| 33 | Secrets read only server-side, never bundled to the client | V8.3 | ✅ | 1→8 | `src/server/env.ts` (`server-only` guard) + `tests/guards/no-public-secrets.test.ts` (source-level, now driven by `env.ts`'s own `SECRET_ENV_VAR_NAMES` export rather than a second hardcoded list — see item 41). Build-output bundle grep now exists too (item 41) |
+| 33a | Strict runtime validation (shape, not just presence) of every secret | V5.1, V8.3 | ✅ | 8 | `src/server/env.ts` — each secret is Zod-validated lazily (one field at a time, on first access, never a whole-schema parse at module load — see the file's own doc comment on why eager parsing would reintroduce a Phase 2 bug). `DATABASE_URL`/`APP_DATABASE_URL` must be well-formed `postgres(ql)://` URLs; `ENCRYPTION_KEY` must base64-decode to exactly 32 bytes; a malformed value now fails fast with a clear message instead of surfacing later as a confusing downstream error (e.g. a bad key previously only failed the first time a field was actually encrypted). Covered by `src/server/env.test.ts`'s new format-validation cases (invalid URL scheme, wrong-length key, whitespace-only value) |
 
 ## V9 — Communications / Platform Hardening
 
@@ -87,7 +88,7 @@ lands per the gated build plan.
 | 38 | Strict CORS, no `Access-Control-Allow-Origin: *` | V14.5 (L1/L2) | ✅ | 4 | No route ever sets an `Access-Control-Allow-Origin` header — a cross-origin JSON `fetch()` fails its own CORS preflight before the real request is even sent |
 | 39 | Origin/Host header verification on state-changing requests | V4.2, V14.5 | ✅ | 4→7 | `src/server/api/verify-origin.ts`, wired into every mutating route via `guardMutation()`. **Phase 7**: comparison switched to `crypto.timingSafeEqual` (see item 10's note on scope); automated in `tests/e2e/security.spec.ts` — a forged `Origin: https://evil.example` header gets a 403, a matching same-origin header succeeds (positive control) — replacing the earlier hand-verification |
 | 40 | React Taint API on secrets/env objects | V8.3 | 🟡 | 1 | Not available in stable React 19 — feature-detected no-op, `server-only` carries the guarantee today. See AGENTS.md §6 |
-| 41 | CI grep of compiled client bundle for `NEXT_PUBLIC_` secrets | V14.2 | ⬜ | 8 | Source-level equivalent ships now (`tests/guards/no-public-secrets.test.ts`) |
+| 41 | Grep of compiled client bundle for leaked secret values | V14.2 | 🟡 | 1→8 | `scripts/check-no-secrets-in-client-bundle.ts` (`npm run verify:client-bundle-secrets`, after `npm run build`) — walks every file actually shipped to the browser (`.next/static/`, never `.next/server/`) and searches for a literal occurrence of each secret's *real current value* (not just the variable name), which a source-level guard can't prove on its own (e.g. a hardcoded copy-paste would slip past a name-based regex entirely). Verified both directions by hand, not just written: run clean against a real production build with real secrets loaded (0 findings across 25 files), then re-run after deliberately planting a leaked value in `.next/static/` to confirm it's actually caught (1 finding, correct file, correct name, secret value itself never printed) — then the planted file was removed. Still 🟡, not ✅: this runs as a manual/opt-in script today, not yet wired as an automatic gate into `.github/workflows/ci.yml` (that workflow doesn't run `next build` yet either) |
 | 41a | Embedding sidecar is localhost-only, no CORS, unreachable from a browser | V14.5 | ✅ | 3 | `sidecar/app/main.py` deliberately configures no CORS middleware; the Node client (`src/server/embeddings/sidecar-client.ts`) is the only intended caller, itself server-only |
 
 ## V10 — Malicious Code / AI Advisor
@@ -163,6 +164,70 @@ trigger for the duration of that one operation, the same way the seed
 script's reset step does. This is a deliberate fail-safe, not a bug: it
 means a user-deletion code path cannot silently destroy audit history by
 accident — it has to go out of its way to do so.
+
+## Secret rotation & storage guidelines
+
+Written in preparation for real bank integration (docs/SECURITY.md §1's
+Tier 3) — the point at which "just regenerate `.env` locally" stops being
+an adequate rotation story for the whole team/deployment. Every secret
+below is read exclusively through `src/server/env.ts` (item 33), which is
+what makes rotation *mechanically* safe regardless of which secret: the
+new Zod validation (item 33a) means a bad replacement value fails loudly,
+immediately, with a clear message, the first time anything touches it
+after rotation — never a silent downstream misbehavior discovered later.
+
+**Storage, by tier:**
+
+| Tier | Where secrets live | Notes |
+|---|---|---|
+| Local dev (today) | `.env`, gitignored (`.env*` with `!.env.example` in `.gitignore`) | Never committed. `.env.example` documents every var's shape/format with a placeholder, never a real value. `tests/guards/no-public-secrets.test.ts` + `scripts/check-no-secrets-in-client-bundle.ts` are the two independent proofs nothing in `.env` ever reaches the client. |
+| CI (`.github/workflows/ci.yml`) | Hardcoded throwaway values directly in the workflow YAML | Deliberate, not an oversight: these credentials only ever protect an ephemeral, single-job Postgres container that's destroyed when the job ends — same reasoning as `prisma/migrations/*_rls_and_runtime_role`'s documented throwaway local dev password. If this workflow ever needs a *real* secret (e.g. a real `ANTHROPIC_API_KEY` for a future live-API integration test), it must move to [GitHub Actions encrypted secrets](https://docs.github.com/actions/security-guides/encrypted-secrets) — never inline in the YAML — the moment it stops being throwaway. |
+| Tier 3 (future real deployment) | The hosting provider's managed secret store (e.g. Vercel encrypted env vars, AWS Secrets Manager, GCP Secret Manager) | Not a code change — `src/server/env.ts`'s `process.env[name]` reads are agnostic to how the platform injects them. This is exactly the "Tier 2 → Tier 3 is a configuration change, not an architecture change" property docs/SECURITY.md §1 commits to. |
+
+**Rotation procedure, by secret:**
+
+- **`ANTHROPIC_API_KEY`** — lowest-risk to rotate: generate a new key in
+  the Anthropic Console, update the store, redeploy/restart. No data
+  migration; nothing derived from this key is persisted anywhere.
+- **`DATABASE_URL` / `APP_DATABASE_URL`** (the `pfw_app`/`pfw_runtime`
+  Postgres role passwords) — `ALTER ROLE ... PASSWORD '...'` for the role
+  being rotated, update the corresponding env var, restart the app (and
+  any running migration/seed tooling using `DATABASE_URL`). Rotate the
+  two independently — they're different roles with different blast
+  radii (`pfw_app` is a superuser; see the Phase 2 addendum above) — and
+  there's no reason rotating one should ever require rotating the other.
+- **`ENCRYPTION_KEY`** — the one genuinely hard rotation, and worth
+  spelling out precisely because "just swap the env var" silently
+  corrupts every already-encrypted row: `field-encryption.ts`'s
+  `decryptField()` always decrypts with *today's* `ENCRYPTION_KEY` (there
+  is no per-row key-version lookup yet), so replacing the key without a
+  migration makes every existing `BankAccount.last4` /
+  `NotableTransaction.description` / `GoalContribution.note` row
+  permanently undecryptable. A real rotation needs, in order: (1) keep
+  the old key available under a second env var (e.g.
+  `ENCRYPTION_KEY_PREVIOUS`) during the migration window, (2) a one-off
+  script that reads every encrypted column with the old key and
+  re-writes it encrypted with the new key, (3) only then remove the old
+  key from the environment. The ciphertext format is already versioned
+  (`v1:iv:tag:ciphertext` — see `field-encryption.ts`'s doc comment)
+  specifically so a future format/key-versioning scheme (e.g. `v2:` rows
+  carrying their own key-id) can be introduced without an ambiguous
+  read of old rows — not built yet, since nothing has needed a rotation
+  in practice, but the format was chosen with this in mind from Phase 2.
+- **`BANK_API_CLIENT_ID` / `BANK_API_CLIENT_SECRET`** (Tier 3
+  scaffolding, item 33a — unused until a real bank-integration feature
+  exists) — whatever rotation flow the eventual banking/Open-Finance API
+  provider's own credential-management console prescribes; update both
+  together (the "set all three or none" constraint in
+  `getBankApiCredentials()` means a partial rotation fails fast rather
+  than leaving a mismatched pair silently active).
+
+**What must never happen, regardless of tier:** a secret value in a
+commit, a CI log, or `NEXT_PUBLIC_`-prefixed. All three are guarded
+today — git history was hand-audited before every commit this project
+has made (see the git-commit protocol each phase followed), CI secrets
+are throwaway-only per the table above, and `NEXT_PUBLIC_` exposure is
+covered by items 33/33a/41.
 
 ## Regulatory
 
