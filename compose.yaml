@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: pfw_local_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pfw_local
+      POSTGRES_USER: pfw_app
+      POSTGRES_PASSWORD: pfw_local_dev_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pfw_app -d pfw_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  pgdata:

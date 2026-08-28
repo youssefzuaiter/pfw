@@ -1,0 +1,391 @@
+// PFW data model.
+//
+// Security invariants that hold for every user-scoped model below (see
+// AGENTS.md and docs/SECURITY.md for the full rationale):
+//  - every user-owned row carries its own `userId` column directly (not
+//    just via a parent relation), so the DAL can enforce `where: { userId }`
+//    on any table without a join.
+//  - Postgres Row-Level Security policies (prisma/migrations/*_rls_and_runtime_role)
+//    enforce the same scoping as defense-in-depth, keyed on the session
+//    variable `app.current_user_id`.
+//  - fields marked "encrypted at rest" below are ciphertext (AES-256-GCM)
+//    at the storage layer, transparently encrypted/decrypted by the Prisma
+//    Client extension in src/server/db/encrypted-fields.ts — the schema
+//    type is still String because encryption happens above this layer.
+//
+// MerchantEmbedding is user-scoped even though the spec calls it a "shared"
+// cache — see AGENTS.md for why the more conservative (per-user) reading
+// was chosen given the blanket "all tables are strictly scoped to a user
+// ID" rule stated in the same spec section.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum BankAccountType {
+  CHECKING
+  SAVINGS
+  CREDIT_CARD
+}
+
+enum DebtType {
+  CREDIT_CARD
+  MORTGAGE
+  PERSONAL_LOAN
+  AUTO_LOAN
+  STUDENT_LOAN
+  OTHER
+}
+
+enum AssetType {
+  PROPERTY
+  VEHICLE
+  CRYPTO
+  PENSION
+  KEREN_HISHTALMUT
+  OTHER
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  displayName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bankAccounts       BankAccount[]
+  categories         Category[]
+  transactions       NotableTransaction[]
+  budgets            Budget[]
+  goals              Goal[]
+  goalContributions  GoalContribution[]
+  debts              Debt[]
+  debtPayments       DebtPayment[]
+  manualAssets       ManualAsset[]
+  portfolioHoldings  PortfolioHolding[]
+  trades             Trade[]
+  netWorthSnapshots  NetWorthSnapshot[]
+  merchantEmbeddings MerchantEmbedding[]
+  auditLogs          AuditLog[]
+}
+
+/// User-defined categories with permanent slugs: renaming changes `name`
+/// only, `slug` never changes once created, so rules/links keyed on it
+/// survive a rename. Every user gets exactly one `isUncategorized` row at
+/// seed/user-creation time — deleting a category reassigns its
+/// transactions to that row before the delete (enforced at the DAL layer;
+/// the DB does not cascade-delete transactions when a category is
+/// removed, precisely so a skipped reassignment step fails loudly instead
+/// of silently orphaning transactions).
+model Category {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug            String
+  name            String
+  isUncategorized Boolean   @default(false)
+  archivedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  transactions NotableTransaction[]
+  budgets      Budget[]
+
+  @@unique([userId, slug])
+  @@index([userId])
+}
+
+/// Credit balances are stored positive = money owed (a $500 credit card
+/// balance is `currentBalance = 50000`, not `-50000`).
+model BankAccount {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institutionName String
+  /// Encrypted at rest — see file header.
+  last4           String
+  accountType     BankAccountType
+  nickname        String?
+  /// Agorot.
+  currentBalance  BigInt
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  transactions NotableTransaction[]
+
+  @@index([userId])
+}
+
+/// The ledger. `providerTransactionId` is the CSV/bank-provided reference
+/// used for idempotent upserts on re-import; it's null for manually
+/// entered transactions, and Postgres treats multiple NULLs in a unique
+/// constraint as non-colliding, so manual entries never fight each other
+/// over uniqueness. `amount` is signed: negative = expense, positive =
+/// income/credit.
+model NotableTransaction {
+  id                    String      @id @default(cuid())
+  userId                String
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bankAccountId         String
+  bankAccount           BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  categoryId            String
+  category              Category    @relation(fields: [categoryId], references: [id])
+  providerTransactionId String?
+  occurredAt            DateTime
+  postedAt              DateTime?
+  /// Agorot, signed.
+  amount                BigInt
+  /// Encrypted at rest — untrusted free text, see file header and
+  /// docs/SECURITY.md §3.4 (indirect prompt injection surface).
+  description           String
+  merchantName          String?
+  isManual              Boolean     @default(false)
+  needsReview           Boolean     @default(false)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@unique([userId, providerTransactionId])
+  @@index([userId, occurredAt])
+  @@index([userId, categoryId])
+  @@index([userId, bankAccountId])
+}
+
+/// One row per (user, category) — the current monthly limit. Utilization
+/// and month-progress proration are computed live by the DAL, never
+/// stored.
+model Budget {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId   String
+  category     Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  /// Agorot.
+  monthlyLimit BigInt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, categoryId])
+}
+
+/// Progress is derived from `contributions`, never stored on this model —
+/// the "derived truth" law.
+model Goal {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  /// Agorot.
+  targetAmount BigInt
+  targetDate   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  contributions GoalContribution[]
+
+  @@index([userId])
+}
+
+/// Signed: positive = contribution, negative = withdrawal.
+model GoalContribution {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalId        String
+  goal          Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  /// Agorot, signed.
+  amount        BigInt
+  contributedAt DateTime
+  /// Encrypted at rest — free text, see file header.
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([userId, goalId])
+}
+
+model Debt {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  debtType       DebtType
+  /// Agorot, positive = amount owed.
+  currentBalance BigInt
+  /// Basis points.
+  aprBps         Int
+  /// Agorot.
+  minimumPayment BigInt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  payments DebtPayment[]
+
+  @@index([userId])
+}
+
+/// `principalPortion`/`interestPortion` are nullable because the Phase 3
+/// debt-math engine computes the split; a payment can be recorded before
+/// that breakdown is known.
+model DebtPayment {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  debtId           String
+  debt             Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  /// Agorot.
+  amount           BigInt
+  /// Agorot.
+  principalPortion BigInt?
+  /// Agorot.
+  interestPortion  BigInt?
+  paidAt           DateTime
+  createdAt        DateTime @default(now())
+
+  @@index([userId, debtId])
+}
+
+/// Off-feed assets (property, vehicles, crypto, pension/Keren Hishtalmut).
+/// Valuation freshness (Fresh/Aging/Stale) is derived from `valuedAt` at
+/// read time, never stored. `taxAdvantaged`/`liquidityDate` exist mainly
+/// for KEREN_HISHTALMUT, which has a real 6-year liquidity lock-in under
+/// Israeli law.
+model ManualAsset {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  assetType     AssetType
+  /// Agorot.
+  currentValue  BigInt
+  valuedAt      DateTime
+  taxAdvantaged Boolean   @default(false)
+  liquidityDate DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+/// `quantity` uses Decimal (not the Agorot integer primitive) because
+/// share counts, not money, are the quantity here — fractional shares are
+/// legitimate and Decimal/numeric is the correct fixed-precision type for
+/// them. `totalCostBasis` is the total agorot invested in the current
+/// position; weighted-average cost per share is derived at read time
+/// (`totalCostBasis / quantity`), never stored, again per "derived truth".
+model PortfolioHolding {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol         String
+  quantity       Decimal  @db.Decimal(20, 8)
+  /// Agorot.
+  totalCostBasis BigInt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  trades Trade[]
+
+  @@unique([userId, symbol])
+}
+
+/// The order blotter. `symbol` is denormalized from the holding for
+/// blotter display without a join. `totalAgorot` is the historical
+/// execution record (quantity × price, rounded once at execution time) —
+/// storing it is not a "derived truth" violation, since a completed
+/// trade's own total is a historical fact like a ledger entry, not a
+/// rederivable aggregate. `idempotencyKey` backs the Idempotency-Key
+/// header requirement on trade submission (Section 2.4).
+model Trade {
+  id                 String           @id @default(cuid())
+  userId             String
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolioHoldingId String
+  portfolioHolding   PortfolioHolding @relation(fields: [portfolioHoldingId], references: [id], onDelete: Cascade)
+  symbol             String
+  side               TradeSide
+  quantity           Decimal          @db.Decimal(20, 8)
+  /// Agorot, price per share at execution.
+  priceAgorot        BigInt
+  /// Agorot.
+  totalAgorot        BigInt
+  /// Agorot, SELL only. The weighted-average cost basis at the moment of
+  /// sale isn't reconstructable later without replaying the full trade
+  /// history, so this is captured once, at execution time, like
+  /// `totalAgorot` — a historical fact, not a "derived truth" violation.
+  realizedPnlAgorot  BigInt?
+  executedAt         DateTime
+  idempotencyKey     String?
+  createdAt          DateTime         @default(now())
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, executedAt])
+}
+
+/// Historical only — "today" is always computed live by the DAL, never
+/// read from this table.
+model NetWorthSnapshot {
+  id                     String   @id @default(cuid())
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snapshotDate           DateTime @db.Date
+  /// Agorot.
+  totalAssetsAgorot      BigInt
+  /// Agorot.
+  totalLiabilitiesAgorot BigInt
+  /// Agorot.
+  netWorthAgorot         BigInt
+  createdAt              DateTime @default(now())
+
+  @@unique([userId, snapshotDate])
+}
+
+/// 384-dimension embedding cache for merchant-name categorization (Tier 3
+/// KNN, Phase 3). Stored as a native float array rather than a pgvector
+/// column for now — Phase 3's KNN engine can do cosine similarity in
+/// application code at this data scale; revisit if that becomes a
+/// bottleneck.
+model MerchantEmbedding {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchantKey        String
+  sampleMerchantName String
+  embedding          Float[]
+  createdAt          DateTime @default(now())
+
+  @@unique([userId, merchantKey])
+}
+
+/// Append-only. Nothing in the application ever calls `.update()` or
+/// `.delete()` on this model — enforced additionally at the DB level by a
+/// trigger (prisma/migrations/*_rls_and_runtime_role) that rejects UPDATE
+/// and DELETE on this table outright.
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityType String
+  entityId   String
+  action     AuditAction
+  beforeData Json?
+  afterData  Json?
+  occurredAt DateTime    @default(now())
+
+  @@index([userId, entityType, entityId])
+  @@index([userId, occurredAt])
+}

@@ -1,26 +1,189 @@
 @import "tailwindcss";
 
+/*
+ * PFW design tokens.
+ *
+ * Light and dark are each authored explicitly with their own hex values —
+ * never derived by inverting/filtering the other mode. "System" is just
+ * "no explicit choice made yet", resolved via prefers-color-scheme; an
+ * explicit user choice (data-theme) always wins over the system preference.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --pfw-bg: #f7f8fa;
+  --pfw-surface: #ffffff;
+  --pfw-fg: #12161f;
+  --pfw-muted: #5b6472;
+  --pfw-border: #e4e7ec;
+  /* #3d63dd (the original light-mode accent) measured a hair under the
+     WCAG AA 4.5:1 floor as `text-accent` on `bg-accent/10` inside TopNav's
+     active-link/backdrop-blur header stack — a real axe finding from the
+     Phase 7 audit (4.49:1), not a stylistic choice. Darkened ~8% for a
+     real margin (5.1:1 in that exact stack); still reads as the same blue. */
+  --pfw-accent: #385bcb;
+  --pfw-positive: #18794e;
+  --pfw-negative: #cd2b31;
+  /* #b87503 (the original light-mode signature/warning amber) measured
+     3.76:1 as plain text on a white surface (transactions' "Needs review"
+     label) — another real axe finding, well under the 4.5:1 AA floor.
+     Darkened ~11% for a real margin (4.6:1); the tinted-background Badge
+     "warning" variant (already-passing) only gets safer, not worse. */
+  --pfw-signature: #a46803;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --pfw-bg: #0a0e14;
+    --pfw-surface: #12161f;
+    --pfw-fg: #e6e9ef;
+    --pfw-muted: #9aa4b2;
+    --pfw-border: #232937;
+    --pfw-accent: #5b8def;
+    --pfw-positive: #28c285;
+    /* #e5484d (the original dark-mode negative/critical red) measured
+       4.22:1 as `text-negative` on `bg-negative/10` (the "Stale" asset
+       badge, `<li class="bg-surface">` card) — a real axe finding, not
+       just the pulse-animation opacity dip (already fixed above; this is
+       the static/full-opacity value). Brightened ~5% for a real margin
+       (4.6:1 in that exact pairing). */
+    --pfw-negative: #f04c51;
+    --pfw-signature: #f2a93b;
   }
 }
 
+:root[data-theme="dark"] {
+  --pfw-bg: #0a0e14;
+  --pfw-surface: #12161f;
+  --pfw-fg: #e6e9ef;
+  --pfw-muted: #9aa4b2;
+  --pfw-border: #232937;
+  --pfw-accent: #5b8def;
+  --pfw-positive: #28c285;
+  /* Kept identical to the media-query block above — see its comment for
+     why this isn't #e5484d anymore. */
+  --pfw-negative: #f04c51;
+  --pfw-signature: #f2a93b;
+}
+
+@theme inline {
+  --color-bg: var(--pfw-bg);
+  --color-surface: var(--pfw-surface);
+  --color-fg: var(--pfw-fg);
+  --color-muted: var(--pfw-muted);
+  --color-border: var(--pfw-border);
+  --color-accent: var(--pfw-accent);
+  --color-positive: var(--pfw-positive);
+  --color-negative: var(--pfw-negative);
+  --color-signature: var(--pfw-signature);
+  --color-ring: var(--pfw-accent);
+
+  --font-display: var(--font-rubik), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-rubik), ui-sans-serif, system-ui, sans-serif;
+  --font-tabular: var(--font-ibm-plex-mono), ui-monospace, "SF Mono", monospace;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-body);
+}
+
+/*
+ * Every monetary figure, percentage, and date in a table renders with this
+ * class so ledger columns actually align — proportional fonts can't
+ * guarantee this even with tabular-nums enabled.
+ */
+.font-tabular-figures {
+  font-family: var(--font-tabular);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * UIverse-derived micro-interactions (Phase 5) are namespaced with a `uv-`
+ * prefix on both keyframes and utility classes, and live below this line.
+ * Every keyframe here animates `transform` and/or `opacity` only, never a
+ * layout property (top/left/width/height) — Section 5's compositor-
+ * performance rule. The global `prefers-reduced-motion` guard above
+ * already zeroes every `animation-duration`/`transition-duration` in the
+ * page, so every rule below halts under it automatically; the one
+ * exception is the 3D tilt effect, which is driven by a JS pointermove
+ * handler rather than a CSS animation/transition and therefore has to
+ * check `prefers-reduced-motion` itself before ever applying a transform
+ * — see src/components/tilt/tilt-card.tsx.
+ */
+
+/* Buttons: a subtle press-down on click. */
+.uv-btn-press {
+  transition: transform 100ms ease;
+}
+.uv-btn-press:active {
+  transform: scale(0.96);
+}
+
+/* Loaders: a single continuously-rotating ring. */
+@keyframes uv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.uv-spinner {
+  animation: uv-spin 0.6s linear infinite;
+}
+
+/* Badges: a gentle breathing pulse, reserved for variants that genuinely
+   need to draw the eye (e.g. a critical status) — never applied to a
+   badge sitting next to a live financial figure.
+   Scale only, no opacity: a Phase 7 axe audit caught a real defect in an
+   earlier version of this keyframe that also dipped opacity to 0.7 —
+   `text-negative` on `bg-negative/10` is already close to the WCAG AA
+   contrast floor, and animating opacity on the *text-bearing* element
+   pushes it below 4.5:1 for a real portion of every 2s cycle, for every
+   viewer without prefers-reduced-motion (not just an axe sampling
+   artifact — the dip is genuinely visible). Scale-only keeps the badge's
+   text/background contrast fixed at its always-passing full-opacity
+   value while still reading as a "pulse". */
+@keyframes uv-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+.uv-badge-pulse {
+  animation: uv-pulse 2s ease-in-out infinite;
+}
+
+/* Toggle switch thumb slide. */
+.uv-toggle-thumb {
+  transition: transform 150ms ease;
+}
+.uv-toggle-track {
+  transition: background-color 150ms ease;
+}
+
+/* 3D tilt cards (Section 5's "3D Rules": max 8deg, hover+fine-pointer
+   only, never on a card showing a live figure being read). Perspective
+   lives on the wrapper, the rotation transform on the card itself; the
+   actual gating to fine-pointer devices and prefers-reduced-motion
+   happens in JS, since a CSS `@media` query can't stop a mousemove
+   listener from firing, only style its result away. */
+.uv-tilt-wrapper {
+  perspective: 800px;
+}
+.uv-tilt-card {
+  transition: transform 150ms ease-out;
+  will-change: transform;
 }
