@@ -73,22 +73,20 @@ in the 15-model schema (14 domain models + the append-only `AuditLog`).
 - **Secret leakage into client bundle** — mitigated by React Taint API (`experimental_taintUniqueValue`) on env vars/secret objects, plus a CI grep step for stray `NEXT_PUBLIC_`-prefixed secrets.
 - **Clickjacking** — `frame-ancestors 'none'` + `X-Frame-Options` equivalent via CSP.
 
-### 3.3 CSV import surface — **planned architecture, not built**
+### 3.3 CSV import surface — **built**
 
-Deliberately deferred (AGENTS.md §5, decision #4): `/transactions` shipped in
-Phase 4 with search/filter/sort/recategorization only — exactly what that
-phase's screen description asked for — and neither manual transaction entry
-nor CSV import were part of it. Every point below is the *design* this
-surface will follow if/when it's built, not a control that exists in the
-codebase today; `docs/SECURITY-CHECKLIST.md` items 23/24 track this
-explicitly as ⬜, and the current ingestion path is exclusively the
-deterministic seed script (`prisma/seed/`), which never touches
-user-supplied files.
+Implemented as `src/lib/csv-import/` (pure parsing pipeline),
+`src/server/dal/transaction-import.ts` (deduplicating writer), and
+`POST /api/transactions/import` (upload route), with the upload UI on
+`/transactions`. Every control below is live and covered by tests
+(`src/lib/csv-import/*.test.ts`, 78 cases) plus hand-verification against
+a real upload — see AGENTS.md §3j.
 
-- **Formula injection** — a merchant/description cell beginning with `=`, `+`, `-`, or `@` would be neutralized (single-quote prefix) both on ingest and on any re-export, so a poisoned statement couldn't execute a formula if the user later opened an exported CSV in a spreadsheet tool.
-- **Malformed/oversized files** — would be rejected before parsing (size ceiling, MIME/extension check, row-count ceiling).
-- **Duplicate replay** — provider-transaction-id (or content-hash fallback) upsert keys would prevent re-importing the same statement from inflating balances. (The upsert-key *mechanism* itself already exists and is exercised by the seed script — `NotableTransaction`'s `@@unique([userId, providerTransactionId])` — only the untrusted-file-upload entry point into it is missing.)
-- **Adapter-specific parsing bugs** — would be isolated per bank adapter (Section: architectural decision #4) so a malformed Leumi export couldn't corrupt parsing of an Isracard export.
+- **Formula injection** — a merchant/description cell beginning with `=`, `+`, `-`, `@`, TAB, or CR is neutralized with a single-quote prefix on ingest (`src/lib/csv-import/formula-injection.ts`). Applied to free-text fields **only**, never to amount or date cells: a legitimate debit is written `-125.50`, so a blanket "sanitize every cell" pass would corrupt every expense in the file into an unparseable `'-125.50`. That constraint has its own regression test rather than living only in a comment.
+- **Malformed/oversized files** — rejected in layers before any interpretation: a byte ceiling checked against `File.size` *before* the body is buffered, then a 2 MB decode ceiling, a 5,000-row ceiling, a 500-character-per-cell ceiling, an extension check, and a MIME allowlist. Unterminated quotes and empty files are hard errors; a single malformed *row* is a non-fatal per-row error so one bad line doesn't cost the user the rest of the statement.
+- **Duplicate replay** — `NotableTransaction`'s `@@unique([userId, providerTransactionId])` is the enforcement point, fed by the bank's own reference where the export supplies one and a SHA-256 content hash where it doesn't. The content-hash fallback is **mandatory, not a nicety**: Postgres does not treat NULLs as equal in a unique index, so rows left with a `null` provider id would re-import as full duplicates on every upload with no constraint violation at all — a silent balance-inflation bug. Verified live: importing the same file twice yields `importedCount: 0, duplicateCount: 6` on the second run.
+- **Adapter-specific parsing bugs** — isolated per institution (architectural decision #4). Each adapter declares only its column aliases, date format, and sign convention; all parsing logic is shared and tested once. Notably, the date format and sign convention are **declared, never sniffed** — `03/04/2026` is a valid date under both DD/MM and MM/DD and means two different days, and guessing a credit-card statement's sign convention would invert every amount in the file.
+- **Currency** — a row carrying a non-shekel currency is refused outright rather than imported at face value, which would corrupt the ledger by roughly the FX rate. This app is single-currency by law (spec Section 1) and has no conversion model to fall back on.
 
 ### 3.4 AI advisor surface (indirect prompt injection)
 - **Untrusted content in the ledger** — a transaction description or merchant name is attacker-controllable in principle (anyone can name a merchant anything on a real statement). The system prompt explicitly delimits ledger records as *data*, never as instructions, using structural delimiters the model is told never to treat as commands.
@@ -128,7 +126,7 @@ Side channel:
 [ Route Handler: /api/advisor ] --> [ Anthropic API ] (server-side key only, never reaches client)
                                  --> [ 10 read-only tools ] --> DAL (same scoping as above)
 
-Side channel (planned, not built — see §3.3):
+Side channel (built — see §3.3):
 [ CSV Import Route ] --> [ Bank Adapter (per-institution) ] --> [ Canonical row + Zod validation
                                                                    + formula-injection neutralization ]
                                                               --> DAL (idempotent upsert)

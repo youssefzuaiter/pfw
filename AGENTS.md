@@ -800,6 +800,78 @@ below testable with plain data literals, no DB required.
   a storage-by-tier table (local `.env` today, throwaway values inline
   in CI YAML, a real secret manager at Tier 3).
 
+## 3j. CSV / bank statement import (ad hoc, post-Phase 8)
+
+Closes AGENTS.md §5 decision #4 and `docs/SECURITY.md` §3.3, both of
+which had described this as designed-but-not-built since Phase 0.
+
+- **Pure pipeline in `src/lib/csv-import/`** (`csv-parse.ts` tokenizer,
+  `formula-injection.ts`, `adapters.ts`, `pipeline.ts`, `types.ts`),
+  following §3b's engine convention: bytes in, canonical rows out, never
+  touches the DAL — which is what makes all 78 of its tests run on plain
+  string literals with no Postgres. The tokenizer is hand-written rather
+  than a dependency: bank CSVs are untrusted input, the surface is small,
+  and owning it means every limit an attacker controls (bytes, rows,
+  cell length) is explicit and enforced.
+- **Three real traps this had to get right**, each with its own
+  regression test rather than just a comment:
+  1. **Formula-injection neutralization must NOT touch numeric cells.** A
+     legitimate debit is `-125.50`, which starts with a trigger
+     character — the obvious "sanitize every cell" implementation turns
+     every expense in the file into an unparseable `'-125.50`. The guard
+     is scoped to free-text fields (description, merchant) only; amounts
+     and dates are parsed into an integer and a `Date` and never persist
+     as text, so they have nothing to neutralize.
+  2. **The content-hash dedupe fallback is mandatory, not a nicety.**
+     Postgres does not treat NULLs as equal in a unique index, so rows
+     from a bank that supplies no reference number would each get
+     `providerTransactionId = null` and re-import as full duplicates on
+     every upload — with *no* constraint violation to notice. Silent
+     balance inflation, i.e. exactly what the guard exists to prevent.
+  3. **The hash needs an occurrence ordinal.** Two identical coffees on
+     the same day are two real purchases; a pure content hash collapses
+     them into one and understates spending. Numbering repeats within
+     the file keeps them distinct while still reproducing identical keys
+     on a genuine re-import.
+- **Formats are declared, never sniffed.** Each adapter states its date
+  format and sign convention explicitly, because `03/04/2026` is a valid
+  date under both DD/MM and MM/DD (and means two different days), and
+  guessing a credit-card statement's "charges are positive" convention
+  would invert every amount in the file. `detectAdapter` returns `null`
+  rather than falling back to a best guess for the same reason.
+- **Foreign-currency rows are refused, not converted.** Importing a USD
+  amount as shekels would corrupt the ledger by roughly the FX rate, and
+  this app has no multi-currency model (spec Section 1).
+- **`withUserScope` gained an optional `timeoutMs`** — the import writes
+  rows one at a time because `notableTransaction.createMany` throws
+  inside the field-encryption extension *by design* (§3a: a batch write
+  would persist `description` as plaintext), and a few thousand
+  single-row creates legitimately exceed Prisma's 5s default. Every
+  ordinary DAL call leaves it unset.
+- **Dedupe is enforced twice**, same belt-and-braces pattern as
+  DAL+RLS scoping: an in-transaction pre-check (which is what lets a
+  duplicate be *reported* as skipped) plus the DB's own unique
+  constraint (which is what actually holds under concurrent uploads —
+  the P2002 race is caught per-row and counted as a duplicate).
+- **Auto-categorization on import** runs Tiers 1-2 of the existing
+  cascade only. Tiers 3/4 are deliberately excluded: they need the
+  embedding sidecar and a live Anthropic call respectively, which would
+  mean hundreds of network round-trips inside one upload. Anything the
+  deterministic tiers can't place gets `needsReview: true`, which is
+  what the review queue is for. Note Tier 1's input uses `!needsReview`
+  as a *proxy* for "the user categorized this by hand" — the schema has
+  no dedicated `categoryConfirmedAt` column, and `isManual` means
+  something different (manually *entered*). Documented at the call site.
+- **Verified live, not only by unit test**: a 7-row statement imported
+  6 rows + 1 rejected (bad date); re-uploading the identical file gave
+  `importedCount: 0, duplicateCount: 6`; the two identical coffees kept
+  distinct hashes; `description` is ciphertext at rest (`v1:…`) while
+  the app renders the decrypted, `'`-prefixed, HTML-escaped payload;
+  and the error paths return the right codes — foreign currency 400,
+  unrecognized headers 400, wrong extension 400, cross-origin 403,
+  another user's `bankAccountId` **404 (never 403)**. The dev database
+  was re-seeded afterward so no test rows were left behind.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
@@ -851,16 +923,21 @@ below testable with plain data literals, no DB required.
    Phase 4**: `src/lib/mock-market-data.ts` (deterministic per-symbol-per-
    day price feed) backs the live net-worth calculation now; the same
    function is what /trading will use later.
-4. **CSV import adapters**: one `BankAdapter` per institution
-   (`parse(buffer) → RawImportRow[]`), funneling into one shared pipeline
-   (size/type guard → Zod validation of the canonical row → formula-
-   injection neutralization → idempotent upsert on provider-transaction-id).
-   **Still not built as of Phase 4's first half** — the /transactions
-   screen shipped with search/filter/sort/recategorization only (exactly
-   what the spec's screen description asks for: "search, category
-   filters, sorting, and inline recategorisation training"); manual
-   transaction entry and CSV import weren't in that description and
-   weren't added speculatively. Revisit if the user wants either.
+4. **CSV import adapters**: one `BankAdapter` per institution, funneling
+   into one shared pipeline (size/type guard → validation of the
+   canonical row → formula-injection neutralization → idempotent upsert
+   on provider-transaction-id). **Built — see §3j.** Deferred through
+   Phases 4-8 (the /transactions screen shipped with exactly what the
+   spec's screen description asked for; CSV import wasn't in it and
+   wasn't added speculatively), then implemented on request. The shipped
+   shape matches this decision, with one deliberate refinement: the
+   canonical row is validated by the adapter layer's own typed parsing
+   rather than a Zod schema — the input is a `string[]` of untyped cells,
+   not a JSON object, so parsing and validating are inherently the same
+   step here (a Zod pass afterward would re-validate values that were
+   already proven well-formed by having parsed at all). Zod remains the
+   rule for JSON request bodies everywhere else. **Manual transaction
+   entry is still not built.**
 
 ## 6. Known deviations from the spec text, with reasons
 
@@ -1092,6 +1169,7 @@ src/app/trading/                watchlist, price chart, buy/sell, holdings P&L, 
 src/app/advisor/                _components/advisor-chat.tsx — streaming chat UI
 src/app/welcome/                entry-surface landing page (Phase 6) — the R3F hero, not /dashboard
 src/app/api/transactions/[id]/  PATCH — recategorization, the first hardened route
+src/app/api/transactions/import/  POST — multipart CSV statement upload (§3j)
 src/app/api/{categories,budgets,goals,debts,assets,trades}/  guardMutation()-fronted CRUD routes
 src/app/api/advisor/route.ts    POST — streams text deltas only, see §3d
 src/components/nav/             TopNav (desktop), MobileNav (4 tabs + More drawer)
@@ -1117,6 +1195,8 @@ src/lib/valuation-freshness.ts   Fresh/Aging/Stale thresholds for manual assets
 src/lib/cash-flow-forecast.ts   60-day forecast, absolute minimum point
 src/lib/recurring-detection.ts  periodicity engine (3+ months, CV < 0.15)
 src/lib/categorization/         4-tier cascade (types, tier1-3, cascade orchestrator)
+src/lib/csv-import/             statement CSV pipeline: tokenizer, formula-injection
+                                  guard, per-bank adapters, dedupe keys (§3j)
 src/lib/insights/               7 generators + generate-insights.ts orchestrator
 src/lib/mock-market-data.ts     deterministic mock price feed + price history for /trading's chart
 sidecar/                        FastAPI/ONNX merchant-embedding service (Python)
@@ -1133,7 +1213,8 @@ src/server/db/admin-client.ts    admin PrismaClient (pfw_app) — seed/tests/aut
 src/server/db/with-user-scope.ts RLS session-variable transaction wrapper
 src/server/db/encrypted-fields.ts Prisma Client extension, transparent encryption
 src/server/dal/                  9 modules: bank-accounts, transactions, debts, goals,
-                                   categories, budgets, manual-assets, portfolio, net-worth
+                                   categories, budgets, manual-assets, portfolio, net-worth,
+                                   + transaction-import.ts (deduplicating bulk writer, §3j)
 src/server/dashboard/build-dashboard-data.ts  aggregates DAL + engines for /dashboard,
                                                 React cache()-wrapped (see §3c)
 prisma/schema.prisma             14 models + AuditLog, all user-scoped

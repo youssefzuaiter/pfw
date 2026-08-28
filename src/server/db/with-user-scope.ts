@@ -27,12 +27,29 @@ type ScopedTransactionClient = Parameters<Parameters<typeof prisma.$transaction>
  * string-interpolated, so it can't be used for SQL injection even though
  * `SET` itself doesn't support bind parameters directly.
  */
+export type UserScopeOptions = {
+  /**
+   * Overrides Prisma's default 5-second interactive-transaction timeout.
+   * Needed only by genuinely bulk operations — the CSV statement import
+   * writes rows one at a time (it must: `notableTransaction.createMany`
+   * throws inside the field-encryption extension, deliberately, since a
+   * batch write would otherwise persist `description` as plaintext), and
+   * a few thousand of those legitimately exceed 5s. Every ordinary
+   * single-row DAL call leaves this unset.
+   */
+  timeoutMs?: number;
+};
+
 export async function withUserScope<T>(
   userId: string,
   run: (tx: ScopedTransactionClient) => Promise<T>,
+  options: UserScopeOptions = {},
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
-    return run(tx);
-  });
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+      return run(tx);
+    },
+    options.timeoutMs === undefined ? undefined : { timeout: options.timeoutMs, maxWait: options.timeoutMs },
+  );
 }

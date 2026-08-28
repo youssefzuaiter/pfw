@@ -1,8 +1,10 @@
 import { agorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { listBankAccounts } from "../../server/dal/bank-accounts";
 import { listCategories } from "../../server/dal/categories";
 import { listTransactions, type TransactionSort } from "../../server/dal/transactions";
 import { FilterBar } from "./_components/filter-bar";
+import { ImportCsvForm } from "./_components/import-csv-form";
 import { TransactionsTable, type TransactionRow } from "./_components/transactions-table";
 
 export const instant = false;
@@ -28,16 +30,23 @@ export default async function TransactionsPage({
   const sort = parseSort(firstString(params.sort) || undefined);
 
   const user = await getCurrentUser();
-  const [transactions, categories] = await Promise.all([
+  const [transactions, categories, bankAccounts] = await Promise.all([
     listTransactions(user.id, {
       search: query || undefined,
       categoryId: categoryId || undefined,
       sort,
     }),
     listCategories(user.id),
+    listBankAccounts(user.id),
   ]);
 
   const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
+  const accountOptions = bankAccounts.map((account) => ({
+    id: account.id,
+    label: account.nickname
+      ? `${account.nickname} — ${account.institutionName}`
+      : `${account.institutionName} ••${account.last4}`,
+  }));
 
   const rows: TransactionRow[] = transactions.map((t) => ({
     id: t.id,
@@ -53,6 +62,7 @@ export default async function TransactionsPage({
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
       <h1 className="font-display text-2xl font-semibold text-fg">Transactions</h1>
+      <ImportCsvForm bankAccounts={accountOptions} />
       <FilterBar categories={categoryOptions} initialQuery={query} initialCategoryId={categoryId} initialSort={sort} />
       <TransactionsTable rows={rows} categories={categoryOptions} />
     </div>
