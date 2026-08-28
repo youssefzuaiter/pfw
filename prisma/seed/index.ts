@@ -109,7 +109,7 @@ async function main() {
       institutionName: BANKS.hapoalim,
       last4: String(rng.int(1000, 9999)),
       accountType: "CHECKING",
-      nickname: 'עו"ש',
+      nickname: 'Current Account [עו"ש]',
       currentBalance: ils(rng.int(5_000, 25_000)),
     },
   });
@@ -119,7 +119,7 @@ async function main() {
       institutionName: BANKS.leumi,
       last4: String(rng.int(1000, 9999)),
       accountType: "SAVINGS",
-      nickname: "חיסכון",
+      nickname: "Savings [חיסכון]",
       currentBalance: ils(rng.int(20_000, 150_000)),
     },
   });
@@ -129,7 +129,7 @@ async function main() {
       institutionName: BANKS.isracard,
       last4: String(rng.int(1000, 9999)),
       accountType: "CREDIT_CARD",
-      nickname: "ויזה כאל",
+      nickname: "Visa Cal [ויזה כאל]",
       // Credit balances are stored positive = money owed.
       currentBalance: ils(rng.int(500, 8_000)),
     },
@@ -163,7 +163,7 @@ async function main() {
         providerTransactionId: `seed-rent-${m}`,
         occurredAt: rentDate,
         amount: ils(-rng.int(3_500, 5_500)),
-        description: "שכירות חודשית",
+        description: "Monthly rent [שכירות חודשית]",
         isManual: false,
       },
     });
@@ -217,7 +217,7 @@ async function main() {
 
   // --- Goals + contributions -------------------------------------------------
   const emergencyFund = await prisma.goal.create({
-    data: { userId: user.id, name: "קרן חירום", targetAmount: ils(30_000) },
+    data: { userId: user.id, name: "Emergency fund [קרן חירום]", targetAmount: ils(30_000) },
   });
   for (let m = 5; m >= 1; m--) {
     await prisma.goalContribution.create({
@@ -226,13 +226,13 @@ async function main() {
         goalId: emergencyFund.id,
         amount: ils(rng.int(800, 2_000)),
         contributedAt: daysAgo(now, m * 30),
-        note: m === 5 ? "הפקדה ראשונה" : undefined,
+        note: m === 5 ? "First deposit [הפקדה ראשונה]" : undefined,
       },
     });
   }
 
   const vacationGoal = await prisma.goal.create({
-    data: { userId: user.id, name: 'חופשה בחו"ל', targetAmount: ils(12_000) },
+    data: { userId: user.id, name: 'Vacation abroad [חופשה בחו"ל]', targetAmount: ils(12_000) },
   });
   for (let m = 4; m >= 1; m--) {
     await prisma.goalContribution.create({
@@ -252,7 +252,7 @@ async function main() {
   const mortgage = await prisma.debt.create({
     data: {
       userId: user.id,
-      name: "משכנתא",
+      name: "Mortgage [משכנתא]",
       debtType: "MORTGAGE",
       currentBalance: BigInt(mortgageBalance),
       aprBps: mortgageAprBps,
@@ -278,7 +278,7 @@ async function main() {
   const ccDebt = await prisma.debt.create({
     data: {
       userId: user.id,
-      name: "חוב כרטיס אשראי",
+      name: "Credit card debt [חוב כרטיס אשראי]",
       debtType: "CREDIT_CARD",
       currentBalance: ils(rng.int(3_000, 9_000)),
       aprBps: bps(rng.int(1_800, 2_400)),
@@ -300,7 +300,7 @@ async function main() {
   await prisma.manualAsset.create({
     data: {
       userId: user.id,
-      name: "רכב פרטי",
+      name: "Private car [רכב פרטי]",
       assetType: "VEHICLE",
       currentValue: ils(rng.int(60_000, 110_000)),
       valuedAt: daysAgo(now, rng.int(120, 200)),
@@ -311,7 +311,7 @@ async function main() {
   await prisma.manualAsset.create({
     data: {
       userId: user.id,
-      name: "קרן השתלמות",
+      name: "Keren Hishtalmut [קרן השתלמות]",
       assetType: "KEREN_HISHTALMUT",
       currentValue: ils(rng.int(35_000, 60_000)),
       valuedAt: daysAgo(now, rng.int(5, 15)),
@@ -322,7 +322,7 @@ async function main() {
   await prisma.manualAsset.create({
     data: {
       userId: user.id,
-      name: "ביטקוין",
+      name: "Bitcoin [ביטקוין]",
       assetType: "CRYPTO",
       currentValue: ils(rng.int(5_000, 25_000)),
       valuedAt: daysAgo(now, rng.int(0, 3)),

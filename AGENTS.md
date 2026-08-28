@@ -696,6 +696,49 @@ below testable with plain data literals, no DB required.
   note pointing at the specific automated test that now backs a claim
   that was previously only hand-`curl`-verified.
 
+## 3h. Single-user confirmation & English-primary labels (ad hoc, post-Phase 7)
+
+- **No DAL changes made.** A request to "hardcode DAL queries to the
+  seeded user" was scoped down after confirming with the user: every DAL
+  function already takes `userId` as a mandatory parameter (the IDOR/RLS
+  defense-in-depth from Phase 2, re-verified in Phase 7's
+  `tests/e2e/security.spec.ts`), and there was never any multi-user
+  switching UI to remove — `getCurrentUser()` already always resolves to
+  the single seeded demo user. Stripping `userId` out of the DAL layer
+  would have deleted that defense and broken
+  `tests/guards/dal-boundary.test.ts`/`tests/integration/idor.test.ts`
+  for zero behavioral change (only one user has ever existed), so it was
+  flagged rather than done — confirmed by the user as out of scope.
+- **UI text audit**: found and fixed 4 hardcoded Hebrew form
+  placeholders (`create-debt-form.tsx`, `create-goal-form.tsx`,
+  `create-asset-form.tsx`, `create-category-form.tsx`) — every other
+  screen's static UI chrome was already English-only. Confirmed via
+  `grep -P '[\p{Hebrew}]'`-equivalent sweep across `src/app` and
+  `src/components`, not by assumption.
+- **Seed data + merchant/bank/nickname labels now read "English
+  [Hebrew]"** (`prisma/seed/israeli-data.ts`, `prisma/seed/index.ts`) —
+  e.g. `"Bank Leumi [בנק לאומי]"` — English primary, original Hebrew term
+  kept in brackets rather than translated away, since this is still mock
+  *Israeli* banking data. Verified this doesn't break Tier 2
+  categorization: `[`/`]` are non-`\p{L}`/`\p{N}` characters, so
+  `findFirstWholeWordMatch` (`text-matching.ts`) still matches a bracket-
+  enclosed Hebrew (or English) keyword as a whole word — confirmed with a
+  standalone regex test against the actual new strings before touching
+  any seed data, not assumed. `src/lib/categorization/tier2-rules.ts`'s
+  keyword lists were deliberately left untouched (they're matching logic
+  reused against whatever merchant text exists, not display data).
+  `israeli-data.ts` is imported only by the seed script — no test
+  anywhere asserts its old literal Hebrew-only values, confirmed before
+  editing. Re-ran `npm run db:seed` afterward so the running app
+  actually reflects this, not just the source.
+- **`src/lib/text-matching.ts`, its tests, `slugify.ts`/tests,
+  `tier2-rules.ts`/tests, `cascade.test.ts`, `field-encryption.test.ts`,
+  and `tests/integration/embedding-sidecar.test.ts` still contain bare
+  Hebrew strings, deliberately untouched** — these are the Hebrew-
+  boundary-safety engine and its test fixtures (Section 1's non-
+  negotiable law #4), not UI text or seed-visible data; weakening their
+  Hebrew coverage would undermine the very property they exist to prove.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

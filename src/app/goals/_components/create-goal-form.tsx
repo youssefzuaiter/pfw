@@ -53,7 +53,7 @@ export function CreateGoalForm() {
           id="goal-name"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="קרן חירום"
+          placeholder="Emergency fund"
           className="min-w-[160px] rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
