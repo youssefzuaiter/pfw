@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Mirrors compose.yaml's postgres service exactly (same db name, same two
+# roles/passwords pfw_app/pfw_runtime) so this workflow behaves identically
+# to local dev — see AGENTS.md §3a and docs/SECURITY.md for why there are
+# two roles (pfw_app is the RLS-bypassing superuser used only for
+# migrations/seeding; pfw_runtime is the restricted, RLS-subject role the
+# app actually connects as). ENCRYPTION_KEY is a throwaway value that only
+# ever exists for the lifetime of this job's ephemeral database — same
+# spirit as the RLS migration's documented throwaway local dev password,
+# not a real secret protecting real data.
+env:
+  DATABASE_URL: postgresql://pfw_app:pfw_local_dev_password@localhost:5433/pfw_local?schema=public
+  APP_DATABASE_URL: postgresql://pfw_runtime:pfw_runtime_dev_password@localhost:5433/pfw_local?schema=public
+  ENCRYPTION_KEY: 3KPfiH4Mh3e8dtp5gwC6WWCMJr0YYk0k0r8UCnA9V8U=
+
+jobs:
+  test:
+    name: Typecheck, lint & test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: pfw_local
+          POSTGRES_USER: pfw_app
+          POSTGRES_PASSWORD: pfw_local_dev_password
+        ports:
+          # Same host port compose.yaml uses locally (5433, not Postgres'
+          # default 5432) — purely for consistency with DATABASE_URL
+          # above; nothing else runs on this ephemeral runner to conflict
+          # with, unlike the local-dev reason documented in compose.yaml.
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U pfw_app -d pfw_local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 5s
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `migrate deploy`, not `migrate dev` — the latter is a local-dev
+      # tool (drift detection, can prompt interactively); `deploy` just
+      # applies the existing migration files non-interactively, which is
+      # what CI/CD wants. This is also what creates the pfw_runtime role
+      # and its RLS policies (prisma/migrations/*_rls_and_runtime_role) —
+      # the integration test suite below depends on it existing.
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      - name: Seed deterministic mock data
+        run: npm run db:seed
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # Runs all three Vitest projects (unit, component, integration).
+      # The integration project's DB-backed suites (db.test.ts,
+      # idor.test.ts) run for real here, since DATABASE_URL/
+      # APP_DATABASE_URL are set — see each file's `describe.skipIf` for
+      # why they no-op locally without a running Postgres. The
+      # embedding-sidecar integration test stays skipped here on purpose
+      # (EMBEDDING_SIDECAR_URL is intentionally left unset) — the Python
+      # FastAPI/ONNX sidecar is a separate service this workflow doesn't
+      # stand up.
+      - name: Run full Vitest suite
+        run: npm run test
