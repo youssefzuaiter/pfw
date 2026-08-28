@@ -949,7 +949,24 @@ below testable with plain data literals, no DB required.
   the feature doesn't exist (deferred since Phase 4). `npm run check`
   (typecheck/lint/vitest): 317/320 passing (3 skip without the embedding
   sidecar running, unchanged from Phase 6), all guard tests green.
-- ⬜ **Phase 8** — CI pipeline, final audit report.
+- 🟡 **Phase 8 (partial)** — repository hygiene pass: replaced the
+  untouched create-next-app `README.md` with real setup/architecture
+  docs, corrected several stale Phase-0-era claims in `docs/SECURITY.md`
+  (§3.3's CSV import section now clearly reads as planned-not-built
+  rather than implemented; the data inventory's "Session identifiers"
+  row now reflects that no real auth/session exists yet; the schema
+  count fixed from a stale "12-model" estimate to the actual 15).
+  Verified no secrets, build artifacts, or venv/cache directories were
+  ever at risk of being committed (`git status --ignored` audited by
+  hand). The entire multi-phase build (Phases 0-7, previously all
+  uncommitted since the repo's only prior commit was the raw
+  create-next-app scaffold) was staged and committed as one
+  comprehensive commit. **Still outstanding**: the spec's other two
+  Phase 8 items — a GitHub Actions CI workflow (typecheck/lint/Semgrep
+  SAST/Gitleaks/`npm audit`/integration tests against a throwaway
+  Postgres container) and a formal point-in-time `docs/SECURITY-REPORT.md`
+  — were not requested this session and have not been built; revisit if
+  wanted.
 
 ## 8. Key file map (as of Phase 4, complete)
 
