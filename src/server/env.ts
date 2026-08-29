@@ -172,6 +172,26 @@ export function getEmbeddingSidecarUrl(): string {
   return process.env.EMBEDDING_SIDECAR_URL ?? "http://localhost:8001";
 }
 
+export type OllamaConfig = { baseUrl: string; model: string };
+
+/**
+ * The local-LLM copilot's Ollama endpoint and model name (AGENTS.md
+ * §3o). Not a secret, same reasoning as `getEmbeddingSidecarUrl()` — a
+ * local service address and a model name, not a credential — hence a
+ * sensible default instead of throwing when unset. `baseUrl` is still
+ * independently checked against a loopback/private-address allowlist at
+ * the point of use (`src/server/copilot/ollama-client.ts`) before every
+ * request, not just trusted here — the copilot's entire premise is that
+ * inference never leaves the device, so a misconfigured env var pointing
+ * at a real remote host must fail loudly, not silently "work."
+ */
+export function getOllamaConfig(): OllamaConfig {
+  return {
+    baseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
+    model: process.env.OLLAMA_MODEL ?? "llama3.1",
+  };
+}
+
 // === Tier 3 scaffolding: future bank-integration API credentials =========
 //
 // Preparation for real bank linkage (docs/SECURITY.md §1's Tier 3 —

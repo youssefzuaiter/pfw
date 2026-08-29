@@ -1438,6 +1438,153 @@ same "build on request, document as ad hoc" treatment as §3k/§3l/§3m.
   `numSimulations`/`endAge` are fixed constants, not user-facing
   controls, since the task named exactly three sliders.
 
+## 3o. Local-LLM spending copilot (ad hoc)
+
+Explicit user request for a "secure local AI spending copilot" —
+initially indistinguishable in shape from the existing cloud advisor
+(§3d), so this was flagged and clarified with the user before building
+anything: "local" specifically means a genuinely on-device model (zero
+financial text reaching a cloud AI provider), not a rebrand of
+`/advisor`. Given a choice between WebLLM-in-browser and a local Ollama
+bridge, the user picked the Ollama bridge — see the architecture
+discussion below for why that's also the better engineering fit for
+this specific app.
+
+- **Why server-orchestrated Ollama, not in-browser WebLLM**: the DAL can
+  only ever run server-side (a live Postgres connection + the RLS
+  session variable, `withUserScope` — no browser can hold either), so
+  *some* server-side hop is unavoidable regardless of where the model
+  runs. WebLLM would force the *browser* to orchestrate the tool-use
+  loop (a new tool-execution endpoint reachable from client code, CSP
+  loosened for `wasm-unsafe-eval` and a model-weights CDN, a multi-
+  hundred-MB-to-multi-GB download, WebGPU-only browser support). Ollama
+  is a local *server* process on the same machine this app's own server
+  already runs on (this app's whole premise is a locally-run personal
+  tool, not a public multi-tenant site) — so our existing server can
+  just call `localhost:11434` instead of Anthropic's API, and every
+  other piece of the existing hardened advisor architecture carries over
+  almost unchanged. Both genuinely satisfy "zero cloud": Ollama-on-
+  localhost and this app's own first-party server (already trusted with
+  this exact data for every other screen) aren't cloud AI providers.
+- **Reuses the cloud advisor's tool registry directly — no duplication.**
+  `ADVISOR_TOOLS`/`executeAdvisorTool` (`src/server/advisor/tools.ts`)
+  were already model-agnostic (`input_schema` is plain JSON Schema, the
+  same shape Ollama's function-calling API wants), so the copilot
+  imports them unchanged rather than forking a second 400-line tool
+  registry. This is the literal, safest reading of "the AI can only
+  query the user's data via our existing secure DAL wrappers" — it's not
+  just similar code, it *is* the same code, with the same Zod
+  re-validation of model-supplied arguments and the same
+  `userId`-scoped, RLS-backed DAL calls underneath.
+- **`buildAdvisorSystemPrompt()` gained a `personaName` parameter**
+  (default `"PFW Advisor"`) so `src/server/copilot/system-prompt.ts` can
+  reuse the exact same untrusted-data-boundary injection-defense wording
+  under the name "PFW Copilot," plus one added `<local_execution>`
+  section. One shared function for the actual security-critical content,
+  not two copies that could silently drift.
+- **`src/server/copilot/ollama-client.ts`**: a dependency-free `fetch`
+  wrapper around Ollama's `/api/tags` and `/api/chat` (no Ollama SDK —
+  matches this project's habit of owning small HTTP surfaces directly,
+  same as the CSV tokenizer and the Frankfurter FX client).
+  - **`OLLAMA_BASE_URL` is checked against a loopback/RFC1918-private
+    allowlist before every single request**, not just trusted because
+    of its name or its `.env.example` default — a misconfigured env var
+    pointing at a real remote host must fail loudly before a byte of
+    financial data is sent, since that would silently defeat the
+    feature's entire premise. Directly unit-tested
+    (`ollama-client.test.ts`), including the exact RFC1918 boundary (172.16-172.31
+    accepted, 172.32 correctly rejected — a naive `startsWith("172.")`
+    check would have gotten this wrong).
+  - `checkOllamaAvailability()` (a 2s-timeout `/api/tags` health check,
+    also confirming the configured model is actually pulled) is what
+    lets "Ollama isn't running" read as a clear, expected empty state in
+    the UI rather than a hang or a crash — genuinely necessary here,
+    unlike the cloud advisor, since local availability isn't guaranteed
+    the way a paid cloud API's uptime is.
+- **`src/server/copilot/run-conversation.ts`**: the same tool-use-loop
+  shape as the cloud advisor (`MAX_TOOL_ROUNDS` round-trip backstop,
+  tool calls executed server-side, results fed back as `role: "tool"`
+  messages) with one deliberate difference — **it does not token-stream**.
+  Claude's stream cleanly separates narrated text from a `tool_use`
+  block mid-response; local tool-calling models are far less consistent
+  about that, so streaming a round that might turn out to be a tool call
+  risks leaking a half-formed sentence before yanking it back. Every
+  round is a complete, non-streaming turn; only the final answer, once
+  the model stops requesting tools, is returned once, in full — a
+  simplicity-over-polish trade-off, documented rather than silently
+  accepted as full parity with the cloud advisor.
+  - **A real bug caught while writing the round-limit test**: the
+    original loop only used `allowTools` to decide what to *offer* the
+    model, but still executed `tool_calls` on the forced-final round
+    even though `tools` weren't sent that round — a confused or
+    adversarial local model could smuggle an extra DAL round-trip past
+    `MAX_TOOL_ROUNDS` simply by returning a tool-call-shaped response
+    anyway. Fixed: a tool call is only ever executed on a round where
+    tools were actually offered (`!requestedTools || !allowTools` now
+    both short-circuit to a final answer) — proven by a test asserting
+    exactly `MAX_TOOL_ROUNDS` (not `MAX_TOOL_ROUNDS + 1`) tool
+    executions against a scripted client that keeps requesting tools on
+    every round, including the last.
+- **`POST /api/copilot/chat`** and **`GET /api/copilot/status`** (new):
+  same shape as `/api/advisor` (guardMutation, tighter rate limit — one
+  request can trigger several tool round-trips) minus streaming (plain
+  JSON, per the design decision above); `status` is a cheap, lightly
+  rate-limited health check the UI calls when the panel opens, so
+  "unavailable" shows up front rather than only after a failed send.
+- **`src/components/copilot/copilot-sidebar.tsx`** (new, mounted once in
+  the root layout — available from every screen, not scoped to one
+  route): a slide-in panel, distinct from `/advisor`'s full page by
+  design (a "copilot" is a persistent side panel; an "advisor" is a
+  destination) — genuine UX differentiation, not just a second UI for
+  the same feature. `react-markdown` + `remark-gfm` (new dependencies)
+  render replies as real React elements, never `dangerouslySetInnerHTML`
+  — safe by construction against anything an injected/adversarial tool
+  result might contain, and confirmed not to trip
+  `tests/guards/no-dangerous-html.test.ts`. A `uv-typing-dot` bouncing-
+  dots indicator (new `globals.css` keyframe, transform/opacity only,
+  automatically covered by the existing `prefers-reduced-motion` guard)
+  stands in for token-by-token streaming feedback while a non-streamed
+  reply is in flight.
+- **Verified, not just written**: `npm run check` clean (571/574, 3 skip
+  for the unrelated embedding sidecar) — a new integration suite
+  (`tests/integration/copilot-tools.test.ts`, 8 cases, real Postgres)
+  proving `executeAdvisorTool` returns only the calling user's data and
+  never another's (the same cross-user IDOR check
+  `tests/integration/idor.test.ts` already established, re-verified
+  through the copilot's own new code path with a scripted fake Ollama
+  client), an unknown-tool-name and malformed-input case handled without
+  throwing, a full scripted round trip proving the correct `userId` is
+  threaded all the way into the DAL call and the tool result fed back
+  into the *next* model turn contains that user's real data and never
+  the other user's, and the round-limit regression above. Live `curl`
+  against the real running dev server with no Ollama installed (this
+  sandbox has none): `/api/copilot/status` correctly reports
+  unavailable with a clear reason, `/api/copilot/chat` correctly returns
+  503 (not a hang or crash), a forged cross-origin `Origin` still 403s,
+  and malformed bodies still 400. `npm run build` and
+  `verify:client-bundle-secrets` both clean; grepped the compiled
+  `.next/static/` output directly for `executeAdvisorTool`/
+  `ADVISOR_TOOLS`/`runCopilotConversation`/`callOllamaChat` and found
+  none, confirming the tool registry and DAL access never reach the
+  client bundle.
+- **Not verified in this environment, flagged rather than glossed
+  over**: no real Ollama process was available in this sandbox to
+  exercise, so actual model output quality, real tool-call formatting
+  from a genuine local model, and true end-to-end latency were never
+  observed — only the graceful-degradation path (Ollama absent) and the
+  tool-execution/security logic (via a scripted fake client) were
+  verified live. Trying this against a real local Ollama installation is
+  the natural next step before relying on it.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no true token-by-token streaming (see above); the
+  `onToolCall` progress callback exists on `runCopilotConversation` for
+  testability but isn't wired to a live channel in the route (no SSE) —
+  the UI shows a generic typing indicator, not a per-tool "checking your
+  transactions…" message, since the JSON response has no way to relay
+  progress mid-request without adding SSE; no automatic model pull (the
+  user runs `ollama pull llama3.1` themselves, per `.env.example`'s
+  note).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

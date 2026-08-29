@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Rubik, IBM_Plex_Mono } from "next/font/google";
 import { headers } from "next/headers";
+import { CopilotSidebar } from "../components/copilot/copilot-sidebar";
 import { MobileNav } from "../components/nav/mobile-nav";
 import { TopNav } from "../components/nav/top-nav";
 import { ThemeInitScript } from "../components/theme/theme-init-script";
@@ -45,6 +46,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <TopNav />
         <main className="flex-1 pb-20 md:pb-0">{children}</main>
         <MobileNav />
+        <CopilotSidebar />
       </body>
     </html>
   );

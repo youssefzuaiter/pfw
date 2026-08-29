@@ -187,3 +187,28 @@ body {
   transition: transform 150ms ease-out;
   will-change: transform;
 }
+
+/* Copilot sidebar (AGENTS.md §3o): a slide-in panel and a typing-dots
+   "thinking locally" indicator, shown while waiting for a non-streamed
+   reply (see run-conversation.ts for why the copilot doesn't token-
+   stream). Transform/opacity only, same Section 5 compositor rule as
+   every other uv- keyframe, and automatically covered by the global
+   prefers-reduced-motion guard above with no extra work. */
+.uv-copilot-panel {
+  transition: transform 200ms ease-out;
+}
+@keyframes uv-typing-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+.uv-typing-dot {
+  animation: uv-typing-dot 1.2s ease-in-out infinite;
+}
