@@ -1272,6 +1272,172 @@ below for what was ruled out and why.
   field's content, by design, so a user cannot ask the advisor about a
   note's content.
 
+## 3n. Probabilistic FIRE / retirement Monte Carlo engine (ad hoc)
+
+Explicit user request; nothing in `pfw-spec.md` mentions this feature —
+same "build on request, document as ad hoc" treatment as §3k/§3l/§3m.
+
+- **`src/lib/monte-carlo.ts`** (new): pure engine, same `src/lib/`
+  convention as every other engine (§3b) — no DAL/DB access, fully
+  testable with plain data literals. 5,000 independent simulated paths
+  (`DEFAULT_NUM_SIMULATIONS`) each walk forward one year at a time from
+  `currentAge` to `endAge`. Every year draws **three independent** normal
+  random variables via a hand-written Box-Muller transform (no new
+  dependency, matching the project's habit of owning small, well-
+  understood algorithms directly — the CSV tokenizer, the seeded RNG):
+  a growth-asset return, a cash-asset return, and an inflation rate.
+  The two return draws are blended by `growthAllocationShare`; the
+  inflation draw is subtracted to get that year's real return. During
+  working years (`age < retirementAge`) `annualSavingsAgorot` is added
+  after growth; during retirement years `annualSpendAgorot` is
+  subtracted instead. All still `Agorot` at rest, per the money law.
+  - **Sequence-of-returns risk isn't a bolted-on special case** — it
+    falls straight out of drawing returns per-year, in order, and
+    compounding sequentially, rather than applying one average return
+    across the whole horizon. The same crash lands very differently on a
+    path depending on whether it hits right after retirement (little
+    accumulated buffer) or decades earlier (plenty of time to recover
+    before withdrawals start) — that's the phenomenon, reproduced for
+    real by the mechanics of the loop, not asserted separately.
+  - **"Success" is precisely defined**: a path's balance never reaches
+    zero during a *retirement* year, all the way to `endAge`. Hitting
+    zero (or below) during working years does NOT terminate a path —
+    contributions and subsequent good years can genuinely dig a path
+    with a negative starting net worth back into positive territory
+    (this app's real seeded demo user has negative net worth today, more
+    debt than assets — verified live: their default projection starts
+    negative and crosses positive around their mid-40s, exactly the
+    behavior this rule is meant to produce). Only once withdrawals begin
+    with nothing left to withdraw from is a path marked failed, at which
+    point it's filled with zero for every remaining age and the inner
+    loop exits early.
+  - **A real bug this design caught its own test writing**: an extreme-
+    volatility stress test (500% stdDev) compounded a balance past
+    `Number.MAX_SAFE_INTEGER` well within a 50-year horizon, and the
+    first implementation threw `RangeError` from `money.ts`'s
+    `agorot()` mid-simulation — crashing the whole request over one
+    pathological path. Fixed with `safeAgorot`, which clamps the
+    plain-float per-year delta into the safe-integer range before
+    constructing the `Agorot`, rather than chaining
+    `multiplyAgorot`/`addAgorot`/`subtractAgorot` calls that each
+    individually assert the range and throw. Deliberately NOT fixed by
+    capping the per-year return more tightly instead — the math doesn't
+    work out: no return cap generous enough to permit a realistic strong
+    growth year is tight enough to prevent overflow compounded up to 100
+    years (`MAX_SIMULATION_YEARS`), so an astronomically good outcome is
+    treated as a saturated success rather than an error.
+  - **Validation**: `RangeError` for a non-integer/negative `currentAge`,
+    `endAge <= currentAge`, a horizon over `MAX_SIMULATION_YEARS` (100),
+    non-positive or over-capped `numSimulations` (`MAX_NUM_SIMULATIONS`
+    = 20,000, independent of whatever cap the API route applies),
+    negative `annualSavingsAgorot`/`annualSpendAgorot`,
+    `growthAllocationShare` outside [0, 1], or a negative standard
+    deviation. `currentAge >= retirementAge` (already retired) is
+    explicitly NOT an error — pure decumulation from the start is a
+    real, useful scenario, verified by its own test.
+  - **Reproducibility**: `randomFn` is injectable (defaults to
+    `Math.random`); `createSeededRandom` (mulberry32, mirroring — not
+    importing, since `prisma/seed/` isn't a dependency `src/lib` should
+    reach into — `prisma/seed/rng.ts`'s algorithm) makes most of the test
+    suite deterministic. Where a test needs genuine per-path randomness
+    (the savings/spend monotonicity checks), it reuses the *same* seed
+    across both compared runs so only the parameter under test differs.
+- **`src/server/analytics/build-monte-carlo-data.ts`** (new): the
+  DAL-wiring layer, `cache()`-wrapped like `build-dashboard-data.ts`/
+  `build-portfolio-data.ts` (§3c) — primitive arguments, not an options
+  object, specifically so `cache()`'s per-argument comparison can
+  actually dedupe a call. Feeds the engine real data:
+  - `startingNetWorthAgorot` = `computeLiveNetWorth`'s live `netWorth`
+    (can be negative — debts already netted in, per that function's own
+    semantics; not a special case here).
+  - `growthAllocationShare` = `(portfolio + manualAssets) / totalAssets`
+    from the same net-worth breakdown, defaulting to 0.6 for a
+    brand-new account with zero assets (nothing to divide by).
+  - **Historical savings rate**, the task's explicit "pull from the
+    DAL" ask: `getMonthlyIncomeExpenseHistory` over the trailing 90 days
+    (matching the seed data's own rolling window, §3a) is averaged and
+    annualized for both a default `annualSavingsAgorot` (floored at 0 —
+    a real negative cash flow is better represented by a higher
+    `annualSpendAgorot` than by a "negative savings" value the engine's
+    validation would reject anyway) and a default `annualSpendAgorot`.
+  - `currentAge` has **no DAL source at all** — this app never stores a
+    date of birth (law #6: "Never store: ... national IDs, DOB"), so it
+    is necessarily a per-request input the caller supplies (a slider,
+    defaulting to 35 for the very first server-rendered paint) and is
+    never written anywhere. Flagged here explicitly rather than silently
+    adding a birthdate field to make this feature's DAL story look more
+    complete than the app's own privacy law allows.
+  - `serializeMonteCarloAnalytics` is the one place `MonteCarloAnalyticsData`
+    becomes the JSON shape both the route and the page send to the
+    widget — kept in one function so the two call sites can't drift into
+    two different response shapes for what's supposed to be the same
+    data.
+- **`GET /api/analytics/monte-carlo`** (new): the first GET *route
+  handler* in this app — every other read happens via a Server Component
+  calling the DAL directly (the RSC pattern), which is what every prior
+  screen (`/debts`' GET-searchParam extra-budget comparison included)
+  does instead of a separate JSON API. A real route earns its keep here
+  because the widget needs to re-run the simulation interactively as
+  sliders move, without a full page reload. Deliberately skips
+  `guardMutation`'s Origin/CSRF check — Section 2.4's CSRF concern is
+  specific to state-changing requests, and this changes nothing — but
+  keeps identity resolution (`getCurrentUser()`, never a client-supplied
+  id) and rate limiting (20/min per user, tighter than the mutation
+  default, defense-in-depth against a client hammering a compute
+  endpoint even though 5,000 paths is cheap in absolute terms) by
+  calling those primitives directly instead of going through the
+  mutation-shaped wrapper. Zod-validates every query param, including a
+  hard `[0.25, 3]` bound on the volatility multiplier independent of the
+  engine's own `numSimulations` cap.
+- **`/analytics`** (new screen, `src/app/analytics/_components/monte-carlo-widget.tsx`):
+  a probability headline ("94.2% chance..." styling, matching the task's
+  own example), the Tickbar (Phase 0's signature progress meter, reused
+  here for a probability the same way it's reused for budget/goal
+  progress elsewhere), three sliders (retirement age, target annual
+  spend, volatility) plus a plain current-age slider (not one of the
+  three named sliders — a necessity given `currentAge` has no DAL
+  source, not an extra feature), and a Recharts `LineChart` fan chart
+  (p10/median/p90 lines by age) — Recharts, not Chart.js, since Recharts
+  is already this app's charting library (§4) and the task named Chart.js
+  only as an alternative, not a requirement; adding a second charting
+  dependency for one screen would be exactly the kind of unrequested
+  abstraction this project avoids. Every `Line` sets
+  `isAnimationActive={false}`, same rule as every other chart in the app
+  (§3c/§3e — "no live financial numbers are animated"). Debounced
+  (400ms) `fetch` with `AbortController` cancellation on each slider
+  change, so a fast succession of drags doesn't race an old, slow
+  response against a newer one. Cross-linked from `/dashboard` (a small
+  "Retirement analytics →" link) but deliberately not added to
+  `PRIMARY_NAV_ITEMS`/`MobileNav` — same reasoning as `/welcome` (§3f)
+  and `/trading/portfolio` (§3l): reachable by direct link, not one of
+  the spec's 9 primary destinations.
+- **Verified live, not just by test**: `npm run check` clean (553/556,
+  3 skip for the embedding sidecar, unrelated) — 26 new unit tests
+  covering guaranteed-crash/guaranteed-growth determinism (zero-variance
+  inputs make outcomes exactly predictable without needing a seeded RNG
+  at all), zero-savings, zero-starting-net-worth, already-retired,
+  allocation-share isolation at 0 and 1, the extreme-volatility
+  numerical-stability regression above, reproducibility, and
+  savings/spend monotonicity. `curl` against the running dev server
+  against the real seeded demo account: default call (negative starting
+  net worth, 86.6% probability of success, trajectory crossing positive
+  around the mid-40s), an aggressive override (retire at 50, ₪200k/year
+  spend, 2x volatility → 0.82% probability of success — sensibly much
+  worse), malformed/missing `currentAge` and an out-of-range
+  `volatilityMultiplier` both correctly 400, and 21 rapid requests
+  correctly 429 starting at the configured limit. Full production build
+  clean; `verify:client-bundle-secrets` clean.
+- **Known limitations, left as such rather than silently expanded
+  scope**: a single static growth/cash allocation split for the whole
+  horizon, no glide path (a target-date-fund-style shift to more
+  conservative assumptions approaching retirement) — the task asked for
+  "user-defined annual savings/withdrawal adjustments," not a glide
+  path; debts are netted into the single starting `netWorth` figure once
+  and don't separately accrue interest during the simulation (that's
+  what `debt-math.ts`'s own dedicated payoff simulation already models);
+  `numSimulations`/`endAge` are fixed constants, not user-facing
+  controls, since the task named exactly three sliders.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
