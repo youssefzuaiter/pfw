@@ -169,6 +169,14 @@ export async function importTransactions(
               providerTransactionId,
               occurredAt: row.occurredAt,
               amount: BigInt(row.amountAgorot),
+              // The CSV pipeline refuses foreign-currency rows outright
+              // (src/lib/csv-import/, AGENTS.md §3j — importing a USD
+              // amount as shekels would corrupt the ledger by roughly the
+              // FX rate), so every imported row is ILS-native: the native
+              // amount is the agorot amount, and no conversion happened,
+              // hence no exchangeRateAtEntry.
+              currency: "ILS",
+              nativeAmount: BigInt(row.amountAgorot),
               description: row.description,
               merchantName: row.merchantName,
               isManual: false,

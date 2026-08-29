@@ -17,6 +17,10 @@
 // cache — see AGENTS.md for why the more conservative (per-user) reading
 // was chosen given the blanket "all tables are strictly scoped to a user
 // ID" rule stated in the same spec section.
+//
+// ExchangeRate is the opposite deviation, deliberately NOT user-scoped —
+// it holds no user data at all (public daily FX rates), so RLS/tenant
+// scoping doesn't apply to it. See its own model comment.
 
 generator client {
   provider = "prisma-client"
@@ -56,18 +60,64 @@ enum TradeSide {
   SELL
 }
 
+/// AGENTS.md §3k: multi-currency amendment to the original single-ILS law.
+/// ILS remains the app's one base/reporting currency; the other three are
+/// "native" currencies a BankAccount/NotableTransaction/PortfolioHolding/
+/// Trade can be denominated in.
+enum Currency {
+  ILS
+  USD
+  EUR
+  GBP
+}
+
+/// What kind of instrument a PortfolioHolding is. Drives the portfolio
+/// module's allocation breakdown and, more importantly, dividend
+/// expectations: CRYPTO never pays a dividend, so a zero yield there is
+/// correct rather than missing data.
+enum AssetClass {
+  STOCK
+  ETF
+  CRYPTO
+}
+
+/// ANNOUNCED = declared but not yet paid (the upcoming-payout schedule);
+/// PAID = money actually received. The distinction is what decides
+/// whether the payout amount is *stored* (a historical fact) or *derived*
+/// live from today's position — see the Dividend model comment.
+enum DividendStatus {
+  ANNOUNCED
+  PAID
+}
+
 enum AuditAction {
   CREATE
   UPDATE
   DELETE
 }
 
+/// `zk*` columns back the zero-knowledge vault for `GoalContribution.note`
+/// (AGENTS.md §3m) — none of them are secret. `zkSalt` and
+/// `zkKdfIterations` are PBKDF2 parameters (a salt's job is to be public;
+/// the iteration count is stored per-user rather than hardcoded so a
+/// future stronger default doesn't invalidate already-derived keys).
+/// `zkCanaryCiphertext` is a known constant encrypted under the derived
+/// key — verifying a re-entered passphrase means attempting to decrypt
+/// this, which reveals nothing about the passphrase itself. All three
+/// null = the vault has never been set up (the universal fallback state
+/// for every existing user, since this is a new, opt-in feature — see
+/// §3m's migration path for what happens to notes written before it
+/// existed). This app has no passphrase-rotation flow: once set up, these
+/// three columns are immutable — see `setupZkVault`'s doc comment.
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  displayName String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  displayName        String
+  zkSalt             String?
+  zkKdfIterations    Int?
+  zkCanaryCiphertext String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   bankAccounts       BankAccount[]
   categories         Category[]
@@ -82,6 +132,7 @@ model User {
   trades             Trade[]
   netWorthSnapshots  NetWorthSnapshot[]
   merchantEmbeddings MerchantEmbedding[]
+  dividends          Dividend[]
   auditLogs          AuditLog[]
 }
 
@@ -112,7 +163,15 @@ model Category {
 }
 
 /// Credit balances are stored positive = money owed (a $500 credit card
-/// balance is `currentBalance = 50000`, not `-50000`).
+/// balance is `nativeBalance = 50000`, not `-50000`).
+///
+/// `nativeBalance` is the account's own currency's minor units — the only
+/// balance actually stored. There is deliberately no stored ILS-agorot
+/// mirror: a live balance's base-currency value moves every time the FX
+/// rate does, so storing one would immediately go stale (a "derived
+/// truth" violation, AGENTS.md law #5). The DAL computes the ILS
+/// equivalent at read time from the latest `ExchangeRate` row, the same
+/// "today is live, never stored" treatment NetWorthSnapshot already gets.
 model BankAccount {
   id              String          @id @default(cuid())
   userId          String
@@ -122,8 +181,9 @@ model BankAccount {
   last4           String
   accountType     BankAccountType
   nickname        String?
-  /// Agorot.
-  currentBalance  BigInt
+  currency        Currency        @default(ILS)
+  /// Minor units of `currency` (agorot if ILS, cents otherwise).
+  nativeBalance   BigInt
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -136,8 +196,18 @@ model BankAccount {
 /// used for idempotent upserts on re-import; it's null for manually
 /// entered transactions, and Postgres treats multiple NULLs in a unique
 /// constraint as non-colliding, so manual entries never fight each other
-/// over uniqueness. `amount` is signed: negative = expense, positive =
-/// income/credit.
+/// over uniqueness. `amount`/`nativeAmount` are signed: negative =
+/// expense, positive = income/credit.
+///
+/// `amount` (ILS agorot) and `exchangeRateAtEntry` are historical facts
+/// captured ONCE, at entry/import time — like Trade.totalAgorot, a past
+/// transaction's ILS equivalent isn't a "derived truth" violation to
+/// store, because re-deriving it later with today's rate would silently
+/// rewrite history every time FX rates move. `nativeAmount` is the
+/// original ledger fact exactly as it appeared on the native
+/// statement/CSV/form. For an ILS-native transaction, `amount ===
+/// nativeAmount` and `exchangeRateAtEntry` is null (rate is trivially 1,
+/// no real conversion happened).
 model NotableTransaction {
   id                    String      @id @default(cuid())
   userId                String
@@ -149,8 +219,13 @@ model NotableTransaction {
   providerTransactionId String?
   occurredAt            DateTime
   postedAt              DateTime?
-  /// Agorot, signed.
+  currency              Currency    @default(ILS)
+  /// Minor units of `currency`, signed.
+  nativeAmount          BigInt
+  /// ILS agorot equivalent, signed — see model comment.
   amount                BigInt
+  /// ILS per 1 unit of `currency` at entry time. Null when currency = ILS.
+  exchangeRateAtEntry   Decimal?    @db.Decimal(12, 6)
   /// Encrypted at rest — untrusted free text, see file header and
   /// docs/SECURITY.md §3.4 (indirect prompt injection surface).
   description           String
@@ -211,7 +286,14 @@ model GoalContribution {
   /// Agorot, signed.
   amount        BigInt
   contributedAt DateTime
-  /// Encrypted at rest — free text, see file header.
+  /// Zero-knowledge ciphertext (AGENTS.md §3m) — a "zk1:iv:ciphertext"
+  /// blob produced entirely client-side by src/lib/zk-crypto.ts under a
+  /// key derived from the user's master passphrase. NOT covered by the
+  /// server-side field-encryption extension (src/server/db/encrypted-fields.ts)
+  /// — the server stores and returns this opaque string as-is and can
+  /// never decrypt it, which is the entire point. A value still in the
+  /// OLD "v1:iv:tag:ciphertext" format (field-encryption.ts) is a
+  /// pre-migration legacy row — see zk-vault.ts's migration path.
   note          String?
   createdAt     DateTime @default(now())
 
@@ -287,18 +369,29 @@ model ManualAsset {
 /// them. `totalCostBasis` is the total agorot invested in the current
 /// position; weighted-average cost per share is derived at read time
 /// (`totalCostBasis / quantity`), never stored, again per "derived truth".
+///
+/// `nativeCostBasis` is the same total, in the instrument's native
+/// currency (`currency`, USD for every mock symbol today) — both are
+/// historical accumulations of Trade.totalAgorot/nativeTotalAgorot, so
+/// keeping both is consistent with those being stored historical facts,
+/// not a re-derivable aggregate stored twice.
 model PortfolioHolding {
-  id             String   @id @default(cuid())
-  userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  symbol         String
-  quantity       Decimal  @db.Decimal(20, 8)
+  id              String     @id @default(cuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol          String
+  assetClass      AssetClass @default(STOCK)
+  quantity        Decimal    @db.Decimal(20, 8)
+  currency        Currency   @default(USD)
   /// Agorot.
-  totalCostBasis BigInt
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  totalCostBasis  BigInt
+  /// Minor units of `currency`.
+  nativeCostBasis BigInt
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
-  trades Trade[]
+  trades    Trade[]
+  dividends Dividend[]
 
   @@unique([userId, symbol])
 }
@@ -310,27 +403,43 @@ model PortfolioHolding {
 /// trade's own total is a historical fact like a ledger entry, not a
 /// rederivable aggregate. `idempotencyKey` backs the Idempotency-Key
 /// header requirement on trade submission (Section 2.4).
+///
+/// Every ILS (`*Agorot`) figure here has a native-currency counterpart
+/// (`native*`, USD minor units for every mock symbol today) plus
+/// `exchangeRateAtEntry` — the rate actually used for this execution's
+/// conversion, captured once and never recomputed, making explicit and
+/// auditable what was previously only an implicit constant in
+/// mock-market-data.ts (AGENTS.md §3k).
 model Trade {
-  id                 String           @id @default(cuid())
-  userId             String
-  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  portfolioHoldingId String
-  portfolioHolding   PortfolioHolding @relation(fields: [portfolioHoldingId], references: [id], onDelete: Cascade)
-  symbol             String
-  side               TradeSide
-  quantity           Decimal          @db.Decimal(20, 8)
+  id                  String           @id @default(cuid())
+  userId              String
+  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolioHoldingId  String
+  portfolioHolding    PortfolioHolding @relation(fields: [portfolioHoldingId], references: [id], onDelete: Cascade)
+  symbol              String
+  side                TradeSide
+  quantity            Decimal          @db.Decimal(20, 8)
+  currency            Currency         @default(USD)
   /// Agorot, price per share at execution.
-  priceAgorot        BigInt
+  priceAgorot         BigInt
   /// Agorot.
-  totalAgorot        BigInt
+  totalAgorot         BigInt
   /// Agorot, SELL only. The weighted-average cost basis at the moment of
   /// sale isn't reconstructable later without replaying the full trade
   /// history, so this is captured once, at execution time, like
   /// `totalAgorot` — a historical fact, not a "derived truth" violation.
-  realizedPnlAgorot  BigInt?
-  executedAt         DateTime
-  idempotencyKey     String?
-  createdAt          DateTime         @default(now())
+  realizedPnlAgorot   BigInt?
+  /// Minor units of `currency`, price per share at execution.
+  nativePriceAmount   BigInt
+  /// Minor units of `currency`.
+  nativeTotalAmount   BigInt
+  /// Minor units of `currency`, SELL only — see `realizedPnlAgorot`.
+  nativeRealizedPnl   BigInt?
+  /// ILS per 1 unit of `currency`, used for this execution's conversion.
+  exchangeRateAtEntry Decimal          @db.Decimal(12, 6)
+  executedAt          DateTime
+  idempotencyKey      String?
+  createdAt           DateTime         @default(now())
 
   @@unique([userId, idempotencyKey])
   @@index([userId, executedAt])
@@ -369,6 +478,87 @@ model MerchantEmbedding {
   createdAt          DateTime @default(now())
 
   @@unique([userId, merchantKey])
+}
+
+/// A dividend declared on a holding the user owns.
+///
+/// The stored-vs-derived split here is deliberate and follows the same
+/// rule as Trade vs. BankAccount (AGENTS.md law #5):
+///  - `status = PAID` — the payout already happened, so the amount
+///    actually received (`totalNativeAmount`/`totalAgorot`), the share
+///    count it was paid on (`quantityAtPayment`), and the FX rate used
+///    (`exchangeRateAtEntry`) are historical facts, captured once. They
+///    are NOT recomputed later: the position and the rate both move, and
+///    re-deriving would silently rewrite history.
+///  - `status = ANNOUNCED` — the payout hasn't happened yet, so those
+///    four columns are null and the projected amount is computed live
+///    from today's quantity and today's rate. Storing a projection would
+///    go stale the moment either changed.
+///
+/// `amountPerShareNative` is the declared per-share rate, which is a fact
+/// about the *instrument* rather than the position, so it is stored for
+/// both statuses.
+model Dividend {
+  id                   String           @id @default(cuid())
+  userId               String
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portfolioHoldingId   String
+  portfolioHolding     PortfolioHolding @relation(fields: [portfolioHoldingId], references: [id], onDelete: Cascade)
+  /// Denormalized from the holding, same reason as Trade.symbol — blotter/
+  /// schedule display without a join.
+  symbol               String
+  currency             Currency         @default(USD)
+  /// Minor units of `currency`, per single share. Declared rate.
+  amountPerShareNative BigInt
+  /// The date the holding must be owned by to qualify.
+  exDate               DateTime
+  /// The date the cash actually lands.
+  payDate              DateTime
+  status               DividendStatus   @default(ANNOUNCED)
+  /// PAID only — shares held when the dividend was paid.
+  quantityAtPayment    Decimal?         @db.Decimal(20, 8)
+  /// PAID only — minor units of `currency` actually received.
+  totalNativeAmount    BigInt?
+  /// PAID only — ILS agorot actually received.
+  totalAgorot          BigInt?
+  /// PAID only — ILS per 1 unit of `currency` at payment.
+  exchangeRateAtEntry  Decimal?         @db.Decimal(12, 6)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  @@unique([userId, symbol, exDate])
+  @@index([userId, payDate])
+  @@index([userId, portfolioHoldingId])
+}
+
+/// Daily ILS exchange rates, fetched by the background sync service
+/// (src/server/currency/, AGENTS.md §3k). Deliberately NOT user-scoped or
+/// RLS-protected — exchange rates are public market data belonging to no
+/// user, so the blanket per-user scoping convention (see this file's
+/// header) doesn't apply, the same way MerchantEmbedding's per-user
+/// scoping was a deliberate deviation in the opposite direction. ILS
+/// itself never gets a row here — its rate against itself is always
+/// exactly 1 and never looked up (see exchange-rate.ts's IDENTITY_RATE).
+///
+/// `rate` is ILS per 1 unit of `currency`. Stored as Decimal rather than
+/// an integer "micros" column: Prisma/Postgres's Decimal is already exact
+/// base-10 arithmetic (backed by decimal.js, not IEEE754 float), so there
+/// is no float-drift risk here to guard against with a bespoke integer
+/// scaling trick the way agorot/basis-points do for actual money — see
+/// src/lib/exchange-rate.ts, which treats a rate as a plain finite
+/// `number` ratio at the application layer (same reasoning as
+/// money.ts's `multiplyAgorot`'s `factor` parameter).
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  currency  Currency
+  /// ILS per 1 unit of `currency`.
+  rate      Decimal  @db.Decimal(12, 6)
+  asOfDate  DateTime @db.Date
+  source    String
+  fetchedAt DateTime @default(now())
+
+  @@unique([currency, asOfDate])
+  @@index([currency, asOfDate])
 }
 
 /// Append-only. Nothing in the application ever calls `.update()` or

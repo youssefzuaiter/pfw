@@ -4,8 +4,11 @@ import { summarizeGoalProgress, type GoalProgressStatus } from "../../lib/goal-p
 import { agorot, formatAgorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { listGoals } from "../../server/dal/goals";
+import { getZkVaultStatus } from "../../server/dal/zk-vault";
 import { AddContributionForm } from "./_components/add-contribution-form";
+import { ContributionNote } from "./_components/contribution-note";
 import { CreateGoalForm } from "./_components/create-goal-form";
+import { SecureNotesPanel } from "./_components/secure-notes-panel";
 
 export const instant = false;
 
@@ -38,12 +41,28 @@ const STATUS_BADGE: Record<GoalProgressStatus, BadgeVariant> = {
 
 export default async function GoalsPage() {
   const user = await getCurrentUser();
-  const goals = await listGoals(user.id);
+  const [goals, zkVaultStatus] = await Promise.all([listGoals(user.id), getZkVaultStatus(user.id)]);
   const now = new Date();
+
+  // Only counts, never plaintext or ciphertext content — see
+  // ContributionNote for where each note's raw ciphertext actually flows
+  // (as an opaque prop the server never inspects).
+  const legacyNoteCount = goals.reduce(
+    (sum, goal) => sum + goal.contributions.filter((c) => c.note && !c.note.startsWith("zk1:")).length,
+    0,
+  );
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
       <h1 className="font-display text-2xl font-semibold text-fg">Goals</h1>
+
+      <SecureNotesPanel
+        isSetUp={zkVaultStatus.isSetUp}
+        salt={zkVaultStatus.salt}
+        iterations={zkVaultStatus.iterations}
+        canaryCiphertext={zkVaultStatus.canaryCiphertext}
+        legacyNoteCount={legacyNoteCount}
+      />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <CreateGoalForm />
@@ -100,8 +119,9 @@ export default async function GoalsPage() {
                     {[...goal.contributions]
                       .sort((a, b) => b.contributedAt.getTime() - a.contributedAt.getTime())
                       .map((contribution) => (
-                        <li key={contribution.id} className="flex justify-between text-xs text-muted">
+                        <li key={contribution.id} className="flex flex-wrap justify-between gap-x-3 text-xs text-muted">
                           <span>{contribution.contributedAt.toISOString().slice(0, 10)}</span>
+                          <ContributionNote ciphertext={contribution.note} />
                           <span className="font-tabular-figures">{formatAgorot(agorot(Number(contribution.amount)))}</span>
                         </li>
                       ))}

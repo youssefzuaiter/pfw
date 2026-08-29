@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { getMockPriceAgorot, isKnownMockSymbol } from "../../../lib/mock-market-data";
+import { getMockPriceAgorot, getMockPriceUsdCents, isKnownMockSymbol } from "../../../lib/mock-market-data";
 import { guardMutation } from "../../../server/api/guard-mutation";
 import { getIdempotentResponse, storeIdempotentResponse } from "../../../server/api/idempotency";
 import { jsonBadRequest, jsonServerError } from "../../../server/api/responses";
 import { recordAuditLog } from "../../../server/dal/audit-log";
+import { getLatestRateTable } from "../../../server/dal/exchange-rates";
 import { executeTrade, findTradeByIdempotencyKey, listTrades } from "../../../server/dal/portfolio";
 
 type TradeRecord = NonNullable<Awaited<ReturnType<typeof listTrades>>>[number];
@@ -31,9 +32,14 @@ function serializeTrade(trade: TradeRecord) {
     symbol: trade.symbol,
     side: trade.side,
     quantity: trade.quantity.toString(),
+    currency: trade.currency,
     priceAgorot: Number(trade.priceAgorot),
     totalAgorot: Number(trade.totalAgorot),
     realizedPnlAgorot: trade.realizedPnlAgorot !== null ? Number(trade.realizedPnlAgorot) : null,
+    nativePriceAmount: Number(trade.nativePriceAmount),
+    nativeTotalAmount: Number(trade.nativeTotalAmount),
+    nativeRealizedPnl: trade.nativeRealizedPnl !== null ? Number(trade.nativeRealizedPnl) : null,
+    exchangeRateAtEntry: Number(trade.exchangeRateAtEntry),
     executedAt: trade.executedAt.toISOString(),
   };
 }
@@ -94,13 +100,23 @@ export async function POST(request: NextRequest) {
     }
 
     const executedAt = new Date();
-    const priceAgorot = getMockPriceAgorot(symbol, executedAt);
+    // The execution price always comes from the server-side feed at the
+    // moment of execution — the client sends only symbol/side/quantity,
+    // never a price, so it can never dictate its own P&L. The USD->ILS
+    // rate is resolved here too and frozen onto the Trade row, so this
+    // execution's conversion stays reconstructable even after rates move.
+    const rateTable = await getLatestRateTable(executedAt);
+    const nativePriceAmount = getMockPriceUsdCents(symbol, executedAt);
+    const priceAgorot = getMockPriceAgorot(symbol, executedAt, rateTable.USD);
 
     const result = await executeTrade(user.id, {
       symbol,
       side: parsed.data.side,
       quantity,
       priceAgorot,
+      nativePriceAmount,
+      currency: "USD",
+      exchangeRate: rateTable.USD,
       executedAt,
       idempotencyKey,
     });

@@ -7,11 +7,22 @@ import { decryptField, encryptField } from "../crypto/field-encryption";
  * src/server/crypto/field-encryption.ts and the schema file header for
  * why these specific fields). Transparent to every other layer: the DAL
  * reads/writes plaintext strings, this extension does the rest.
+ *
+ * `GoalContribution.note` deliberately does NOT go through this extension
+ * (AGENTS.md §3m) — it moved to zero-knowledge client-side encryption
+ * (src/lib/zk-crypto.ts), which this server-side codec structurally
+ * cannot participate in: the whole point is that the server never holds
+ * a key that can decrypt it. If this extension encrypted it too, every
+ * write would double-encrypt a value that's already ciphertext, and
+ * every read would try to AES-GCM-decrypt a "zk1:..." string with the
+ * wrong key/format and throw. A pre-migration row still in the OLD
+ * "v1:iv:tag:ciphertext" format is read here as a raw, un-decrypted
+ * string too — only `zk-vault.ts`'s one-time migration path is allowed
+ * to call `decryptField` on it directly.
  */
 const ENCRYPTED_FIELDS = {
   bankAccount: ["last4"],
   notableTransaction: ["description"],
-  goalContribution: ["note"],
 } as const;
 
 type EncryptedModelKey = keyof typeof ENCRYPTED_FIELDS;
@@ -88,7 +99,6 @@ export function withEncryptedFields(client: PrismaClient) {
     query: {
       bankAccount: { $allOperations: makeAllOperationsHandler("bankAccount") },
       notableTransaction: { $allOperations: makeAllOperationsHandler("notableTransaction") },
-      goalContribution: { $allOperations: makeAllOperationsHandler("goalContribution") },
     },
   });
 }

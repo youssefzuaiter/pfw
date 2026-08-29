@@ -12,7 +12,12 @@ const brand = Symbol("Agorot");
 
 export type Agorot = number & { readonly [brand]: true };
 
-function assertFiniteInteger(value: number, label: string): void {
+/**
+ * Shared by every branded integer-minor-unit type in the app (this file's
+ * `Agorot`, `currency.ts`'s `NativeAmount`) — exported so those sibling
+ * modules don't duplicate the same finite/safe-integer check.
+ */
+export function assertFiniteInteger(value: number, label: string): void {
   if (!Number.isInteger(value)) {
     throw new RangeError(`${label} must be an integer, received ${value}`);
   }

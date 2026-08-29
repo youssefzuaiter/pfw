@@ -1,7 +1,11 @@
 import "dotenv/config";
 import { agorot, multiplyAgorot, subtractAgorot } from "../../src/lib/money";
+import { multiplyNativeAmount, nativeAmount } from "../../src/lib/currency";
+import { convertNativeAmountToAgorot } from "../../src/lib/exchange-rate";
+import { getMockDividendSchedule, getMockInstrument, listMockInstruments } from "../../src/lib/mock-market-data";
 import { accrueInterest, bps } from "../../src/lib/apr";
 import { createAdminClient } from "../../src/server/db/admin-client";
+import { encryptField } from "../../src/server/crypto/field-encryption";
 import {
   BANKS,
   CATEGORIES,
@@ -9,7 +13,6 @@ import {
   MERCHANTS_BY_CATEGORY,
   MOCK_USD_TO_ILS_RATE,
   SEED_USER,
-  US_EQUITY_SYMBOLS,
 } from "./israeli-data";
 import { SeededRng, getMonthlySeed, monthKeyFor } from "./rng";
 
@@ -52,14 +55,6 @@ const SPENDING_RANGES_ILS: Record<string, [number, number]> = {
   utilities: [80, 450],
   health: [20, 600],
   shopping: [40, 900],
-};
-
-const USD_BASE_PRICE: Record<string, number> = {
-  AAPL: 190,
-  MSFT: 410,
-  GOOGL: 165,
-  AMZN: 180,
-  NVDA: 135,
 };
 
 async function main() {
@@ -110,7 +105,7 @@ async function main() {
       last4: String(rng.int(1000, 9999)),
       accountType: "CHECKING",
       nickname: 'Current Account [עו"ש]',
-      currentBalance: ils(rng.int(5_000, 25_000)),
+      nativeBalance: ils(rng.int(5_000, 25_000)),
     },
   });
   const savings = await prisma.bankAccount.create({
@@ -120,7 +115,7 @@ async function main() {
       last4: String(rng.int(1000, 9999)),
       accountType: "SAVINGS",
       nickname: "Savings [חיסכון]",
-      currentBalance: ils(rng.int(20_000, 150_000)),
+      nativeBalance: ils(rng.int(20_000, 150_000)),
     },
   });
   const creditCard = await prisma.bankAccount.create({
@@ -131,7 +126,7 @@ async function main() {
       accountType: "CREDIT_CARD",
       nickname: "Visa Cal [ויזה כאל]",
       // Credit balances are stored positive = money owed.
-      currentBalance: ils(rng.int(500, 8_000)),
+      nativeBalance: ils(rng.int(500, 8_000)),
     },
   });
 
@@ -139,6 +134,11 @@ async function main() {
   for (let m = 0; m < 3; m++) {
     const occurredAt = daysAgo(now, m * 30);
     occurredAt.setUTCDate(1);
+    // Hoisted, not inlined twice: `amount` and `nativeAmount` must be the
+    // same value for an ILS-native row, and calling rng.int() a second
+    // time would both desync them and consume an extra RNG draw, breaking
+    // the monthly-seeded determinism every later value depends on.
+    const salaryAmount = ils(rng.int(12_000, 18_000));
     await prisma.notableTransaction.create({
       data: {
         userId: user.id,
@@ -146,7 +146,9 @@ async function main() {
         categoryId: categoryId("salary"),
         providerTransactionId: `seed-salary-${m}`,
         occurredAt,
-        amount: ils(rng.int(12_000, 18_000)),
+        currency: "ILS",
+        amount: salaryAmount,
+        nativeAmount: salaryAmount,
         description: EMPLOYER_NAME,
         merchantName: EMPLOYER_NAME,
         isManual: false,
@@ -155,6 +157,7 @@ async function main() {
 
     const rentDate = daysAgo(now, m * 30);
     rentDate.setUTCDate(3);
+    const rentAmount = ils(-rng.int(3_500, 5_500));
     await prisma.notableTransaction.create({
       data: {
         userId: user.id,
@@ -162,7 +165,9 @@ async function main() {
         categoryId: categoryId("rent"),
         providerTransactionId: `seed-rent-${m}`,
         occurredAt: rentDate,
-        amount: ils(-rng.int(3_500, 5_500)),
+        currency: "ILS",
+        amount: rentAmount,
+        nativeAmount: rentAmount,
         description: "Monthly rent [שכירות חודשית]",
         isManual: false,
       },
@@ -185,6 +190,7 @@ async function main() {
     const [min, max] = SPENDING_RANGES_ILS[categoryDef.slug] ?? [20, 200];
     const isManual = rng.bool(0.1);
     const needsReview = i < 3;
+    const spendAmount = ils(-rng.int(min, max));
 
     await prisma.notableTransaction.create({
       data: {
@@ -193,7 +199,9 @@ async function main() {
         categoryId: needsReview ? categoryId("uncategorized") : categoryId(categoryDef.slug),
         providerTransactionId: isManual ? null : `seed-txn-${providerCounter++}`,
         occurredAt,
-        amount: ils(-rng.int(min, max)),
+        currency: "ILS",
+        amount: spendAmount,
+        nativeAmount: spendAmount,
         description: merchant,
         merchantName: merchant,
         isManual,
@@ -226,7 +234,16 @@ async function main() {
         goalId: emergencyFund.id,
         amount: ils(rng.int(800, 2_000)),
         contributedAt: daysAgo(now, m * 30),
-        note: m === 5 ? "First deposit [הפקדה ראשונה]" : undefined,
+        // Deliberately seeded in the OLD server-side field-encryption
+        // format, not left as plaintext or re-encrypted via zk-crypto.ts
+        // (which can't run here anyway — it's browser/WebCrypto-only and
+        // guarded against server-side use, tests/guards/zk-client-only.test.ts).
+        // GoalContribution.note left the Prisma encrypted-fields extension
+        // when the zero-knowledge vault shipped (AGENTS.md §3m), so this
+        // is now the one realistic "legacy note" the seeded demo user has
+        // — exactly what /goals' "Migrate N legacy note(s)" flow exists
+        // to demonstrate.
+        note: m === 5 ? encryptField("First deposit [הפקדה ראשונה]") : undefined,
       },
     });
   }
@@ -330,27 +347,71 @@ async function main() {
   });
 
   // --- Portfolio holdings + trades --------------------------------------------
-  const symbols = rng.shuffle(US_EQUITY_SYMBOLS).slice(0, 4);
+  // Deliberately spans all three asset classes so the portfolio screen's
+  // allocation breakdown and dividend schedule have something real to
+  // show — including a crypto position that correctly pays nothing.
+  const instruments = listMockInstruments();
+  const pickByClass = (assetClass: "STOCK" | "ETF" | "CRYPTO", count: number) =>
+    rng.shuffle(instruments.filter((i) => i.assetClass === assetClass).map((i) => i.symbol)).slice(0, count);
+
+  const symbols = [...pickByClass("STOCK", 3), ...pickByClass("ETF", 1), ...pickByClass("CRYPTO", 1)];
+
+  // The rate the seeded purchases are priced at. Prefer the latest really-
+  // synced rate over the fixed MOCK_USD_TO_ILS_RATE: with a fictional
+  // historical rate, every seeded position shows the gap between that
+  // number and today's real rate as a uniform double-digit "loss" that has
+  // nothing to do with price movement — technically correct FX math, but
+  // it buries the actual per-instrument performance the portfolio screen
+  // exists to show. Falls back to the fixed constant when no rate has been
+  // synced (offline, fresh install), so seeding never depends on network.
+  const latestUsdRate = await prisma.exchangeRate.findFirst({
+    where: { currency: "USD" },
+    orderBy: { asOfDate: "desc" },
+  });
+  const purchaseRate = latestUsdRate ? Number(latestUsdRate.rate) : MOCK_USD_TO_ILS_RATE;
+
   for (const symbol of symbols) {
-    const usdBase = USD_BASE_PRICE[symbol];
+    const instrument = getMockInstrument(symbol);
+    const usdBase = instrument.usdBasePrice;
 
-    const buy1Qty = rng.int(2, 10);
-    const buy1PriceAgorot = agorot(Math.round(usdBase * MOCK_USD_TO_ILS_RATE * 100));
+    // These are US-listed instruments, natively priced in USD cents; the
+    // ILS figures are that native price converted at `purchaseRate`,
+    // frozen onto each Trade row as exchangeRateAtEntry.
+    //
+    // Crypto is bought in fractional units, not whole coins — a whole-unit
+    // BTC position would be worth more than every other holding combined
+    // and flatten the allocation chart into a single bar.
+    const buy1Qty =
+      instrument.assetClass === "CRYPTO" ? Number((rng.int(5, 40) / 100).toFixed(2)) : rng.int(2, 10);
+    const buy1NativePrice = nativeAmount(Math.round(usdBase * 100));
+    const buy1PriceAgorot = convertNativeAmountToAgorot(buy1NativePrice, "USD", purchaseRate);
     const buy1Total = multiplyAgorot(buy1PriceAgorot, buy1Qty);
-    const buy1Date = daysAgo(now, 60);
+    const buy1NativeTotal = multiplyNativeAmount(buy1NativePrice, buy1Qty);
+    // Opened over a year ago on purpose: a position younger than one
+    // dividend cycle would have no *paid* dividends at all, leaving the
+    // portfolio screen's income and trailing-yield figures empty and the
+    // feature effectively undemonstrated.
+    const buy1Date = daysAgo(now, 400);
 
-    const buy2Qty = rng.int(1, 5);
+    const buy2Qty =
+      instrument.assetClass === "CRYPTO" ? Number((rng.int(3, 20) / 100).toFixed(2)) : rng.int(1, 5);
     const priceDrift = 1 + (rng.float() - 0.5) * 0.1; // +/-5%
-    const buy2PriceAgorot = agorot(Math.round(usdBase * MOCK_USD_TO_ILS_RATE * priceDrift * 100));
+    const buy2NativePrice = nativeAmount(Math.round(usdBase * priceDrift * 100));
+    const buy2PriceAgorot = convertNativeAmountToAgorot(buy2NativePrice, "USD", purchaseRate);
     const buy2Total = multiplyAgorot(buy2PriceAgorot, buy2Qty);
-    const buy2Date = daysAgo(now, 20);
+    const buy2NativeTotal = multiplyNativeAmount(buy2NativePrice, buy2Qty);
+    const buy2Date = daysAgo(now, 120);
 
+    const holdingQuantity = buy1Qty + buy2Qty;
     const holding = await prisma.portfolioHolding.create({
       data: {
         userId: user.id,
         symbol,
-        quantity: String(buy1Qty + buy2Qty),
+        assetClass: instrument.assetClass,
+        currency: "USD",
+        quantity: String(holdingQuantity),
         totalCostBasis: BigInt(buy1Total) + BigInt(buy2Total),
+        nativeCostBasis: BigInt(buy1NativeTotal) + BigInt(buy2NativeTotal),
       },
     });
 
@@ -360,9 +421,13 @@ async function main() {
         portfolioHoldingId: holding.id,
         symbol,
         side: "BUY",
+        currency: "USD",
         quantity: String(buy1Qty),
         priceAgorot: BigInt(buy1PriceAgorot),
         totalAgorot: BigInt(buy1Total),
+        nativePriceAmount: BigInt(buy1NativePrice),
+        nativeTotalAmount: BigInt(buy1NativeTotal),
+        exchangeRateAtEntry: String(purchaseRate),
         executedAt: buy1Date,
         idempotencyKey: `seed-trade-${symbol}-1`,
       },
@@ -373,13 +438,65 @@ async function main() {
         portfolioHoldingId: holding.id,
         symbol,
         side: "BUY",
+        currency: "USD",
         quantity: String(buy2Qty),
         priceAgorot: BigInt(buy2PriceAgorot),
         totalAgorot: BigInt(buy2Total),
+        nativePriceAmount: BigInt(buy2NativePrice),
+        nativeTotalAmount: BigInt(buy2NativeTotal),
+        exchangeRateAtEntry: String(purchaseRate),
         executedAt: buy2Date,
         idempotencyKey: `seed-trade-${symbol}-2`,
       },
     });
+
+    // --- Dividends for this holding ------------------------------------
+    // Only dividends whose ex-date falls after the position was actually
+    // opened count — a payout the user wasn't holding for never happened
+    // to them, and seeding one would inflate reported dividend income.
+    for (const event of getMockDividendSchedule(symbol, now)) {
+      if (event.exDate.getTime() < buy1Date.getTime()) continue;
+
+      const alreadyPaid = event.payDate.getTime() <= now.getTime();
+      if (!alreadyPaid) {
+        // Announced: the payout amount is derived live from the position
+        // and rate at read time, so nothing is frozen here.
+        await prisma.dividend.create({
+          data: {
+            userId: user.id,
+            portfolioHoldingId: holding.id,
+            symbol,
+            currency: "USD",
+            amountPerShareNative: BigInt(event.amountPerShareNative),
+            exDate: event.exDate,
+            payDate: event.payDate,
+            status: "ANNOUNCED",
+          },
+        });
+        continue;
+      }
+
+      // Paid: freeze what was actually received, at the historical seed
+      // rate — same treatment as the seeded trades above.
+      const totalNative = multiplyNativeAmount(event.amountPerShareNative, holdingQuantity);
+      const totalAgorot = convertNativeAmountToAgorot(totalNative, "USD", purchaseRate);
+      await prisma.dividend.create({
+        data: {
+          userId: user.id,
+          portfolioHoldingId: holding.id,
+          symbol,
+          currency: "USD",
+          amountPerShareNative: BigInt(event.amountPerShareNative),
+          exDate: event.exDate,
+          payDate: event.payDate,
+          status: "PAID",
+          quantityAtPayment: String(holdingQuantity),
+          totalNativeAmount: BigInt(totalNative),
+          totalAgorot: BigInt(totalAgorot),
+          exchangeRateAtEntry: String(purchaseRate),
+        },
+      });
+    }
   }
 
   // --- Net worth snapshots: 90-day illustrative trend -------------------------

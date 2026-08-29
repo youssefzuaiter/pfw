@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseShekelsToAgorot } from "../../../../../lib/money";
 import { guardMutation } from "../../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonNotFound, jsonServerError } from "../../../../../server/api/responses";
+import { ZkCiphertextSchema } from "../../../../../server/api/zk-validation";
 import { recordAuditLog } from "../../../../../server/dal/audit-log";
 import { addGoalContribution } from "../../../../../server/dal/goals";
 
@@ -10,7 +11,10 @@ const BodySchema = z.object({
   // Signed shekel string: "500" for a contribution, "-500" for a withdrawal.
   amount: z.string().min(1),
   contributedAt: z.string().datetime().optional(),
-  note: z.string().trim().max(200).optional(),
+  // Zero-knowledge ciphertext only (AGENTS.md §3m) — the client encrypts
+  // client-side before this ever reaches the server; a plaintext string
+  // here is rejected, not silently accepted and left unencrypted.
+  note: ZkCiphertextSchema.optional(),
 });
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

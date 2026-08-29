@@ -1,7 +1,10 @@
 # PFW — Agent Context
 
 PFW is a greenfield personal finance operating system and simulated trading
-dashboard, built against mock Israeli banking data, single currency (₪).
+dashboard, built against mock Israeli banking data. ₪ (ILS) is the app's
+one base/reporting currency; multi-currency support (USD/EUR/GBP native
+amounts alongside the ILS equivalent) was added ad hoc post-Phase 8 — see
+§3k, which amends law #3 below.
 Stack: Next.js 16 (App Router), React 19, TypeScript, PostgreSQL 17, Prisma 7,
 Tailwind CSS 4, Recharts, Zustand, Anthropic SDK.
 
@@ -25,9 +28,18 @@ These apply to every line of code in this repo, in every phase:
    *only* place amounts become display text, currency token ₪).
 2. **APR is basis points.** 7.25% = 725 bps. Implemented in `src/lib/apr.ts`
    — the `BasisPoints` branded type, conversions, `accrueInterest`.
-3. **Single currency (shekels), mock Israeli banking data.** The trading desk
-   prices US equities in shekels (converted once at trade time, never
-   re-converted historically — see decision #3 below).
+3. **ILS is the one base currency; mock Israeli banking data.** ~~Originally
+   "single currency (shekels)"~~ — amended post-Phase 8 (§3k) to add real
+   multi-currency support: `BankAccount`, `NotableTransaction`,
+   `PortfolioHolding`, and `Trade` can be natively denominated in
+   USD/EUR/GBP, always alongside an ILS agorot equivalent. Every aggregate
+   figure (net worth, dashboard totals, insight generators) is still
+   computed in ILS agorot. The trading desk still prices US equities
+   natively in USD, converted to shekels — for a *completed* trade this
+   conversion happens once, at execution time, and is never re-converted
+   historically (see decision #3 below); a *live* balance (a foreign-
+   currency bank account's current balance) converts at the latest synced
+   rate instead, since a live figure going stale would violate law #5.
 4. **Hebrew regex boundary safety.** `\b` fails beside Hebrew characters —
    verified for real: `/\bקפה\b/` cannot match "קפה" *anywhere*, even as a
    clean whole word, because Hebrew letters aren't `\w` so neither edge of
@@ -872,6 +884,394 @@ which had described this as designed-but-not-built since Phase 0.
   another user's `bankAccountId` **404 (never 403)**. The dev database
   was re-seeded afterward so no test rows were left behind.
 
+## 3k. Multi-currency support, part 1: schema & math (ad hoc, in progress)
+
+Explicit user request to reverse the Phase 0 single-currency decision.
+Given the scope (schema, DAL, every screen, seed data, CSV import,
+advisor tools all assumed ₪-only), this landed in stages with a checkpoint
+after schema + math, at the user's choice — **this section covers that
+first stage only**; the sync service, DAL/route/seed wiring, and UI
+localization are not built yet (tracked as the obvious next steps below).
+
+- **Scope decision (user-confirmed)**: only `BankAccount`,
+  `NotableTransaction`, `PortfolioHolding`, and `Trade` carry native-
+  currency fields. `Budget`, `Goal`, `Debt`, `ManualAsset`,
+  `NetWorthSnapshot` stay ILS-only — they're targets/aggregates against
+  the user's one reporting currency, not raw foreign-currency facts.
+- **`src/lib/currency.ts`** (new): `CurrencyCode` ("ILS" | "USD" | "EUR" |
+  "GBP"), `BASE_CURRENCY = "ILS"`, and `NativeAmount` — a branded integer-
+  minor-units type exactly parallel to `money.ts`'s `Agorot`, just not
+  assumed to be ILS (arithmetic, parsing, formatting all mirrored;
+  `money.ts`'s `assertFiniteInteger` was exported so both share the same
+  integer/safe-integer check rather than duplicating it).
+  `formatNativeAmount` is the second (and only other) place a monetary
+  value becomes display text, alongside `formatAgorot` — it always tags
+  the figure with its currency symbol so a native amount is never
+  mistaken for a ₪ figure in a mixed list. All four currencies share the
+  same 2-decimal minor-unit scale, which is what lets one conversion
+  formula work for all of them without a per-currency scale factor
+  (documented at the one place that matters, `exchange-rate.ts`) —
+  flagged as an assumption that would need revisiting if a zero-decimal
+  currency (e.g. JPY) were ever added.
+- **`src/lib/exchange-rate.ts`** (new): a rate is always "ILS per 1 unit
+  of the foreign currency", treated as a plain finite `number` ratio —
+  not a bespoke branded/integer-scaled type — per the same reasoning
+  `money.ts`'s `multiplyAgorot` already gives for its `factor` parameter:
+  a ratio isn't money, and every result derived from it is rounded back
+  to an exact integer minor-unit amount before it's ever stored or
+  compared. `convertNativeAmountToAgorot`/`convertAgorotToNativeAmount`
+  short-circuit to a no-op for ILS (never touch the rate argument at
+  all, so an invalid/zero rate can't break an ILS-only code path).
+  `FALLBACK_RATES` (USD 3.7, EUR 4.0, GBP 4.7) is the hardcoded table for
+  when no live rate has been synced yet — the actual sync service (fetch
+  + cache + real fallback wiring) is explicit next-step work, not built
+  in this pass.
+- **Schema** (`prisma/schema.prisma`, migration
+  `20260828172112_multi_currency_support`, applied + verified against the
+  real local Postgres, not just written): new `Currency` enum; new
+  `ExchangeRate` model — **deliberately NOT user-scoped or RLS-protected**,
+  since it holds no user data (public daily FX rates), the same kind of
+  documented deviation as `MerchantEmbedding`'s but in the opposite
+  direction; `pfw_runtime` already has full DML on it for free via the
+  existing `ALTER DEFAULT PRIVILEGES` blanket grant from
+  `20260827133632_rls_and_runtime_role`, confirmed by querying
+  `information_schema.role_table_grants` directly rather than assumed.
+  - `BankAccount.currentBalance` renamed to `nativeBalance` (native
+    minor units) with a new `currency` column; **no stored ILS mirror at
+    all** — a live balance's base-currency value moves every time the FX
+    rate does, so storing one would go stale immediately (a "derived
+    truth" violation, law #5). The ILS equivalent is meant to be computed
+    at read time from the latest `ExchangeRate` row — DAL wiring for that
+    is next-step work.
+  - `NotableTransaction` gained `currency`, `nativeAmount`, and a nullable
+    `exchangeRateAtEntry` (`Decimal(12,6)`, null for ILS). The existing
+    `amount` column keeps its exact original meaning (ILS agorot) and is
+    now explicitly documented as a historical fact captured once at entry
+    time — like `Trade.totalAgorot` already was — rather than something
+    that should ever be recomputed with today's rate.
+  - `PortfolioHolding` gained `currency` (default USD) and
+    `nativeCostBasis`; `Trade` gained `currency` (default USD),
+    `nativePriceAmount`, `nativeTotalAmount`, `nativeRealizedPnl`, and a
+    required `exchangeRateAtEntry` — making explicit and auditable what
+    was previously only an implicit hardcoded constant in
+    `mock-market-data.ts`.
+  - **Migration had to hand-backfill existing seeded rows** —
+    `prisma migrate dev` refused to run non-interactively and correctly
+    flagged that new required columns had no default against non-empty
+    tables. Backfilled by hand in the migration SQL: ILS accounts/
+    transactions mirror their old value into the new native column 1:1;
+    existing USD trades/holdings invert the historical mock rate (3.7
+    ILS/USD, the constant `mock-market-data.ts` used before this change)
+    to derive their native-USD figures — verified after applying by
+    querying the actual rows back (e.g. a trade with `priceAgorot=61050`
+    now shows `nativePriceAmount=16500`, `exchangeRateAtEntry=3.700000`,
+    and `61050 / 3.7 = 16500` exactly).
+- **`src/lib/mock-market-data.ts`**: no longer hardcodes
+  `MOCK_USD_TO_ILS_RATE` — `getMockPriceUsdCents` is now the pure native-
+  USD-cents price (no rate involved at all), and `getMockPriceAgorot`/
+  `getMockPriceHistory` take an optional `usdToIlsRate` parameter
+  (defaulting to `FALLBACK_RATES.USD` so existing callers/tests keep
+  working unchanged) instead of baking the rate in.
+- **`src/lib/portfolio-math.ts`**: `HoldingPosition` gained `currency` and
+  `nativeCostBasis`; `applyBuy`/`applySell`/`unrealizedPnl` all now take
+  and return the native-currency figure in lockstep with the existing
+  agorot one (own parallel weighted-average-cost math, not a conversion
+  of the agorot result) — `unrealizedPnl`'s return type changed from a
+  bare `Agorot` to `{ pnl, nativePnl }`, a breaking signature change for
+  its callers (see below).
+- **Tests**: `currency.test.ts` and `exchange-rate.test.ts` (new, mirror
+  `money.test.ts`'s structure) cover the same edge cases `money.test.ts`
+  does for its own type, plus rate-specific ones (rounding at the ILS/
+  non-ILS boundary, zero/negative amounts, non-positive-rate rejection,
+  the ILS short-circuit ignoring an invalid rate entirely).
+  `mock-market-data.test.ts` and `portfolio-math.test.ts` updated for the
+  new signatures. All pass; `npm run test` is 451/451 (up from 310 pre-
+  Phase-6, un-tallied since — unit/component layer only touches pure
+  functions, none of which broke).
+- **Known, expected, NOT-yet-fixed breakage — RESOLVED in §3l.** At this
+  checkpoint `npx tsc --noEmit` was red (every call site listed here still
+  constructed the old shape). The next pass (§3l) updated every one of
+  them — the seed script, `net-worth.ts`/`portfolio.ts`/
+  `transaction-import.ts`, `src/app/trading/page.tsx`,
+  `src/server/advisor/tools.ts`, and `tests/integration/idor.test.ts`'s
+  fixtures — and `npm run check` is clean. Left as-written below for the
+  historical record of what the checkpoint actually looked like.
+- **Explicit next steps** — (1) the exchange-rate sync service and (2) the
+  DAL/route/seed wiring were completed in §3l, alongside unrelated work
+  (asset classes, dividends) bundled into the same pass. Still open: (3)
+  dashboard/transactions/account-card UI for a native-vs-base-currency
+  toggle; (4) a currency-conversion edge-case test suite beyond what
+  `currency.test.ts`/`exchange-rate.test.ts` already cover, if the user
+  wants more than that unit-level coverage.
+
+## 3l. Investment portfolio & dividend tracking (ad hoc, extends §3k)
+
+Completes the multi-currency checkpoint from §3k (exchange-rate sync +
+DAL/route/seed wiring) and, in the same pass, adds asset-class-aware
+portfolio analytics and dividend tracking. **Extends the existing
+`PortfolioHolding`/`Trade` models — there is no separate/parallel
+"investment asset" table.** A `PortfolioHolding` gained an `assetClass`
+column; a new `Dividend` model hangs off it by FK, the same shape every
+other user-owned model in this schema takes.
+
+- **`src/server/currency/rate-sync.ts`** (new): daily FX sync against
+  Frankfurter (`api.frankfurter.dev`, ECB-sourced, no API key — see
+  §3k's next-steps note for why this provider was chosen). The response
+  is untrusted input crossing a trust boundary like any other — Zod-
+  validated, every rate re-checked positive/finite, anything unsupported
+  discarded — so a malformed or hostile response can only make a sync
+  *fail*, never write a garbage rate. Never throws: every consumer
+  already degrades to the last stored rate or `FALLBACK_RATE_TABLE`, so a
+  provider outage is a logged non-event. `scripts/sync-exchange-rates.ts`
+  / `npm run sync:rates` is the manual/cron entry point — wiring an
+  actual scheduled cron job is a deployment step, not built here.
+- **`src/server/dal/exchange-rates.ts`** (new): the one DAL module that
+  deliberately skips `withUserScope` — `ExchangeRate` has no RLS policy
+  (§3k) and setting `app.current_user_id` for a table no policy reads
+  would be ceremony implying a scoping guarantee that doesn't exist.
+  `getLatestRateTable()` is the read path every screen/route now uses;
+  it always returns a full table (falling back per-currency to
+  `FALLBACK_RATE_TABLE`) rather than throwing, since a missing rate must
+  degrade a conversion, not 500 the dashboard.
+- **Every call site §3k left broken is now wired to real rates**:
+  `net-worth.ts` (a foreign-currency `BankAccount.nativeBalance`
+  converts live at read time — never stored, per law #5),
+  `dal/portfolio.ts`'s `executeTrade` (freezes `exchangeRateAtEntry` onto
+  the `Trade` row at execution, same historical-fact treatment as
+  `totalAgorot`), `POST /api/trades`, `build-dashboard-data.ts`,
+  `advisor/tools.ts`'s `list_portfolio_holdings`, `/trading/page.tsx`,
+  and the seed script (prices seeded trades off whatever rate is actually
+  in the DB, falling back to the old fixed constant only when nothing's
+  been synced yet — see the seed script's own comment for why a
+  fictional historical rate would otherwise bury real per-instrument
+  performance under a uniform FX-drift artifact).
+- **`prisma/schema.prisma`**, migration
+  `20260828175500_portfolio_asset_class_and_dividends` (applied + RLS
+  verified against real Postgres): new `AssetClass` (`STOCK`/`ETF`/
+  `CRYPTO`) and `DividendStatus` (`ANNOUNCED`/`PAID`) enums;
+  `PortfolioHolding.assetClass` (backfilled `STOCK` for existing rows —
+  correct, not a placeholder, since every pre-existing holding really is
+  a US equity); new `Dividend` model, user-scoped and RLS-`FORCE`d like
+  every other user table.
+  - **Stored vs. derived split mirrors `Trade`/`BankAccount`** (law #5):
+    an `ANNOUNCED` dividend's four payout columns
+    (`quantityAtPayment`/`totalNativeAmount`/`totalAgorot`/
+    `exchangeRateAtEntry`) are null and the projected amount is computed
+    live from today's quantity and rate; marking it `PAID`
+    (`settleDividend` in `dal/dividends.ts`) freezes all four as
+    historical facts, never recomputed afterward. `amountPerShareNative`
+    (the declared rate) is stored for both statuses — it's a fact about
+    the instrument, not the position.
+  - `@@unique([userId, symbol, exDate])` makes recording idempotent: one
+    instrument declares exactly one dividend per ex-date, so a re-run
+    sync/seed updates that row instead of double-counting income once
+    it's marked paid.
+- **`src/lib/mock-market-data.ts` grew from 5 hardcoded US-equity symbols
+  to a 10-instrument universe** (`MOCK_INSTRUMENTS`) spanning all three
+  asset classes, each with a declared dividend rate or `null` — `null` is
+  a real fact (crypto and several growth stocks genuinely pay nothing),
+  not missing data. `getMockDividendSchedule(symbol)` derives a
+  deterministic ex-date/pay-date calendar per instrument (same
+  hash-seeded-per-symbol determinism as the price feed, so it needs no
+  storage and agrees with itself across the seed script, DAL, and tests
+  with no coordination) — pay date is 21 days after ex-date, a typical
+  real-world lag; a non-dividend instrument returns `[]`, which callers
+  must treat as a real zero.
+- **`src/lib/portfolio-analytics.ts`** (new): pure functions over
+  already-fetched data, same convention as every other `src/lib/` engine
+  (§3b) — position/portfolio return (unrealized gain, realized gain read
+  from `Trade.realizedPnlAgorot`, dividend income read from `PAID`
+  `Dividend` rows, combined into one "total return" figure so a
+  dividend-paying portfolio's performance isn't understated by
+  unrealized-gain-alone), allocation-by-asset-class, trailing-12-month
+  dividend yield (actual paid amounts, deliberately not a forward
+  projection off the declared rate), and the upcoming-payout schedule
+  (`buildUpcomingPayouts` — excludes symbols held at quantity 0, since a
+  fully-liquidated holding is kept in the DB for its trade history but
+  will receive nothing). Both `PositionReturn.unrealizedReturnRate` and
+  `PortfolioReturn.totalReturnRate` are `null` — not `0` — for a zero
+  cost basis, since a percentage return on nothing invested is undefined
+  and `0%` would misleadingly read as "flat."
+- **`src/server/portfolio/build-portfolio-data.ts`** (new): assembles
+  everything `/trading/portfolio` renders, `cache()`-wrapped for the same
+  request-scoping reason `build-dashboard-data.ts` is (§3c) — per-user
+  financial data, never a cross-request cache.
+- **`/trading/portfolio`** (new screen, `src/app/trading/_components/`:
+  `portfolio-summary.tsx`, `allocation-bar.tsx`, `positions-table.tsx`,
+  `dividend-schedule.tsx`): summary totals (cost basis, market value,
+  unrealized/realized/dividend gain, total return), allocation by asset
+  class, an open-positions table with per-position trailing yield, and
+  the upcoming dividend schedule. Cross-linked with `/trading` (a small
+  "Trading desk / Portfolio" tab switcher on both screens) but
+  deliberately not added to `PRIMARY_NAV_ITEMS`/`MobileNav` — same
+  reasoning as `/welcome` (§3f): it's a sub-view of the trading screen,
+  not one of the spec's 9 primary destinations.
+- **Seed data**: picks 3 stocks + 1 ETF + 1 crypto per run (was 4 US
+  equities), opens the position 400 days back rather than 60 (a position
+  younger than one dividend cycle would have zero *paid* dividends,
+  leaving the income/yield figures empty and the feature undemonstrated
+  in the seeded demo), and generates both `ANNOUNCED` and `PAID`
+  `Dividend` rows from `getMockDividendSchedule`, skipping any dividend
+  whose ex-date predates the position — a payout the user wasn't holding
+  for never happened to them. Crypto is bought in fractional units
+  (0.05–0.40 BTC/ETH-equivalent, not whole coins) so one crypto position
+  doesn't dwarf every other holding and flatten the allocation chart.
+- **Verified, not just written**: migration applied against real
+  Postgres with RLS confirmed on `Dividend`; `npm run db:seed` produces
+  real stock/ETF/crypto holdings with both announced and paid dividends;
+  `/trading/portfolio` hand-verified with `curl` (200) and by reading the
+  rendered data end-to-end from DAL through the analytics engine to the
+  page; full `npm run check` is clean — typecheck, lint, and
+  508/511 tests passing (3 skip only for the embedding sidecar not
+  running, unrelated, same as every prior phase).
+- **Not built, out of scope for this pass**: an advisor tool exposing
+  dividend data (the 10 existing tools are untouched beyond the currency
+  wiring above); a route to manually record/settle a dividend from the
+  UI (`dal/dividends.ts`'s `upsertAnnouncedDividend`/`settleDividend`
+  exist and are exercised by the seed script, but nothing calls them from
+  an API route yet — today dividends only ever enter the system via
+  seeding); §3k's still-open items (3) and (4) above.
+
+## 3m. Zero-knowledge client-side encryption for goal notes (ad hoc)
+
+Explicit user request for "zero-knowledge client-side encryption." Scoped
+down from an app-wide ask to exactly one field after flagging a real
+architecture conflict with the user, who chose the scoped option — see
+below for what was ruled out and why.
+
+- **Why not app-wide.** Genuine zero-knowledge means the server can never
+  decrypt the field, under any circumstance. Three already-built,
+  verified features depend on the server being able to decrypt exactly
+  the fields the server-side codec (`field-encryption.ts`, item 32)
+  covers: the 4-tier categorization cascade pattern-matches on
+  `NotableTransaction.description`/`merchantName` server-side (and Tier 4
+  sends it to Anthropic); `listTransactions`' search filter explicitly
+  decrypts and matches `description` in application code (§3d, a
+  documented consequence of the DB-level encryption already in place);
+  and the advisor's tools return transaction text to the model
+  server-side. Applying zero-knowledge to `description`/`last4` would
+  mean removing all three, a real regression to existing, tested
+  features — not something to do unprompted. This app also has no
+  login/passphrase flow at all (§5 decision #1 defers real credentials to
+  a later milestone; `getCurrentUser()` just resolves the one seeded
+  demo user) — "derive a key from the user's master passphrase" needed
+  somewhere for that passphrase to actually be entered, which this pass
+  had to build from scratch as UI, not assume already existed.
+- **What's genuinely zero-knowledge**: `GoalContribution.note` only — the
+  one encrypted field with zero server-side dependents (never searched,
+  never categorized, never read by the advisor, and wasn't even rendered
+  anywhere in the UI before this pass). It left
+  `src/server/db/encrypted-fields.ts`'s `ENCRYPTED_FIELDS` list entirely;
+  the server now stores and returns its ciphertext as an opaque string it
+  cannot decrypt, ever, by construction — not merely by policy.
+- **`src/lib/zk-crypto.ts`** (new, client-side only): PBKDF2-HMAC-SHA256
+  (600,000 iterations, OWASP's 2023 minimum) via the standard WebCrypto
+  `crypto.subtle` API, deriving a non-extractable AES-256-GCM key. Format:
+  `zk1:<iv base64>:<ciphertext+tag base64>` — deliberately distinct from
+  `field-encryption.ts`'s `v1:iv:tag:ciphertext` (one fewer segment,
+  since WebCrypto's AES-GCM appends the tag to the ciphertext itself
+  rather than exposing it separately the way Node's `createCipheriv`
+  does) so a value's format prefix alone tells you which scheme it's
+  under and therefore who can ever decrypt it.
+  - **Enforced client-only by an import-graph guard, not a runtime
+    check** (`tests/guards/zk-client-only.test.ts`, same pattern as
+    `admin-client-boundary.test.ts`): no file under `src/server/**` may
+    import this module. A `typeof window` runtime guard was considered
+    and rejected — it would only break testability (Node's `crypto.subtle`
+    is spec-identical to the browser's, so the module is plain
+    pure-function-tested like every other `src/lib/` engine) while adding
+    no real protection, since what actually matters is *who calls it*,
+    not *what runtime it executes in*.
+  - **Passphrase verification via a canary, not a stored hash**: at setup,
+    a known constant (`ZK_CANARY_PLAINTEXT`) is encrypted under the fresh
+    key and its ciphertext stored server-side. Re-entering a passphrase
+    means re-deriving a candidate key and attempting to decrypt the
+    canary — AES-GCM's auth tag rejects a wrong key outright, and the
+    plaintext is compared as a second check. This reveals nothing about
+    the passphrase itself, the same reasoning a bcrypt/Argon2id hash
+    would use if this app had real password auth yet.
+- **Schema** (`User.zkSalt`/`zkKdfIterations`/`zkCanaryCiphertext`,
+  migration `20260829093257_zero_knowledge_goal_note_vault`): all three
+  nullable, all three non-secret (a PBKDF2 salt and iteration count are
+  meant to be public; the canary is ciphertext of a known constant).
+  Covered by `User`'s existing RLS policy — no new policy needed.
+  **One-time setup, no rotation flow**: `setupZkVault`
+  (`src/server/dal/zk-vault.ts`) refuses a second call outright, because
+  overwriting the salt/iterations out from under already-encrypted notes
+  would silently make every one of them permanently undecryptable — the
+  same failure shape `docs/SECURITY-CHECKLIST.md`'s `ENCRYPTION_KEY`
+  rotation note already documents for the server-side codec, one layer
+  down. A real "change my passphrase" feature would need to decrypt every
+  existing note under the old key and re-encrypt under the new one,
+  client-side, before this row could change — not built here.
+- **Migration path for pre-existing notes** — the task's explicit "fallback
+  and migration" ask, made concrete by the seed script's own pre-existing
+  `GoalContribution.note` (kept seeded in the OLD `v1:` server-side format
+  on purpose, via a direct `encryptField()` call now that the Prisma
+  extension no longer does it automatically, specifically so this app has
+  a real legacy row to migrate rather than a hypothetical one):
+  1. `findLegacyNoteContributions` (`zk-vault.ts`) decrypts every note NOT
+     in `zk1:` format using the OLD codec and returns the plaintext.
+  2. Reachable only via `POST /api/zk/migrate-legacy`, gated on the vault
+     already being set up. **This is the one deliberate, one-time
+     server-side plaintext exposure in the whole feature** — there is no
+     way to hand off custody of already-server-encrypted data to a
+     client-only key without the server decrypting it exactly once on the
+     way out (the same handoff moment any real E2E-encryption migration
+     needs, e.g. re-keying a password manager's vault). Documented at the
+     route and DAL function, not hidden: never logged, never cached,
+     never persisted anywhere beyond that one response.
+  3. The client re-encrypts each note under the new key and PATCHes it
+     back via `PATCH /api/goals/contributions/[id]` (new route, `note`
+     must already be `zk1:`-shaped — the server never accepts plaintext
+     here either). Idempotent/resumable: `SecureNotesPanel` offers a
+     "Migrate N legacy note(s)" action any time it detects a non-`zk1:`
+     note still exists, not only at initial setup, so a dropped
+     connection mid-migration doesn't strand a note in limbo.
+- **Server-side input validation** (`src/server/api/zk-validation.ts`):
+  salt/iterations/ciphertext shape is checked (regex, length bounds, an
+  iteration-count floor) even though the server can't verify any of it
+  cryptographically — same "untrusted input crossing a trust boundary"
+  treatment every other request body gets. Deliberately duplicates the
+  600,000-iteration constant rather than importing it from `zk-crypto.ts`
+  (which would violate the client-only guard above) — a server-side
+  floor on client input, not a shared source of truth.
+- **UI** (`src/app/goals/_components/`: `secure-notes-panel.tsx`,
+  `contribution-note.tsx`, updated `add-contribution-form.tsx`):
+  setup/unlock/lock control plus an optional encrypted note field on
+  contributions and decrypted-note display in the contribution log — all
+  new; the field existed in the schema before this pass but had no UI at
+  all. `src/lib/stores/zk-vault-store.ts` (Zustand — installed since
+  Phase 0 but genuinely unused until now) holds the derived `CryptoKey`
+  in memory only, no `persist` middleware, nothing in `localStorage`: a
+  reload re-locks on purpose, since persisting a passphrase-derived key
+  anywhere durable would undercut the reason this scheme exists.
+- **Verified live, not just by test**: unit tests for `zk-crypto.ts` (11
+  cases — round-trip, wrong-passphrase rejection, wrong-salt rejection,
+  tamper detection via the GCM auth tag, format rejection, canary
+  verification); an integration suite (`tests/integration/zk-vault.test.ts`,
+  7 cases) covering setup/reject-second-setup/status-isolation-across-users/
+  legacy-note-decryption/note-update-IDOR against a real Postgres; and a
+  full `curl` walkthrough against the running dev server after restarting
+  it to pick up the schema migration: setup (201) → setup again (400,
+  "already set up") → migrate-legacy (200, correct decrypted plaintext
+  for the seeded legacy note) → PATCH with a real `zk1:` ciphertext (200,
+  confirmed via `psql` that the stored value actually changed format) →
+  PATCH with plaintext (400, rejected) → PATCH a nonexistent contribution
+  (404) → cross-origin request (403). `npm run check`: 527/530 (3 skip
+  for the embedding sidecar, unrelated), clean typecheck/lint, and a real
+  `npm run build` + `npm run verify:client-bundle-secrets` both clean.
+  Dev database re-seeded afterward so no test-only vault/migration state
+  was left behind.
+- **Known limitations, left as such rather than silently expanded scope**:
+  no passphrase-rotation/change flow (see the schema note above); no
+  "forgot passphrase" recovery — losing it means every existing note is
+  permanently unreadable, which is the honest cost of a scheme where the
+  server never holds a recoverable key, and the setup form says so; the
+  advisor and every other server-side feature simply never see this
+  field's content, by design, so a user cannot ask the advisor about a
+  note's content.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
@@ -916,13 +1316,17 @@ which had described this as designed-but-not-built since Phase 0.
    `ManualAsset` subtype via an `assetType` enum, not a new table. Consider
    optional `taxAdvantaged: boolean` and `liquidityDate` fields (Keren
    Hishtalmut has a real 6-year lock-in) when the schema lands in Phase 2.
-3. **Single currency**: confirmed per spec. Trading-desk USD equities are
-   converted to shekels once at trade time using a mocked periodic
-   USD→ILS rate (itself integer basis points) and the converted price is
-   persisted permanently — never re-converted historically. **Built in
-   Phase 4**: `src/lib/mock-market-data.ts` (deterministic per-symbol-per-
-   day price feed) backs the live net-worth calculation now; the same
-   function is what /trading will use later.
+3. **Single currency**: confirmed per spec in Phase 0. **Reversed post-
+   Phase 8 at explicit user request — see §3k.** Trading-desk USD equities
+   are converted to shekels once at trade time using a rate (originally a
+   hardcoded mocked constant, now the real synced/fallback rate from
+   `src/lib/exchange-rate.ts`) and the converted price is persisted
+   permanently — never re-converted historically; this part of the
+   original decision didn't change, it just gained a real rate source
+   instead of a hardcoded one. **Built in Phase 4**:
+   `src/lib/mock-market-data.ts` (deterministic per-symbol-per-day price
+   feed) backs the live net-worth calculation now; the same function is
+   what /trading will use later.
 4. **CSV import adapters**: one `BankAdapter` per institution, funneling
    into one shared pipeline (size/type guard → validation of the
    canonical row → formula-injection neutralization → idempotent upsert

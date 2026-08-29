@@ -1,7 +1,10 @@
 import "server-only";
 import { addAgorot, agorot, multiplyAgorot, subtractAgorot, type Agorot } from "../../lib/money";
+import { nativeAmount } from "../../lib/currency";
+import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { getMockPriceAgorot } from "../../lib/mock-market-data";
 import { withUserScope } from "../db/with-user-scope";
+import { getLatestRateTable } from "./exchange-rates";
 
 export type LiveNetWorth = {
   totalAssets: Agorot;
@@ -29,26 +32,38 @@ export type LiveNetWorth = {
  * are valued at the mock "current price" (src/lib/mock-market-data.ts),
  * not their cost basis, so unrealized gains/losses show up here the same
  * way they would for a real brokerage account.
+ *
+ * A foreign-currency account's ILS value is computed here, live, from
+ * the latest synced rate — never read from a stored column, because a
+ * live balance's base-currency value moves with the FX rate and a stored
+ * mirror would be stale the moment rates changed (AGENTS.md law #5, and
+ * BankAccount's own schema comment).
  */
 export async function computeLiveNetWorth(userId: string, asOf: Date = new Date()): Promise<LiveNetWorth> {
-  const [accounts, assets, holdings, debts] = await withUserScope(userId, (tx) =>
-    Promise.all([
-      tx.bankAccount.findMany({ where: { userId } }),
-      tx.manualAsset.findMany({ where: { userId } }),
-      tx.portfolioHolding.findMany({ where: { userId } }),
-      tx.debt.findMany({ where: { userId } }),
-    ]),
-  );
+  const [rateTable, [accounts, assets, holdings, debts]] = await Promise.all([
+    getLatestRateTable(asOf),
+    withUserScope(userId, (tx) =>
+      Promise.all([
+        tx.bankAccount.findMany({ where: { userId } }),
+        tx.manualAsset.findMany({ where: { userId } }),
+        tx.portfolioHolding.findMany({ where: { userId } }),
+        tx.debt.findMany({ where: { userId } }),
+      ]),
+    ),
+  ]);
+
+  const toAgorot = (balance: bigint, currency: keyof typeof rateTable) =>
+    convertNativeAmountToAgorot(nativeAmount(Number(balance)), currency, rateTable[currency]);
 
   const bankAssetAmounts = accounts
     .filter((a) => a.accountType !== "CREDIT_CARD")
-    .map((a) => agorot(Number(a.currentBalance)));
+    .map((a) => toAgorot(a.nativeBalance, a.currency));
   const bankLiabilityAmounts = accounts
     .filter((a) => a.accountType === "CREDIT_CARD")
-    .map((a) => agorot(Number(a.currentBalance)));
+    .map((a) => toAgorot(a.nativeBalance, a.currency));
   const manualAssetAmounts = assets.map((a) => agorot(Number(a.currentValue)));
   const portfolioAmounts = holdings.map((h) =>
-    multiplyAgorot(getMockPriceAgorot(h.symbol, asOf), h.quantity.toNumber()),
+    multiplyAgorot(getMockPriceAgorot(h.symbol, asOf, rateTable.USD), h.quantity.toNumber()),
   );
   const debtAmounts = debts.map((d) => agorot(Number(d.currentBalance)));
 

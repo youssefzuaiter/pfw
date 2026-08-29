@@ -57,7 +57,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
           institutionName: "Test Bank",
           last4: "1234",
           accountType: "CHECKING",
-          currentBalance: 10_000n,
+          nativeBalance: 10_000n,
         },
       });
 
@@ -68,6 +68,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
           categoryId: categoryA.id,
           occurredAt: new Date(),
           amount: -5_000n,
+          nativeAmount: -5_000n,
           description: "Test transaction",
         },
       });

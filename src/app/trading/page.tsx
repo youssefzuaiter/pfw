@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Badge } from "../../components/badge/badge";
-import { getMockPriceAgorot, getMockPriceHistory, listMockSymbols } from "../../lib/mock-market-data";
+import { getMockPriceAgorot, getMockPriceHistory, getMockPriceUsdCents, listMockSymbols } from "../../lib/mock-market-data";
 import { agorot, formatAgorot, multiplyAgorot, subtractAgorot } from "../../lib/money";
+import { nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { getLatestRateTable } from "../../server/dal/exchange-rates";
 import { listPortfolioHoldings, listTrades } from "../../server/dal/portfolio";
 import { PriceChart } from "./_components/price-chart";
 import { TradeForm } from "./_components/trade-form";
@@ -31,11 +33,16 @@ export default async function TradingPage({
   const selectedSymbol = symbols.includes(requestedSymbol) ? requestedSymbol : symbols[0];
 
   const user = await getCurrentUser();
-  const [holdings, trades] = await Promise.all([listPortfolioHoldings(user.id), listTrades(user.id)]);
-
   const now = new Date();
-  const priceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceAgorot(symbol, now)]));
-  const history = getMockPriceHistory(selectedSymbol, 30, now).map((point) => ({
+  const [holdings, trades, rateTable] = await Promise.all([
+    listPortfolioHoldings(user.id),
+    listTrades(user.id),
+    getLatestRateTable(now),
+  ]);
+
+  const priceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceAgorot(symbol, now, rateTable.USD)]));
+  const nativePriceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceUsdCents(symbol, now)]));
+  const history = getMockPriceHistory(selectedSymbol, 30, now, rateTable.USD).map((point) => ({
     date: point.date,
     price: Number(point.price),
   }));
@@ -43,9 +50,15 @@ export default async function TradingPage({
   const openHoldings = holdings.filter((holding) => holding.quantity.toNumber() > 0);
   const totalUnrealized = openHoldings.reduce((sum, holding) => {
     const price = priceBySymbol.get(holding.symbol);
-    if (!price) return sum;
-    const position = { quantity: holding.quantity.toNumber(), totalCostBasis: agorot(Number(holding.totalCostBasis)) };
-    return sum + BigInt(unrealizedPnl(position, price));
+    const nativePrice = nativePriceBySymbol.get(holding.symbol);
+    if (!price || nativePrice === undefined) return sum;
+    const position = {
+      quantity: holding.quantity.toNumber(),
+      currency: holding.currency,
+      totalCostBasis: agorot(Number(holding.totalCostBasis)),
+      nativeCostBasis: nativeAmount(Number(holding.nativeCostBasis)),
+    };
+    return sum + BigInt(unrealizedPnl(position, price, nativePrice).pnl);
   }, 0n);
   const totalRealized = trades.reduce(
     (sum, trade) => sum + (trade.realizedPnlAgorot !== null ? trade.realizedPnlAgorot : 0n),
@@ -54,7 +67,23 @@ export default async function TradingPage({
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 md:px-6">
-      <h1 className="font-display text-2xl font-semibold text-fg">Trading</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl font-semibold text-fg">Trading</h1>
+        <nav className="flex gap-2" aria-label="Trading views">
+          <span
+            aria-current="page"
+            className="rounded-full border border-accent bg-accent/10 px-3 py-1 text-xs font-medium text-accent"
+          >
+            Trading desk
+          </span>
+          <Link
+            href="/trading/portfolio"
+            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Portfolio
+          </Link>
+        </nav>
+      </div>
 
       <section className="flex flex-wrap gap-6 rounded-lg border border-border bg-surface p-4">
         <div>
@@ -110,11 +139,14 @@ export default async function TradingPage({
             {openHoldings.map((holding) => {
               const quantity = holding.quantity.toNumber();
               const costBasis = agorot(Number(holding.totalCostBasis));
+              const nativeCostBasis = nativeAmount(Number(holding.nativeCostBasis));
               const price = priceBySymbol.get(holding.symbol);
+              const nativePrice = nativePriceBySymbol.get(holding.symbol);
               const marketValue = price ? multiplyAgorot(price, quantity) : agorot(0);
-              const pnl = price
-                ? unrealizedPnl({ quantity, totalCostBasis: costBasis }, price)
-                : subtractAgorot(agorot(0), costBasis);
+              const pnl =
+                price && nativePrice !== undefined
+                  ? unrealizedPnl({ quantity, currency: holding.currency, totalCostBasis: costBasis, nativeCostBasis }, price, nativePrice).pnl
+                  : subtractAgorot(agorot(0), costBasis);
 
               return (
                 <li key={holding.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 first:border-t-0 first:pt-0">

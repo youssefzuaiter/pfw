@@ -4,13 +4,15 @@ import { bps, formatBpsAsPercent } from "../../lib/apr";
 import { buildAmortizationSchedule, isNegativeAmortization, summarizePayoff } from "../../lib/debt-math";
 import { computeMonthProgress, computeProrationStatus } from "../../lib/budget-proration";
 import { summarizeGoalProgress } from "../../lib/goal-progress";
-import { getMockPriceAgorot } from "../../lib/mock-market-data";
+import { getMockPriceAgorot, getMockPriceUsdCents } from "../../lib/mock-market-data";
 import { agorot, formatAgorot } from "../../lib/money";
+import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { deriveValuationFreshness } from "../../lib/valuation-freshness";
 import { listBudgets } from "../dal/budgets";
 import { listAllCategories } from "../dal/categories";
 import { listDebts } from "../dal/debts";
+import { getLatestRateTable } from "../dal/exchange-rates";
 import { listGoals } from "../dal/goals";
 import { listManualAssets } from "../dal/manual-assets";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
@@ -303,21 +305,31 @@ const listPortfolioHoldingsTool = defineTool({
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
-    const holdings = await listPortfolioHoldings(userId);
     const now = new Date();
+    const [holdings, rateTable] = await Promise.all([listPortfolioHoldings(userId), getLatestRateTable(now)]);
     return holdings
       .filter((holding) => holding.quantity.toNumber() > 0)
       .map((holding) => {
         const quantity = holding.quantity.toNumber();
         const costBasis = agorot(Number(holding.totalCostBasis));
-        const price = getMockPriceAgorot(holding.symbol, now);
-        const pnl = unrealizedPnl({ quantity, totalCostBasis: costBasis }, price);
+        const nativeCostBasis = nativeAmount(Number(holding.nativeCostBasis));
+        const price = getMockPriceAgorot(holding.symbol, now, rateTable.USD);
+        const nativePrice = getMockPriceUsdCents(holding.symbol, now);
+        const pnl = unrealizedPnl(
+          { quantity, currency: holding.currency, totalCostBasis: costBasis, nativeCostBasis },
+          price,
+          nativePrice,
+        );
         return {
           symbol: holding.symbol,
           quantity: holding.quantity.toString(),
+          currency: holding.currency,
           costBasis: formatAgorot(costBasis),
+          nativeCostBasis: formatNativeAmount(nativeCostBasis, holding.currency),
           currentPrice: formatAgorot(price),
-          unrealizedPnl: formatAgorot(pnl),
+          nativeCurrentPrice: formatNativeAmount(nativePrice, holding.currency),
+          unrealizedPnl: formatAgorot(pnl.pnl),
+          nativeUnrealizedPnl: formatNativeAmount(pnl.nativePnl, holding.currency),
         };
       });
   },
