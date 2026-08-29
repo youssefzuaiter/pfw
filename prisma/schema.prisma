@@ -132,8 +132,9 @@ model User {
   trades             Trade[]
   netWorthSnapshots  NetWorthSnapshot[]
   merchantEmbeddings MerchantEmbedding[]
-  dividends          Dividend[]
-  auditLogs          AuditLog[]
+  dividends            Dividend[]
+  subscriptionTracking SubscriptionTracking[]
+  auditLogs            AuditLog[]
 }
 
 /// User-defined categories with permanent slugs: renaming changes `name`
@@ -559,6 +560,35 @@ model ExchangeRate {
 
   @@unique([currency, asOfDate])
   @@index([currency, asOfDate])
+}
+
+enum SubscriptionReviewStatus {
+  ACTIVE
+  REVIEWED
+  CANCELLED
+}
+
+/// Per-user, per-merchant subscription review state (AGENTS.md §3p) — the
+/// stateful half of the subscription radar. `merchantKey` is the radar's
+/// *canonical* fuzzy-cluster key (src/lib/subscription-radar.ts), not a
+/// raw per-transaction merchantKey — a subscription billed under several
+/// slightly different descriptor strings still has exactly one review
+/// status, keyed on whichever raw string the radar picked as canonical
+/// for that cluster. A row only exists once a user has explicitly
+/// reviewed or cancelled something; a merchant with no row here is
+/// implicitly ACTIVE — see `getSubscriptionStatuses`'s doc comment for
+/// why that default lives in the DAL, not as a `@default` here.
+model SubscriptionTracking {
+  id          String                   @id @default(cuid())
+  userId      String
+  user        User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchantKey String
+  status      SubscriptionReviewStatus
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@unique([userId, merchantKey])
+  @@index([userId])
 }
 
 /// Append-only. Nothing in the application ever calls `.update()` or

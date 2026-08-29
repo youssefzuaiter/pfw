@@ -30,7 +30,9 @@ function monthKey(date: Date): string {
   return date.toISOString().slice(0, 7);
 }
 
-function averageIntervalDaysBetween(sortedDates: readonly Date[]): number | null {
+/** Shared with the subscription radar (subscription-radar.ts) — both need "average
+ * days between consecutive occurrences" and there's no reason to duplicate it. */
+export function averageIntervalDaysBetween(sortedDates: readonly Date[]): number | null {
   if (sortedDates.length < 2) return null;
   const gaps: number[] = [];
   for (let i = 1; i < sortedDates.length; i++) {

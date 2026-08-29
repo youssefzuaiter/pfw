@@ -1585,6 +1585,163 @@ this specific app.
   user runs `ollama pull llama3.1` themselves, per `.env.example`'s
   note).
 
+## 3p. Subscription & Recurring Expense Intelligence Radar (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`, which only describes the
+existing periodicity engine (§3b). Deliberately additive, not a rewrite:
+`src/lib/recurring-detection.ts`'s spec-defined check (3+ distinct
+calendar months, coefficient of variation < 0.15, "not a keyword list")
+still backs the cash-flow forecast and the "recurring charge detected"
+insight exactly as before — this module adds three real, missing
+capabilities that engine was never designed to cover.
+
+- **What was genuinely missing, confirmed by reading the existing code
+  before writing anything new** (matching this session's habit of
+  checking for overlap first): `getTransactionOccurrencesSince`'s
+  `merchantKey` was an *exact* trim+lowercase string match, not fuzzy —
+  two billing-descriptor variants of the same real merchant (a common
+  real-world pattern: a trailing transaction-ID appended each cycle)
+  would never group together. There was no price-hike detection, no
+  free-trial heuristic, no cash-drag total, and no stateful per-merchant
+  tracking at all — the recurring-charge insight's own doc comment
+  explicitly flagged "de-duplicating against ones the user has already
+  seen/acknowledged is a stateful DAL concern" as deferred, never built.
+- **`src/lib/subscription-radar.ts`** (new, pure engine, `src/lib/`
+  convention per §3b):
+  - **Fuzzy merchant matching**: a hand-written Levenshtein distance +
+    similarity ratio (no dependency, matching this project's habit of
+    owning small algorithms directly — the CSV tokenizer, the seeded
+    RNG, the Monte Carlo engine's Box-Muller), plus a normalization step
+    that strips generic payment-processor noise (a leading "SQ *"/"TST*"
+    -style prefix, trailing transaction-ID digit runs) — NOT merchant-
+    brand-specific keywords, so this doesn't conflict with the
+    neighboring "not a keyword list" law; it's text normalization for
+    merchant *identity*, not a decision about what counts as recurring.
+    Clustering is greedy and scoped per-currency (two currencies'
+    billing for a coincidentally-similar name are never merged).
+  - **A price-hike-aware recurring check, deliberately separate from
+    `detectRecurring`'s whole-history CV check**: `segmentByPrice` splits
+    a chronological occurrence list into contiguous same-price runs
+    (5% relative tolerance), and a merchant counts as recurring if it
+    has enough occurrences for its classified cadence (weekly/monthly/
+    quarterly/annual — a flat "3+" doesn't work for annual billing,
+    which would need 3 years of history to ever prove itself; 2
+    occurrences ~365 days apart is accepted for `annual`) AND no more
+    than 3 distinct price segments — a subscription that changed price
+    once or twice still counts, unlike a single all-history CV check
+    that a big hike could fail outright.
+  - **The "currency conversions" edge case named in the task is solved
+    by construction, not by a special case**: segmentation and
+    price-hike detection run on each occurrence's *native* amount
+    (`NotableTransaction.nativeAmount`, extended onto
+    `getTransactionOccurrencesSince`'s return row), never the
+    ILS-converted `amount` column — a foreign-currency subscription's
+    native price is what the merchant actually charges, unaffected by
+    exchange-rate movement between billing cycles, so ordinary FX drift
+    structurally cannot be mistaken for a price hike here. Directly
+    unit-tested with a constant-native-price USD subscription.
+  - **Free-trial detection is an explicitly speculative, structural
+    heuristic** (exactly one small recent expense, 20-45 days old,
+    under ₪/$/€/£10 in minor units) — not a brand-name keyword list
+    either, consistent with the same law. Surfaced in the UI as "worth
+    checking," never as a confirmed subscription.
+  - **Cash drag** normalizes every *currently* active subscription's
+    latest-segment price to a monthly/annual ILS figure at the *live*
+    synced exchange rate (not the historical per-transaction rate) —
+    deliberately answering "what is this costing me now," not
+    "what did each past charge convert to at the time."
+- **Schema**: `SubscriptionReviewStatus` enum (`ACTIVE`/`REVIEWED`/
+  `CANCELLED`) + `SubscriptionTracking` model (migration
+  `20260829111155_subscription_radar_tracking`), user-scoped and RLS-
+  `FORCE`d like every other user table. `merchantKey` here is always the
+  radar's *canonical* fuzzy-cluster key, not a raw per-transaction
+  string. A merchant with no row is implicitly `ACTIVE` — the table only
+  ever grows with genuine user decisions (a review or a cancellation),
+  never one throwaway row per detected subscription regardless of
+  whether the user touched it.
+  - **A migration-checksum incident, handled correctly rather than
+    routed around**: this migration's RLS policy was added to the SQL
+    file *after* `prisma migrate dev` had already applied it (matching
+    this project's established pattern of hand-adding RLS SQL to a
+    Prisma-generated migration file), which invalidated Prisma's
+    checksum tracking for an *earlier*, unrelated migration this same
+    session had similarly hand-edited post-apply. `prisma migrate dev`
+    correctly refused to proceed, and `prisma migrate reset --force`
+    hit Prisma's own built-in AI-agent safety gate, which requires
+    explicit, freshly-given user consent (via
+    `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION`) before a destructive
+    reset — the user was asked directly, gave that consent, and the
+    reset proceeded. Safe here specifically because this is the local
+    Docker Compose dev database, whose seed script already
+    wipes-and-regenerates on every run by design; would never be an
+    acceptable shortcut against a real database with real user data.
+    The RLS policy itself then had to be applied by hand via `psql`
+    (not another `migrate dev` run) since the migration file was, by
+    that point, already recorded as applied.
+- **`src/server/dal/subscriptions.ts`** (`getSubscriptionStatuses`,
+  `setSubscriptionStatus` — upsert, not create-if-missing, so setting a
+  merchant back to `ACTIVE` still records that explicit decision rather
+  than deleting the row back to "implicitly active"),
+  **`src/server/subscriptions/build-subscription-radar-data.ts`**
+  (`cache()`-wrapped like every other `build-*-data.ts` aggregator,
+  §3c — pulls a 400-day transaction lookback, generous relative to
+  what this app's seed data actually spans (a rolling 90 days, §3a),
+  for forward-compatibility with a real account's real multi-year
+  history), and **`PATCH /api/subscriptions/status`** (the one-click
+  cancel/review toggle — `merchantKey` taken in the body, not a URL path
+  segment, since it can contain spaces/punctuation the canonical
+  fuzzy-cluster key doesn't sanitize away).
+- **`/transactions/subscriptions`** (new sub-view, cross-linked from
+  `/transactions` — same "reachable by direct link, not one of the 9
+  primary destinations" pattern as `/trading/portfolio` (§3l) and
+  `/analytics` (§3n)): cash-drag headline, a "possible forgotten trials"
+  callout, and the detected-recurring list with a price-hike badge and
+  the cancel/mark-reviewed/reactivate toggle.
+  - **A real, useful surprise found via live verification, not a bug**:
+    the seeded demo account's monthly rent and phone bill — both
+    genuinely recurring, both randomized slightly month-to-month by the
+    seed script's own RNG — were *also* correctly flagged as "recurring
+    with a price hike" alongside the two purpose-seeded subscription
+    examples. Initially the UI's "Detected subscriptions" heading read
+    oddly next to a phone bill; fixed by relabeling to "Detected
+    recurring subscriptions & bills," which is what the task's own
+    scope actually asked for (item 1: "flag recurring subscriptions,
+    **bills**, and memberships") — not a keyword-based decision to
+    exclude bills, since that would be exactly the kind of
+    merchant-category special-casing this whole engine avoids.
+- **Seed data**: a new deliberate "Streamflix" entry (3 months, a
+  genuine ~38% price hike on the most recent charge) and a "CloudNotes
+  Pro" single small charge 30 days old (the free-trial shape) — added
+  specifically so the radar has real, reliable examples to detect
+  beyond whatever the pre-existing random discretionary-spending loop
+  happens to draw, matching this session's established convention of
+  seeding a real demonstration case for a new feature (the zero-
+  knowledge vault's legacy note, the dividend schedule) rather than
+  relying on coincidence.
+- **Verified, not just written**: `npm run check` clean (616/619, 3 skip
+  for the unrelated embedding sidecar) — 41 new unit tests for the
+  engine (fuzzy matching, Levenshtein edge cases, cadence-boundary
+  classification, price segmentation, the currency-conversion edge
+  case, irregular-billing-date rejection, free-trial heuristics, cash-
+  drag normalization across mixed cadences/currencies, and full
+  `runSubscriptionRadar` integration-of-the-pure-functions cases) plus a
+  4-case integration suite proving `SubscriptionTracking` is genuinely
+  RLS/IDOR-safe across two users sharing the same `merchantKey` string.
+  Live `curl` against the running dev server: the seeded Streamflix
+  price hike and CloudNotes trial both render correctly, marking a
+  subscription cancelled correctly excludes it from the cash-drag total
+  and re-sorts it to the bottom, invalid status values 400, cross-origin
+  403. Full production build and `verify:client-bundle-secrets` clean.
+- **Known limitations, left as such rather than silently expanded
+  scope**: `MAX_PRICE_SEGMENTS = 3` means a subscription that changed
+  price more than twice within the lookback window stops being flagged
+  recurring at all, same trade-off `detectRecurring`'s own CV threshold
+  already makes elsewhere; the free-trial heuristic only ever sees a
+  single occurrence, so a trial that already converted to its second
+  paid charge no longer looks like a "possible trial" (it becomes a
+  normal 2-occurrence recurring candidate instead, which is arguably
+  correct — the warning's job is done once there's a second data point).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

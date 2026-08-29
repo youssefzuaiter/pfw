@@ -174,6 +174,60 @@ async function main() {
     });
   }
 
+  // --- Transactions: subscription radar demonstration data (AGENTS.md §3p) --
+  // Deliberately separate from the random discretionary-spending loop below
+  // (which also sometimes happens to draw "Netflix"/"Spotify" at a random
+  // price and date, same as any other entertainment merchant) — these are
+  // seeded with a genuinely consistent cadence/price on purpose, so the
+  // radar has a real subscription, a real price hike, and a real "possible
+  // free trial" to detect rather than only whatever the random loop
+  // happens to produce.
+  for (let m = 2; m >= 0; m--) {
+    const occurredAt = daysAgo(now, m * 30);
+    occurredAt.setUTCDate(15);
+    // A price hike on the most recent charge (m === 0) — everything before
+    // it billed at the original price.
+    const priceIls = m === 0 ? 54.9 : 39.9;
+    const streamingAmount = ils(-priceIls);
+    await prisma.notableTransaction.create({
+      data: {
+        userId: user.id,
+        bankAccountId: creditCard.id,
+        categoryId: categoryId("entertainment"),
+        providerTransactionId: `seed-streaming-sub-${m}`,
+        occurredAt,
+        currency: "ILS",
+        amount: streamingAmount,
+        nativeAmount: streamingAmount,
+        description: "Streamflix [סטרימפליקס]",
+        merchantName: "Streamflix [סטרימפליקס]",
+        isManual: false,
+      },
+    });
+  }
+
+  // A single small charge ~30 days ago and nothing since — exactly the
+  // "possible forgotten free trial" shape (src/lib/subscription-radar.ts's
+  // detectPossibleFreeTrials): recent enough that a monthly renewal would
+  // be due, small enough to look like a trial-verification charge, and
+  // there's deliberately no second occurrence yet.
+  const trialAmount = ils(-1.99);
+  await prisma.notableTransaction.create({
+    data: {
+      userId: user.id,
+      bankAccountId: creditCard.id,
+      categoryId: categoryId("entertainment"),
+      providerTransactionId: "seed-free-trial",
+      occurredAt: daysAgo(now, 30),
+      currency: "ILS",
+      amount: trialAmount,
+      nativeAmount: trialAmount,
+      description: "CloudNotes Pro [קלאוד נוטס פרו]",
+      merchantName: "CloudNotes Pro [קלאוד נוטס פרו]",
+      isManual: false,
+    },
+  });
+
   // --- Transactions: discretionary spending over the past 90 days --------
   const spendingCategories = CATEGORIES.filter(
     (c) => !c.isIncome && c.slug !== "uncategorized" && c.slug !== "rent",

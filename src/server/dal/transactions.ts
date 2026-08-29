@@ -1,5 +1,5 @@
 import "server-only";
-import type { Prisma } from "../../generated/prisma/client";
+import type { Currency, Prisma } from "../../generated/prisma/client";
 import { withUserScope } from "../db/with-user-scope";
 
 /** See bank-accounts.ts for why this returns `null` rather than throwing on a mismatch. */
@@ -160,21 +160,29 @@ export type MerchantOccurrenceRow = {
   displayName: string;
   amount: bigint;
   occurredAt: Date;
+  /** Added for the subscription radar (AGENTS.md §3p) — a foreign-currency recurring
+   * charge's *native* amount stays constant even when its ILS `amount` drifts with the
+   * exchange rate, which is what lets price-hike detection tell a real price change
+   * apart from ordinary FX noise. Purely additive to this row shape; existing callers
+   * (recurring-detection.ts via build-dashboard-data.ts) only ever read `amount`. */
+  currency: Currency;
+  nativeAmount: bigint;
 };
 
 /**
- * Raw rows for the recurring-detection engine (src/lib/recurring-detection.ts).
- * Includes both income and expenses — a recurring salary deposit is just
- * as real a periodicity signal as a recurring subscription charge, and
- * the cash-flow forecast needs projected future income, not only
- * projected future bills. Callers that only want spend should filter to
- * negative amounts themselves (see build-dashboard-data.ts).
+ * Raw rows for the recurring-detection engine (src/lib/recurring-detection.ts)
+ * and the subscription radar (src/lib/subscription-radar.ts). Includes both
+ * income and expenses — a recurring salary deposit is just as real a
+ * periodicity signal as a recurring subscription charge, and the
+ * cash-flow forecast needs projected future income, not only projected
+ * future bills. Callers that only want spend should filter to negative
+ * amounts themselves (see build-dashboard-data.ts).
  */
 export async function getTransactionOccurrencesSince(userId: string, since: Date): Promise<MerchantOccurrenceRow[]> {
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
       where: { userId, occurredAt: { gte: since } },
-      select: { merchantName: true, description: true, amount: true, occurredAt: true },
+      select: { merchantName: true, description: true, amount: true, occurredAt: true, currency: true, nativeAmount: true },
     }),
   );
 
@@ -185,6 +193,8 @@ export async function getTransactionOccurrencesSince(userId: string, since: Date
       displayName,
       amount: row.amount,
       occurredAt: row.occurredAt,
+      currency: row.currency,
+      nativeAmount: row.nativeAmount,
     };
   });
 }

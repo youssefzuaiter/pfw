@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { agorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { listBankAccounts } from "../../server/dal/bank-accounts";
@@ -61,7 +62,15 @@ export default async function TransactionsPage({
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
-      <h1 className="font-display text-2xl font-semibold text-fg">Transactions</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl font-semibold text-fg">Transactions</h1>
+        <Link
+          href="/transactions/subscriptions"
+          className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Subscriptions radar →
+        </Link>
+      </div>
       <ImportCsvForm bankAccounts={accountOptions} />
       <FilterBar categories={categoryOptions} initialQuery={query} initialCategoryId={categoryId} initialSort={sort} />
       <TransactionsTable rows={rows} categories={categoryOptions} />
