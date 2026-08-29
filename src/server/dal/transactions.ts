@@ -1,6 +1,11 @@
 import "server-only";
 import type { Currency, Prisma } from "../../generated/prisma/client";
+import { categorizeTransaction } from "../../lib/categorization/cascade";
+import type { PastOccurrence } from "../../lib/categorization/types";
+import { neutralizeFormulaInjection } from "../../lib/csv-import/formula-injection";
+import { normalizeMerchantKey } from "../../lib/text-matching";
 import { withUserScope } from "../db/with-user-scope";
+import { BankAccountNotFoundError } from "./transaction-import";
 
 /** See bank-accounts.ts for why this returns `null` rather than throwing on a mismatch. */
 export async function getTransactionById(userId: string, id: string) {
@@ -96,6 +101,81 @@ export async function updateTransactionCategory(
 
 export async function countNeedsReview(userId: string): Promise<number> {
   return withUserScope(userId, (tx) => tx.notableTransaction.count({ where: { userId, needsReview: true } }));
+}
+
+export type CreateTransactionInput = {
+  bankAccountId: string;
+  /** Signed agorot — negative for an expense, positive for income. */
+  amountAgorot: bigint;
+  occurredAt: Date;
+  description: string;
+  merchantName?: string;
+};
+
+/**
+ * Manual transaction entry (AGENTS.md §3q) — previously not built at
+ * all (the app's only prior write paths were CSV import and the seed
+ * script). ILS-only, matching the CSV pipeline's own precedent
+ * (`src/lib/csv-import/`, §3j: "Foreign-currency rows are refused, not
+ * converted") — a receipt or a hand-typed entry is exactly the same
+ * kind of untrusted free text a CSV row is, so it gets the same
+ * formula-injection neutralization and the same Tier 1-2-only
+ * categorization cascade (Tier 3 needs the embedding sidecar, Tier 4
+ * needs a live Anthropic call — both are deliberately out of the
+ * critical path of a single interactive "add transaction" submission
+ * the same way they're out of a bulk import's, per that module's own
+ * documented reasoning).
+ *
+ * `isManual: true` here is the correct, already-documented flag for
+ * this (§3j: "`isManual` means... manually *entered*") — this is the
+ * first code path that actually sets it.
+ */
+export async function createTransaction(userId: string, input: CreateTransactionInput) {
+  return withUserScope(userId, async (tx) => {
+    const account = await tx.bankAccount.findFirst({ where: { id: input.bankAccountId, userId } });
+    if (!account) throw new BankAccountNotFoundError();
+
+    const categories = await tx.category.findMany({ where: { userId, archivedAt: null } });
+    const uncategorized = categories.find((category) => category.isUncategorized);
+    if (!uncategorized) throw new Error(`User ${userId} has no uncategorized category`);
+    const categoryIdBySlug = new Map(categories.map((category) => [category.slug, category.id]));
+
+    const description = neutralizeFormulaInjection(input.description);
+    const merchantName = input.merchantName ? neutralizeFormulaInjection(input.merchantName) : undefined;
+    const merchantText = merchantName ?? description;
+
+    const priorRows = await tx.notableTransaction.findMany({
+      where: { userId },
+      select: { merchantName: true, description: true, categoryId: true, needsReview: true },
+    });
+    const pastOccurrences: PastOccurrence[] = priorRows
+      .filter((prior) => normalizeMerchantKey(prior.merchantName ?? prior.description) === normalizeMerchantKey(merchantText))
+      .map((prior) => ({ categoryId: prior.categoryId, isManual: !prior.needsReview }));
+
+    const suggestion = await categorizeTransaction({
+      merchantText,
+      pastOccurrences,
+      resolveCategoryIdBySlug: (slug) => categoryIdBySlug.get(slug),
+      uncategorizedCategoryId: uncategorized.id,
+    });
+
+    return tx.notableTransaction.create({
+      data: {
+        userId,
+        bankAccountId: input.bankAccountId,
+        categoryId: suggestion.categoryId,
+        occurredAt: input.occurredAt,
+        currency: "ILS",
+        amount: input.amountAgorot,
+        nativeAmount: input.amountAgorot,
+        description,
+        merchantName,
+        isManual: true,
+        needsReview: suggestion.confidence < 0.5,
+      },
+      include: { category: true, bankAccount: true },
+    });
+  });
 }
 
 export type CategorySpend = {

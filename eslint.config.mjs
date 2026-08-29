@@ -22,6 +22,9 @@ const eslintConfig = defineConfig([
     // The Python sidecar has its own tooling (see sidecar/README.md);
     // its .venv especially must never be linted as JS/TS.
     "sidecar/**",
+    // Vendored, pre-minified Tesseract.js worker/WASM-glue assets
+    // (AGENTS.md §3q) — self-hosted static files, not hand-authored code.
+    "public/tesseract/**",
   ]),
 ]);
 

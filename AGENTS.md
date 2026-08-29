@@ -1742,6 +1742,163 @@ capabilities that engine was never designed to cover.
   normal 2-occurrence recurring candidate instead, which is arguably
   correct — the warning's job is done once there's a second data point).
 
+## 3q. Client-side receipt OCR & document parsing (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`. Uncovered a real, pre-
+existing gap while scoping it: **manual transaction entry did not exist
+at all** before this pass — AGENTS.md §5 decision #4 explicitly flagged
+it ("Manual transaction entry is still not built") back when CSV import
+shipped, and it stayed that way through every phase since. A review UI
+that "maps extracted fields into a new transaction row" needs somewhere
+to send that row, so this pass had to build that missing capability
+too, not just the OCR/parsing layer — done properly (DAL + Zod-validated
+route + audit log + the same formula-injection/categorization treatment
+CSV import already gets), not stubbed.
+
+- **What "zero-knowledge" honestly means here, stated plainly rather
+  than left ambiguous**: the receipt *image* never leaves the browser —
+  OCR runs fully client-side via WebAssembly, and the raw file is never
+  uploaded anywhere, at any point. What *does* reach the server,
+  necessarily, is the small set of fields the user reviews and
+  confirms (merchant, date, amount) — exactly as if they'd been typed
+  into a form, because from the server's perspective that's
+  indistinguishable from typing. This is a different, narrower claim
+  than the goal-notes vault's actual end-to-end encryption (§3m) — no
+  cryptography is involved here, only "the image itself never left this
+  device," and conflating the two would overclaim what this feature
+  actually guarantees.
+- **`src/lib/receipt-ocr.ts`** (new, client-only): a thin wrapper around
+  Tesseract.js, dynamically `import()`-ed only when a user actually
+  drops a file — its ~7MB of worker/WASM glue never loads on page visit,
+  matching this app's existing lazy-loading precedent for a heavy
+  client-only dependency (`next/dynamic(..., { ssr: false })` for the
+  R3F hero, §3f). Enforced client-only by an import-graph guard
+  (`tests/guards/receipt-ocr-client-only.test.ts`, same pattern as
+  `zk-client-only.test.ts`) rather than a runtime check, for the same
+  reasoning §3m gives: the guard test is what actually stops a server
+  file from existing in the first place, not a `typeof window` branch
+  that only breaks testability.
+  - **Self-hosted, not CDN-loaded, for the executable parts**: Tesseract.js
+    defaults to fetching its worker script, WASM core, and language data
+    all from `cdn.jsdelivr.net`. This app's CSP is deliberately strict
+    everywhere else (§3g), so rather than opening `script-src`/
+    `worker-src` to a third-party origin for *executable code*, the
+    worker script and one pinned WASM core variant (`tesseract-core-simd-lstm`
+    — SIMD, LSTM-only; ~6.8MB combined, committed under `public/tesseract/`)
+    are self-hosted, keeping both directives scoped to `'self'`. Only
+    the English *language training data* — a static data file, never
+    executed — is fetched from jsdelivr at scan time, the one narrowly-
+    scoped `connect-src` exception in `src/proxy.ts`'s CSP. Also added:
+    `'wasm-unsafe-eval'` in `script-src` (the CSP3-specific token that
+    permits `WebAssembly.instantiate` while still blocking `eval()`/
+    `new Function()` — deliberately not the broad `'unsafe-eval'`).
+  - **Only one WASM core variant is shipped, on purpose**: Tesseract.js's
+    own runtime feature-detection would otherwise pick between three
+    SIMD-capability variants (~20MB total to self-host all three).
+    Passing `corePath` as a specific `.js` file rather than a directory
+    bypasses that detection entirely and pins to plain SIMD — supported
+    by every browser from ~2021 onward, a reasonable floor for a 2026
+    app, and skips the newer "relaxed SIMD" and non-SIMD fallback
+    variants. A real, deliberate trade-off (committing ~6.8MB of vendor
+    binary to the repo, once, in exchange for that CSP posture and a
+    much smaller footprint than shipping every variant), not a
+    default left unexamined.
+  - **PDF receipts are explicitly out of scope for this pass** — the
+    task named Tesseract.js "or a clean PDF text parser"; building both
+    (a second pdf.js integration alongside real OCR) would double the
+    scope for a lower-value second path (many PDF receipts already have
+    a text layer needing no OCR at all, which is a genuinely different
+    code path, not a variant of this one). The dropzone rejects non-image
+    files with a clear message rather than silently failing.
+- **`src/lib/receipt-parser.ts`** (new, pure engine, `src/lib/`
+  convention per §3b — testable with plain OCR-shaped text literals, no
+  browser needed at all): merchant name (first plausible-looking line),
+  date (ISO, numeric D/M/Y with day-first-by-default disambiguation,
+  and month-name formats), total (a "total"-keyword line, explicitly
+  excluding "subtotal", falling back to the largest currency-like
+  number in the receipt), tax (a "tax"/"vat"/Hebrew מע"מ-keyword line),
+  and best-effort line items. Every extracted amount goes through
+  `money.ts`'s own `parseShekelsToAgorot` rather than a second ad hoc
+  float conversion — "money is never a float" applies exactly as much
+  to a number lifted out of noisy OCR text as anywhere else in the app.
+  - **Keyword matching goes through `text-matching.ts`'s whole-word
+    matcher, never a hand-rolled `\b` regex or a substring check** — law
+    #4's Hebrew `\b`-boundary bug applies just as much to a Hebrew
+    receipt (מע"מ) as to a merchant name, and a plain substring check
+    has its own, different bug: an early draft matched "tax" as a
+    substring of "Taxi," which would have mis-flagged a taxi fare's line
+    as a tax line. Caught and fixed before writing the test that would
+    have exposed it, by re-reading the draft against exactly this "not a
+    keyword list" law already established for the periodicity engine.
+  - **Day/month disambiguation, derived correctly, not guessed**: a
+    numeric `A/B/C` date defaults to day-first (this app's Israeli
+    context) unless `B` (the second number) can't possibly be a month
+    (`> 12`), which is the only case that forces month-first — `A > 12`
+    needs no special case at all, since day-first already handles it
+    correctly (a first number that can't be a month is fully consistent
+    with it being the day). An earlier draft had this backwards and left
+    genuinely broken, self-contradicting placeholder code in place while
+    the logic was being worked out; caught before writing tests, not by
+    a failing test.
+- **Manual transaction creation** (`createTransaction` in
+  `src/server/dal/transactions.ts`, `POST /api/transactions`) — the
+  capability gap this feature's UI exposed. ILS-only, matching the CSV
+  pipeline's own precedent (§3j: "Foreign-currency rows are refused, not
+  converted") since a receipt is exactly the same kind of untrusted free
+  text a CSV row is: same `neutralizeFormulaInjection` treatment on
+  `description`/`merchantName`, same Tier-1-2-only categorization
+  cascade (Tier 3 needs the embedding sidecar, Tier 4 needs a live
+  Anthropic call — both deliberately out of the critical path of a
+  single interactive submission, for the same reason CSV import's own
+  doc comment gives), same `needsReview: confidence < 0.5` fallback rule,
+  and `isManual: true` — the first code path to actually set that flag
+  since it was documented, back in §3j, as meaning something distinct
+  from `!needsReview`.
+- **`src/app/transactions/_components/receipt-scanner-modal.tsx`**: a
+  drag-and-drop dialog (focus trap, Escape-to-close, focus-restore-on-
+  close — the exact pattern `MobileNav`'s "More" drawer already
+  implements and was audited for in Phase 7, reused rather than
+  reinvented) walking through drop → client-side OCR with a progress
+  bar → a review form pre-filled from `parseReceiptText`'s output,
+  fully editable → submit. The amount is always forced negative on
+  submit regardless of what's typed — a receipt is definitionally an
+  expense, and trusting a sign the user never actually entered would be
+  the wrong default to leave open.
+- **Verified, not just written**: `npm run check` clean (657/660, 3
+  skip for the unrelated embedding sidecar) — 28 new parser unit tests
+  (including the Hebrew-VAT and "Taxi"-not-"tax" cases above, noisy-
+  whitespace OCR simulation, and an intentionally-malformed huge number
+  that must be skipped rather than crash the parser), 6 new component
+  tests for the review modal (OCR success pre-fills the form correctly,
+  a non-image file is rejected before OCR ever runs, an OCR failure
+  shows a clear error without crashing, submission correctly forces the
+  amount negative, Escape closes and resets), and a 6-case integration
+  suite for `createTransaction` (IDOR on both another user's bank
+  account and a nonexistent one, formula-injection neutralization,
+  Tier-1 learning from a prior manual correction, the Uncategorized/
+  needsReview fallback, and — a real bug this session's own review
+  process caught before it ever hit a written assertion — proving
+  ciphertext-at-rest requires a raw `$queryRaw` read, since
+  `createAdminClient()` also carries the encrypted-fields extension for
+  its own legitimate reasons (the seed script needs it) and so
+  auto-decrypts on every read exactly like the app runtime client does;
+  an admin-client read genuinely cannot be used to observe raw
+  ciphertext, which the first draft of this test incorrectly assumed).
+  Full production build clean; `verify:client-bundle-secrets` clean;
+  live `curl` against the running dev server: CSP headers carry the new
+  directives, all three self-hosted `public/tesseract/` assets 200, a
+  real end-to-end receipt-style transaction created and confirmed
+  encrypted at rest via raw SQL, then removed.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no PDF support (see above); the parser takes the *first*
+  date/total match found, so a receipt with more than one date-shaped
+  string (e.g. a "valid until" line) or an unusually-labeled total could
+  pick the wrong one — the review form exists specifically so a
+  misdetection is a quick edit, not a silent error; line items are
+  best-effort and informational only, never persisted as their own
+  records (`NotableTransaction` has no line-item concept) — they're
+  folded into nothing beyond the review UI's own display.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

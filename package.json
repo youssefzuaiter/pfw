@@ -35,6 +35,7 @@
     "recharts": "^3.10.1",
     "remark-gfm": "^4.0.1",
     "server-only": "^0.0.1",
+    "tesseract.js": "^7.0.0",
     "three": "^0.185.1",
     "zod": "^4.4.3",
     "zustand": "^5.0.15"

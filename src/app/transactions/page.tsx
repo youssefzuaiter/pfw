@@ -6,6 +6,7 @@ import { listCategories } from "../../server/dal/categories";
 import { listTransactions, type TransactionSort } from "../../server/dal/transactions";
 import { FilterBar } from "./_components/filter-bar";
 import { ImportCsvForm } from "./_components/import-csv-form";
+import { ReceiptScannerModal } from "./_components/receipt-scanner-modal";
 import { TransactionsTable, type TransactionRow } from "./_components/transactions-table";
 
 export const instant = false;
@@ -71,7 +72,10 @@ export default async function TransactionsPage({
           Subscriptions radar →
         </Link>
       </div>
-      <ImportCsvForm bankAccounts={accountOptions} />
+      <div className="flex flex-wrap items-start gap-3">
+        <ImportCsvForm bankAccounts={accountOptions} />
+        <ReceiptScannerModal bankAccounts={accountOptions} />
+      </div>
       <FilterBar categories={categoryOptions} initialQuery={query} initialCategoryId={categoryId} initialSort={sort} />
       <TransactionsTable rows={rows} categories={categoryOptions} />
     </div>

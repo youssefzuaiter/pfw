@@ -34,13 +34,26 @@ export function proxy(request: NextRequest) {
   // A statically prerendered route has no such request at render time, so
   // the root layout deliberately reads headers() to force the app shell
   // dynamic — see the comment in src/app/layout.tsx.
+  //
+  // 'wasm-unsafe-eval' + worker-src (AGENTS.md §3q, the client-side
+  // receipt OCR engine): a narrowly-scoped WASM-compilation allowance,
+  // NOT the broad 'unsafe-eval' — it permits WebAssembly.instantiate but
+  // still blocks eval()/new Function() string-based execution. Tesseract.js's
+  // worker script and WASM core are self-hosted under public/tesseract/
+  // specifically so worker-src/script-src can both stay 'self' rather than
+  // needing a third-party origin for *executable code*. connect-src's
+  // cdn.jsdelivr.net exception is deliberately narrower than that: it's
+  // reached only to fetch the English language *training data* file (a
+  // static data blob, never executed) — no receipt image or extracted
+  // text is ever sent there, only a GET for that one public asset.
   const csp = `
     default-src 'self';
-    script-src 'self' 'nonce-${nonce}' 'strict-dynamic';
+    script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';
+    worker-src 'self' blob:;
     style-src 'self' 'nonce-${nonce}';
     img-src 'self' blob: data:;
     font-src 'self';
-    connect-src 'self';
+    connect-src 'self' https://cdn.jsdelivr.net;
     object-src 'none';
     base-uri 'self';
     form-action 'self';
