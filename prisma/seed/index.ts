@@ -10,6 +10,7 @@ import {
   BANKS,
   CATEGORIES,
   EMPLOYER_NAME,
+  HOUSEHOLD_MEMBERS,
   MERCHANTS_BY_CATEGORY,
   MOCK_USD_TO_ILS_RATE,
   SEED_USER,
@@ -70,12 +71,27 @@ async function main() {
   // so it's disabled for the duration of the reset. This script runs as
   // the admin (superuser) role and is dev/seed tooling, not an
   // application-facing "delete my account" flow — see AGENTS.md.
+  //
+  // The two household-member emails are wiped alongside the primary
+  // demo user's, same idempotent "wipes-and-regenerates every run"
+  // contract — deleting `user` also cascades away the SharedGroup it
+  // created (and, from there, every GroupMember/GroupInvite row on it),
+  // and deleting a member cascades their own owned rows (categories,
+  // budgets, bank accounts, their own GroupMember row) — see each
+  // model's `onDelete` in schema.prisma.
+  const seedEmails = [SEED_USER.email, HOUSEHOLD_MEMBERS.spouse.email, HOUSEHOLD_MEMBERS.roommate.email];
   await prisma.$executeRaw`ALTER TABLE "AuditLog" DISABLE TRIGGER audit_log_append_only`;
-  await prisma.user.deleteMany({ where: { email: SEED_USER.email } });
+  await prisma.user.deleteMany({ where: { email: { in: seedEmails } } });
   await prisma.$executeRaw`ALTER TABLE "AuditLog" ENABLE TRIGGER audit_log_append_only`;
 
   const user = await prisma.user.create({
     data: { email: SEED_USER.email, displayName: SEED_USER.displayName },
+  });
+  const spouse = await prisma.user.create({
+    data: { email: HOUSEHOLD_MEMBERS.spouse.email, displayName: HOUSEHOLD_MEMBERS.spouse.displayName },
+  });
+  const roommate = await prisma.user.create({
+    data: { email: HOUSEHOLD_MEMBERS.roommate.email, displayName: HOUSEHOLD_MEMBERS.roommate.displayName },
   });
 
   // --- Categories ---------------------------------------------------------
@@ -574,11 +590,63 @@ async function main() {
     });
   }
 
+  // --- Household Space demo (AGENTS.md §3s) -----------------------------
+  // A real, live demonstration of Granular Household & Shared Budget
+  // Spaces: `user` (the primary demo account — always who
+  // `getCurrentUser()` resolves to) owns the group; `spouse` gets WRITE
+  // standing and shares one of HER OWN resources in (a real other
+  // user's data pooled into the primary user's "Household Spaces" view);
+  // `roommate` gets READ-only standing and shares nothing, demonstrating
+  // that a lower-permission member can still see everything shared into
+  // the group. `user` also shares one of their OWN existing resources
+  // (the "groceries" budget and the joint `checking` account) into the
+  // group, showing sharing works in both directions — see the Phase-0-
+  // style feature summary in AGENTS.md for the full design.
+  const household = await prisma.sharedGroup.create({
+    data: { name: "The Household [משק הבית]", createdById: user.id },
+  });
+  await prisma.groupMember.createMany({
+    data: [
+      { sharedGroupId: household.id, userId: user.id, role: "OWNER", permission: "WRITE" },
+      { sharedGroupId: household.id, userId: spouse.id, role: "MEMBER", permission: "WRITE" },
+      { sharedGroupId: household.id, userId: roommate.id, role: "MEMBER", permission: "READ" },
+    ],
+  });
+
+  // Dana (spouse) gets her own category + budget — a genuinely separate
+  // user's own data, not a copy of the primary user's — then shares it
+  // into the household.
+  const spouseUtilitiesCategory = await prisma.category.create({
+    data: {
+      userId: spouse.id,
+      slug: "household-utilities",
+      name: "Household Utilities [חשבונות משק בית]",
+      sharedGroupId: household.id,
+    },
+  });
+  await prisma.budget.create({
+    data: {
+      userId: spouse.id,
+      categoryId: spouseUtilitiesCategory.id,
+      monthlyLimit: ils(650),
+      sharedGroupId: household.id,
+    },
+  });
+
+  // The primary user shares their own existing "groceries" budget and
+  // joint checking account into the same group.
+  const groceriesBudget = await prisma.budget.findFirstOrThrow({
+    where: { userId: user.id, categoryId: categoryId("groceries") },
+  });
+  await prisma.budget.update({ where: { id: groceriesBudget.id }, data: { sharedGroupId: household.id } });
+  await prisma.bankAccount.update({ where: { id: checking.id }, data: { sharedGroupId: household.id } });
+
   console.log("Seed complete:", {
     user: user.email,
     checking: checking.id,
     savings: savings.id,
     creditCard: creditCard.id,
+    household: { id: household.id, spouse: spouse.email, roommate: roommate.email },
   });
 
   await prisma.$disconnect();

@@ -1,13 +1,25 @@
 import { Tickbar, type TickbarStatus } from "../../components/tickbar/tickbar";
 import { TiltCard } from "../../components/tilt/tilt-card";
+import { AcceptInviteForm } from "../../components/household/accept-invite-form";
+import { CreateHouseholdForm } from "../../components/household/create-household-form";
+import { HouseholdAdminPanel } from "../../components/household/household-admin-panel";
+import { HouseholdNav } from "../../components/household/household-nav";
+import { ShareResourceControl } from "../../components/household/share-resource-control";
 import { computeMonthProgress, computeProrationStatus, type ProrationStatus } from "../../lib/budget-proration";
 import { agorot, formatAgorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { listBudgets } from "../../server/dal/budgets";
 import { listCategories } from "../../server/dal/categories";
+import {
+  getSharedGroupData,
+  listGroupInvites,
+  listGroupMembers,
+  listMyGroups,
+} from "../../server/dal/shared-groups";
 import { getSpendByCategoryInRange } from "../../server/dal/transactions";
 import { BudgetForm } from "./_components/budget-form";
 import { DeleteBudgetButton } from "./_components/delete-budget-button";
+import { HouseholdSharedView } from "./_components/household-shared-view";
 
 export const instant = false;
 
@@ -31,8 +43,72 @@ const PACE_LABEL: Record<ProrationStatus, string> = {
   over_pace: "Over pace — spending faster than expected for this point in the month.",
 };
 
-export default async function BudgetsPage() {
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+export default async function BudgetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
   const user = await getCurrentUser();
+
+  const myGroups = await listMyGroups(user.id);
+  const groupOptions = myGroups.map((g) => ({ id: g.group.id, name: g.group.name }));
+
+  const requestedGroupId = firstParam(params.group);
+  const activeMembership =
+    firstParam(params.view) === "household" && requestedGroupId
+      ? myGroups.find((g) => g.group.id === requestedGroupId)
+      : undefined;
+
+  if (activeMembership) {
+    const [sharedData, members, invites] = await Promise.all([
+      getSharedGroupData(user.id, activeMembership.group.id),
+      listGroupMembers(user.id, activeMembership.group.id),
+      activeMembership.membership.role === "OWNER"
+        ? listGroupInvites(user.id, activeMembership.group.id)
+        : Promise.resolve([]),
+    ]);
+
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-display text-2xl font-semibold text-fg">{activeMembership.group.name}</h1>
+          <HouseholdNav basePath="/budgets" groups={groupOptions} activeGroupId={activeMembership.group.id} />
+        </div>
+
+        <HouseholdSharedView
+          myUserId={user.id}
+          budgets={sharedData.budgets}
+          bankAccounts={sharedData.bankAccounts}
+          categories={sharedData.categories}
+        />
+
+        <HouseholdAdminPanel
+          sharedGroupId={activeMembership.group.id}
+          myUserId={user.id}
+          myRole={activeMembership.membership.role}
+          members={members.map((m) => ({
+            userId: m.userId,
+            displayName: m.user.displayName,
+            role: m.role,
+            permission: m.permission,
+          }))}
+          pendingInvites={invites.map((i) => ({
+            id: i.id,
+            invitedEmail: i.invitedEmail,
+            permission: i.permission,
+            status: i.status,
+            expiresAt: i.expiresAt.toISOString(),
+          }))}
+        />
+      </div>
+    );
+  }
+
   const now = new Date();
   const monthStart = startOfMonthUtc(now);
   const nextMonthStart = startOfNextMonthUtc(now);
@@ -50,7 +126,10 @@ export default async function BudgetsPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
-      <h1 className="font-display text-2xl font-semibold text-fg">Budgets</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl font-semibold text-fg">Budgets</h1>
+        <HouseholdNav basePath="/budgets" groups={groupOptions} activeGroupId={null} />
+      </div>
 
       {budgets.length === 0 && (
         <p className="text-sm text-muted">No budgets set yet — pick a category below to get started.</p>
@@ -76,6 +155,12 @@ export default async function BudgetsPage() {
                 <div className="flex flex-col items-end gap-2">
                   <BudgetForm categoryId={budget.categoryId} initialLimit={(limit / 100).toFixed(2)} compact />
                   <DeleteBudgetButton budgetId={budget.id} />
+                  <ShareResourceControl
+                    resourceType="budget"
+                    resourceId={budget.id}
+                    groups={groupOptions}
+                    currentSharedGroupId={budget.sharedGroupId}
+                  />
                 </div>
               </div>
               <div className="mt-3">
@@ -108,6 +193,18 @@ export default async function BudgetsPage() {
           </ul>
         </section>
       )}
+
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Household Spaces</h2>
+        <p className="mb-3 text-sm text-muted">
+          Create a household to share specific budgets, accounts, or categories with other people — your other
+          personal data (transactions, goals, debts, and everything else) always stays strictly yours.
+        </p>
+        <div className="flex flex-col gap-3">
+          <CreateHouseholdForm />
+          <AcceptInviteForm />
+        </div>
+      </section>
     </div>
   );
 }

@@ -96,6 +96,35 @@ enum AuditAction {
   DELETE
 }
 
+/// A SharedGroup member's standing. OWNER is exactly the group's creator
+/// (there is only ever one — see `createSharedGroup`'s doc comment) and
+/// always has implicit write access regardless of `permission`; every
+/// other member is MEMBER, whose write access is governed by
+/// `GroupMember.permission` alone.
+enum GroupRole {
+  OWNER
+  MEMBER
+}
+
+/// Read = can see a resource shared into the group. Write = can also
+/// edit it. Granted per-membership (one level per person per group), not
+/// per-resource-per-person — see AGENTS.md §3s for why a full per-resource
+/// ACL matrix was deliberately not built.
+enum SharePermission {
+  READ
+  WRITE
+}
+
+/// PENDING -> ACCEPTED (normal path) or REVOKED (owner cancels it early)
+/// or EXPIRED (past `expiresAt`, checked at accept time rather than by a
+/// background job — see `acceptGroupInvite`'s doc comment).
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
 /// `zk*` columns back the zero-knowledge vault for `GoalContribution.note`
 /// (AGENTS.md §3m) — none of them are secret. `zkSalt` and
 /// `zkKdfIterations` are PBKDF2 parameters (a salt's job is to be public;
@@ -110,31 +139,35 @@ enum AuditAction {
 /// existed). This app has no passphrase-rotation flow: once set up, these
 /// three columns are immutable — see `setupZkVault`'s doc comment.
 model User {
-  id                 String    @id @default(cuid())
-  email              String    @unique
+  id                 String   @id @default(cuid())
+  email              String   @unique
   displayName        String
   zkSalt             String?
   zkKdfIterations    Int?
   zkCanaryCiphertext String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  bankAccounts       BankAccount[]
-  categories         Category[]
-  transactions       NotableTransaction[]
-  budgets            Budget[]
-  goals              Goal[]
-  goalContributions  GoalContribution[]
-  debts              Debt[]
-  debtPayments       DebtPayment[]
-  manualAssets       ManualAsset[]
-  portfolioHoldings  PortfolioHolding[]
-  trades             Trade[]
-  netWorthSnapshots  NetWorthSnapshot[]
-  merchantEmbeddings MerchantEmbedding[]
+  bankAccounts         BankAccount[]
+  categories           Category[]
+  transactions         NotableTransaction[]
+  budgets              Budget[]
+  goals                Goal[]
+  goalContributions    GoalContribution[]
+  debts                Debt[]
+  debtPayments         DebtPayment[]
+  manualAssets         ManualAsset[]
+  portfolioHoldings    PortfolioHolding[]
+  trades               Trade[]
+  netWorthSnapshots    NetWorthSnapshot[]
+  merchantEmbeddings   MerchantEmbedding[]
   dividends            Dividend[]
   subscriptionTracking SubscriptionTracking[]
   auditLogs            AuditLog[]
+  sharedGroupsCreated  SharedGroup[]          @relation("SharedGroupsCreated")
+  groupMemberships     GroupMember[]
+  groupInvitesCreated  GroupInvite[]          @relation("GroupInvitesCreated")
+  groupInvitesAccepted GroupInvite[]          @relation("GroupInvitesAccepted")
 }
 
 /// User-defined categories with permanent slugs: renaming changes `name`
@@ -145,22 +178,32 @@ model User {
 /// the DB does not cascade-delete transactions when a category is
 /// removed, precisely so a skipped reassignment step fails loudly instead
 /// of silently orphaning transactions).
+///
+/// `sharedGroupId` (AGENTS.md §3s) is nullable and additive: `userId`
+/// always stays the true owner (a category is never transferred), and
+/// setting `sharedGroupId` only extends *visibility* (and, for a WRITE
+/// member, editability of `name`) to the rest of that SharedGroup — never
+/// its `transactions`, which stay strictly personal regardless of
+/// sharing (see SharedGroup's own model comment).
 model Category {
-  id              String    @id @default(cuid())
+  id              String       @id @default(cuid())
   userId          String
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   slug            String
   name            String
-  isUncategorized Boolean   @default(false)
+  isUncategorized Boolean      @default(false)
   archivedAt      DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  sharedGroupId   String?
+  sharedGroup     SharedGroup? @relation(fields: [sharedGroupId], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   transactions NotableTransaction[]
   budgets      Budget[]
 
   @@unique([userId, slug])
   @@index([userId])
+  @@index([sharedGroupId])
 }
 
 /// Credit balances are stored positive = money owed (a $500 credit card
@@ -173,6 +216,15 @@ model Category {
 /// truth" violation, AGENTS.md law #5). The DAL computes the ILS
 /// equivalent at read time from the latest `ExchangeRate` row, the same
 /// "today is live, never stored" treatment NetWorthSnapshot already gets.
+/// `sharedGroupId` (AGENTS.md §3s) extends visibility of this row itself
+/// (balance, institution, nickname) to the SharedGroup's members — a
+/// household's joint checking account can show its shared balance for a
+/// household net-worth view. `transactions` are deliberately NOT included
+/// in that grant: NotableTransaction keeps its own strictly-personal RLS
+/// policy untouched regardless of whether the account it posted to is
+/// shared, so a shared account's balance is visible without exposing the
+/// owner's individual line-item spending — the "personal asset vaults
+/// stay strictly isolated" half of the feature.
 model BankAccount {
   id              String          @id @default(cuid())
   userId          String
@@ -185,12 +237,15 @@ model BankAccount {
   currency        Currency        @default(ILS)
   /// Minor units of `currency` (agorot if ILS, cents otherwise).
   nativeBalance   BigInt
+  sharedGroupId   String?
+  sharedGroup     SharedGroup?    @relation(fields: [sharedGroupId], references: [id], onDelete: SetNull)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
   transactions NotableTransaction[]
 
   @@index([userId])
+  @@index([sharedGroupId])
 }
 
 /// The ledger. `providerTransactionId` is the CSV/bank-provided reference
@@ -245,18 +300,25 @@ model NotableTransaction {
 /// One row per (user, category) — the current monthly limit. Utilization
 /// and month-progress proration are computed live by the DAL, never
 /// stored.
+/// `sharedGroupId` (AGENTS.md §3s): nullable, additive — `userId` always
+/// stays the true owner/creator, sharing only extends visibility (and,
+/// for a WRITE-permission member, editability of `monthlyLimit`) to the
+/// rest of the group.
 model Budget {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  categoryId   String
-  category     Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId    String
+  category      Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   /// Agorot.
-  monthlyLimit BigInt
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  monthlyLimit  BigInt
+  sharedGroupId String?
+  sharedGroup   SharedGroup? @relation(fields: [sharedGroupId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@unique([userId, categoryId])
+  @@index([sharedGroupId])
 }
 
 /// Progress is derived from `contributions`, never stored on this model —
@@ -589,6 +651,91 @@ model SubscriptionTracking {
 
   @@unique([userId, merchantKey])
   @@index([userId])
+}
+
+/// A household/shared space (AGENTS.md §3s). Owns nothing itself — it's a
+/// scoping boundary that specific Budget/BankAccount/Category rows opt
+/// into via their own nullable `sharedGroupId`, never a container that
+/// copies or duplicates data. `NotableTransaction` and every other
+/// personal model (Goal, Debt, ManualAsset, PortfolioHolding, ...) have
+/// no `sharedGroupId` at all and stay strictly single-user, by omission
+/// — "personal asset vaults stay strictly isolated" is enforced by which
+/// models this feature touches, not by a runtime check.
+///
+/// `createdById` is the group's one OWNER — ownership never transfers in
+/// this pass (no "make someone else the owner" flow); deleting the owner
+/// cascades away the whole group and every share grant on it (a shared
+/// Budget/BankAccount/Category row itself survives via `onDelete:
+/// SetNull` on `sharedGroupId` — only the *sharing* is undone, not the
+/// underlying resource, which still belongs to whichever member actually
+/// owns it).
+model SharedGroup {
+  id          String   @id @default(cuid())
+  name        String
+  createdById String
+  createdBy   User     @relation("SharedGroupsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members      GroupMember[]
+  invites      GroupInvite[]
+  budgets      Budget[]
+  bankAccounts BankAccount[]
+  categories   Category[]
+
+  @@index([createdById])
+}
+
+/// One row per (user, group) — the only way a GroupMember row is ever
+/// created is a user accepting their own invite (or the owner creating
+/// their own OWNER row at group-creation time), both of which are a
+/// self-insert of `userId = <the acting user>`. There is deliberately no
+/// "owner directly adds someone" path — see `createGroupInvite`'s doc
+/// comment. `permission` is read by MEMBER rows only; an OWNER row's
+/// permission is always implicitly WRITE regardless of this column's
+/// value (see the RLS helper functions in the migration this model
+/// shipped with).
+model GroupMember {
+  id            String          @id @default(cuid())
+  sharedGroupId String
+  sharedGroup   SharedGroup     @relation(fields: [sharedGroupId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role          GroupRole       @default(MEMBER)
+  permission    SharePermission @default(READ)
+  joinedAt      DateTime        @default(now())
+
+  @@unique([sharedGroupId, userId])
+  @@index([userId])
+}
+
+/// A pending invitation to join a SharedGroup. `tokenHash` is a SHA-256
+/// hash of a single-use random token generated in
+/// `src/server/dal/shared-groups.ts` — the raw token is returned to the
+/// inviter exactly once (to send out-of-band: email, a shared link) and
+/// is never itself persisted, the same "hash it, never store the secret"
+/// treatment a real password would get if this app had one yet (and
+/// exactly the treatment `zk-crypto.ts`'s canary already gives a
+/// passphrase, §3m). A row's `status` moves PENDING -> ACCEPTED/REVOKED
+/// once; EXPIRED is assigned lazily at accept-time when `expiresAt` has
+/// passed rather than by a background sweep (see `acceptGroupInvite`).
+model GroupInvite {
+  id            String          @id @default(cuid())
+  sharedGroupId String
+  sharedGroup   SharedGroup     @relation(fields: [sharedGroupId], references: [id], onDelete: Cascade)
+  invitedEmail  String
+  tokenHash     String          @unique
+  permission    SharePermission @default(READ)
+  status        InviteStatus    @default(PENDING)
+  expiresAt     DateTime
+  createdById   String
+  createdBy     User            @relation("GroupInvitesCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  acceptedById  String?
+  acceptedBy    User?           @relation("GroupInvitesAccepted", fields: [acceptedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+
+  @@index([sharedGroupId])
+  @@index([invitedEmail])
 }
 
 /// Append-only. Nothing in the application ever calls `.update()` or

@@ -19,6 +19,22 @@ export const SEED_USER = {
   displayName: "PFW Demo [דמו PFW]",
 };
 
+/**
+ * Two additional, genuinely distinct `User` rows (AGENTS.md §3s) —
+ * real household members with their own accounts/categories/budgets,
+ * not aliases of `SEED_USER`. The primary demo user (`SEED_USER`, the
+ * one `getCurrentUser()` always resolves to) creates and owns the
+ * seeded Household Space; these two are its other members, one with
+ * WRITE standing and one READ-only, so the seeded demo shows both
+ * permission levels from day one. There is no login flow to actually
+ * browse the app *as* either of them — see the DAL/route code for how
+ * their data is still real and independently RLS-scoped.
+ */
+export const HOUSEHOLD_MEMBERS = {
+  spouse: { email: "dana@pfw.local", displayName: "Dana Cohen [דנה כהן]" },
+  roommate: { email: "avi@pfw.local", displayName: "Avi Mizrahi [אבי מזרחי]" },
+} as const;
+
 export const BANKS = {
   hapoalim: "Bank Hapoalim [בנק הפועלים]",
   leumi: "Bank Leumi [בנק לאומי]",

@@ -12,16 +12,24 @@ const SRC_ROOT = path.resolve(__dirname, "../../src");
 // src/server/auth/current-user.ts, the one legitimate bootstrap exception
 // — resolving "who is the current user" has to run before any userId
 // exists to scope by, since the User table's own RLS policy is keyed on
-// already knowing the id (see that file's doc comment). Every other file
-// under src/ — the DAL, routes, Server Components — must always go
-// through src/server/db/client.ts instead.
+// already knowing the id (see that file's doc comment); and
+// src/server/groups/invite-admin-ops.ts, the Household Spaces invite/
+// accept flow's own narrow bootstrap exception (AGENTS.md §3s) — the
+// accepting user has no row-level standing on the creator-only
+// `GroupInvite` table until their own `GroupMember` row exists, so
+// looking the invite up by token and marking it accepted both have to
+// happen before that row exists, the same shape as the identity-bootstrap
+// problem `current-user.ts` solves. Every other file under src/ — the
+// DAL, routes, Server Components — must always go through
+// src/server/db/client.ts instead.
 const ADMIN_CLIENT_IMPORT = /from\s+["'].*\/admin-client["']/;
 
 describe("guard: nothing under src/ imports the admin DB client, except the auth bootstrap", () => {
-  it("only admin-client.ts itself and current-user.ts reference admin-client", () => {
+  it("only admin-client.ts, current-user.ts, and invite-admin-ops.ts reference admin-client", () => {
     const allowedImporters = [
       path.resolve(SRC_ROOT, "server", "db", "admin-client.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "current-user.ts"),
+      path.resolve(SRC_ROOT, "server", "groups", "invite-admin-ops.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

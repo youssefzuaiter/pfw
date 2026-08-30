@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { buildDashboardData } from "../../server/dashboard/build-dashboard-data";
+import { getSharedGroupData, listMyGroups } from "../../server/dal/shared-groups";
 import { AttentionFeed } from "./_components/attention-feed";
 import { CashFlowChart } from "./_components/cash-flow-chart";
 import { CategoryDonut } from "./_components/category-donut";
+import { HouseholdSummary } from "./_components/household-summary";
 import { IncomeExpenseChart } from "./_components/income-expense-chart";
 import { NetWorthHero } from "./_components/net-worth-hero";
 
@@ -15,7 +17,21 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const data = await buildDashboardData(user.id);
+  const [data, myGroups] = await Promise.all([buildDashboardData(user.id), listMyGroups(user.id)]);
+
+  const households = await Promise.all(
+    myGroups.map(async ({ group, membership }) => {
+      const shared = await getSharedGroupData(user.id, group.id);
+      return {
+        id: group.id,
+        name: group.name,
+        role: membership.role,
+        permission: membership.permission,
+        sharedBudgetCount: shared.budgets.length,
+        sharedAccountCount: shared.bankAccounts.length,
+      };
+    }),
+  );
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
@@ -33,6 +49,8 @@ export default async function DashboardPage() {
         <NetWorthHero netWorth={data.netWorth} history={data.netWorthHistory} />
         <AttentionFeed insights={data.insights} />
       </div>
+
+      <HouseholdSummary households={households} />
 
       <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="cash-flow-heading">
         <h2 id="cash-flow-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">

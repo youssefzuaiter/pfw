@@ -1899,6 +1899,191 @@ CSV import already gets), not stubbed.
   records (`NotableTransaction` has no line-item concept) — they're
   folded into nothing beyond the review UI's own display.
 
+## 3s. Granular Household & Shared Budget Spaces (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`. **Ran into the same
+architectural fork §3o's local-copilot work did, and it was resolved the
+same way — asked, not assumed**: this app has no real login
+(`getCurrentUser()` always resolves to one hardcoded seeded user, Phase 0
+decision #1). "Invite members" and "toggle Personal vs. Household" need
+genuinely distinct `User` rows to mean anything real. Given a choice
+between (a) staying single-session with real other seeded users pooling
+data into the one demo user's view, or (b) also building a "switch demo
+user" selector to browse the app *as* each member, the user picked (a) —
+smaller, and matches this app's existing single-session architecture
+exactly. There is still no login/switch-user UI; the primary demo user
+never "becomes" someone else in the browser.
+
+- **No new personal-data model was touched.** `SharedGroup`/`GroupMember`/
+  `GroupInvite` are new; `Budget`/`BankAccount`/`Category` each gained one
+  nullable `sharedGroupId` column. Every other model — `NotableTransaction`
+  included — has no `sharedGroupId` at all, by omission: "personal asset
+  vaults stay strictly isolated" is enforced by which models this feature
+  touches, not by a runtime check. A shared `BankAccount` exposes its
+  balance/institution/nickname to fellow members; its `transactions` never
+  do, regardless of the account's sharing state or a member's WRITE
+  standing — verified live, not just asserted (see below).
+- **Schema & RLS** (migration `20260829120000_shared_household_spaces`,
+  generated via `prisma migrate diff` against the live dev DB rather than
+  `prisma migrate dev`, because a prior migration in this history had
+  already been hand-edited post-apply — see §3p's "migration-checksum
+  incident" — which makes `migrate dev`'s shadow-database replay refuse to
+  run without a full reset; diffing the live DB directly sidesteps that
+  replay with no data loss, applied via `prisma migrate deploy` instead).
+  - `Budget`/`BankAccount`/`Category` moved from one blanket
+    `tenant_isolation` policy to 4 per-command policies each — the first
+    table(s) in this app to need that split, because a single ALL-commands
+    policy can't distinguish "can see" from "can write" for a non-owner
+    member (DELETE has no `WITH CHECK` clause at all to lean on). The rule
+    that emerged after two iterations (see below): sharing YOUR OWN
+    resource into a group you belong to only requires being a member, any
+    permission level (it isn't "editing someone else's data"); editing a
+    *fellow member's* shared resource requires `WRITE` (or `OWNER`). The
+    true owner can always see/edit/delete their own resource regardless of
+    their current group standing.
+  - **`User` also needed its RLS widened — a real bug caught by hand-
+    testing the actual rendered page, not by a DAL-level test.** `User`'s
+    original policy (self-only, no exceptions) meant a Prisma relational
+    `include: { user: { select: { displayName } } }` on a *fellow*
+    member's row silently resolved to `null` — Postgres RLS filters the
+    joined table too, and `User`'s policy had no "or you share a
+    household with this person" clause. This broke both the member roster
+    and every "shared by Dana"-style label. Fixed by splitting `User` into
+    4 per-command policies too: SELECT widened to "yourself, or anyone who
+    shares a household with you"; INSERT/UPDATE/DELETE unchanged
+    (self-only) — the minimal disclosure this feature needs, everything
+    else about `User` stays exactly as isolated as before.
+  - **A second real bug, found immediately after fixing the first**: the
+    obvious "any fellow member can see the roster" policy — GroupMember's
+    own SELECT policy querying GroupMember again in a subquery — hit
+    Postgres's *static* recursion guard (`infinite recursion detected in
+    policy for relation`) at query-plan time, not a data-dependent runtime
+    concern. Fixed with `pfw_my_shared_group_ids()`, a `SECURITY DEFINER`
+    helper function owned by `pfw_app` (the migration's superuser role, so
+    its body's internal SELECT never re-triggers GroupMember's own policy
+    at all) — deliberately takes **no parameter**, reading
+    `app.current_user_id` internally instead: a SECURITY DEFINER function
+    is callable directly by anyone with EXECUTE (the default grant), so a
+    parameterized version would let `pfw_runtime` call it ad hoc with an
+    arbitrary other user's id and bypass RLS to enumerate *their* groups.
+  - **A third, subtler bug in `setResourceSharing` found by the
+    integration suite itself, not by inspection**: check order matters for
+    IDOR safety. The first draft checked group membership before resource
+    ownership, so a caller who owned nothing at all but happened to be a
+    real member of the target group got `not_group_member` instead of
+    `resource_not_found` for someone else's resource id — technically
+    harmless (neither response confirms the resource exists) but
+    inconsistent with this app's own "ownership check first, always"
+    convention elsewhere. Fixed by checking ownership first in all three
+    resource-type branches; a regression test
+    (`resource_not_found takes priority over not_group_member even for an
+    actual member who just doesn't own the resource`) pins the fix.
+  - `pfw_is_group_member(groupId)`/`pfw_can_write_group(groupId)`: two
+    more helper functions (plain, not `SECURITY DEFINER` — they don't
+    self-reference the table their result feeds into) used by the
+    Budget/BankAccount/Category policies.
+- **`src/server/groups/invite-admin-ops.ts`** (new): the invite/accept
+  flow's own narrow, documented admin-client exception — allowlisted in
+  `tests/guards/admin-client-boundary.test.ts` alongside `current-user.ts`.
+  `GroupInvite` RLS is creator-only for every command; the accepting user
+  is by definition neither the creator nor yet a member, so looking the
+  invite up by token hash and marking it ACCEPTED both have to happen
+  before their own `GroupMember` row exists to grant any row-level
+  standing — the identical bootstrap shape `getCurrentUser()` and the
+  zero-knowledge vault's legacy-note migration (§3m) already have.
+- **`src/server/dal/shared-groups.ts`** (new): group creation (auto-adds
+  the creator as an OWNER/WRITE `GroupMember` — the one case membership is
+  created directly rather than via an accepted invite), invite
+  create/accept/revoke (tokens are `randomBytes(32)` base64url, only their
+  SHA-256 hash persisted — the same "hash it, never store the secret"
+  treatment `zk-crypto.ts`'s canary already gets, §3m), member permission
+  updates and removal, and `setResourceSharing`/`getSharedGroupData` for
+  the actual share/unshare/read-pooled-data operations. **No self-service
+  permission changes, by design**: `GroupMember`'s UPDATE policy requires
+  the group's owner specifically — if a member could update their own row,
+  `WITH CHECK ("userId" = current_user)` would let them set their own
+  `permission`/`role` to WRITE/OWNER, a privilege-escalation bug. Proven
+  closed by an integration test that bypasses `updateMemberPermission`
+  entirely and attempts the raw update directly — RLS rejects it even
+  when the DAL's own check is skipped outright.
+- **Routes** (`POST /api/groups`, `POST /api/groups/[id]/invites`,
+  `DELETE /api/groups/[id]/invites/[inviteId]`,
+  `POST /api/groups/invites/accept`,
+  `PATCH`/`DELETE /api/groups/[id]/members/[memberUserId]`,
+  `POST /api/groups/share`): all `guardMutation`-fronted like every other
+  mutating route (Origin verification, server-resolved identity, rate
+  limiting), Zod-validated bodies, audit-logged. One shared
+  `POST /api/groups/share` route handles all three resource types rather
+  than three near-identical ones. The invite-creation response includes
+  the raw token exactly once — this app has no outbound email
+  infrastructure, so relaying it to the invitee is the caller's problem,
+  documented plainly rather than pretending an email went out.
+- **UI**: `src/components/household/` (`HouseholdNav` — the
+  "Personal Ledger / Household Spaces" tab switcher, same
+  GET-searchParam-view pattern `/debts`' avalanche-vs-snowball comparison
+  already uses, no client JS needed for the toggle itself;
+  `HouseholdAdminPanel` — invite/permission/roster management for an
+  owner, a read-only roster + leave button otherwise;
+  `CreateHouseholdForm`, `AcceptInviteForm`, `ShareResourceControl` — an
+  inline per-resource share/unshare `<select>`). `/budgets` is the full
+  experience (toggle, personal budgets each get a `ShareResourceControl`,
+  a household view rendering pooled shared budgets/accounts/categories
+  with per-item "shared by X" attribution, and the admin panel);
+  `/dashboard` gets a compact `HouseholdSummary` card (counts + a link
+  into `/budgets`) — deliberately not a second copy of the management UI.
+  - **Same known trap hit twice more, caught by the guard test
+    immediately**: `HouseholdAdminPanel`'s remove/revoke buttons first
+    used inline `onClick={() => ...}` handlers — the `=>`-truncates-the-
+    focus-visible-guard's-regex trap documented in §3c/§3d/§3r. Fixed with
+    named handlers reading `event.currentTarget.dataset.*`, same pattern
+    as `advisor-chat.tsx`. A doc *comment* mentioning `<button>` in prose
+    tripped the same regex a second time in the same file (the §3d
+    "comment talks about tags in prose" shape) — fixed by rewording, not
+    by touching the guard.
+- **Seed data**: two genuinely distinct household-member `User` rows
+  (`prisma/seed/israeli-data.ts`'s `HOUSEHOLD_MEMBERS`) wiped-and-
+  regenerated alongside the primary demo user every run. A seeded
+  "The Household" group: the primary user (OWNER/WRITE) shares their own
+  existing "groceries" budget and joint checking account in; the spouse
+  (WRITE) gets her own category+budget ("Household Utilities") and shares
+  it in too — a real other user's data, not a copy — the roommate
+  (READ) shares nothing, demonstrating a lower-permission member can still
+  see everything shared into the group.
+- **Verified, not just written**: `npm run check` clean (667/734, 67 skip
+  — the embedding sidecar plus, correctly, every DB-gated integration
+  test when run without `DATABASE_URL`/`APP_DATABASE_URL` set, same
+  long-standing convention `tests/integration/db.test.ts` established;
+  a separate run with those exported is the actual verification step, as
+  it is for every prior phase's DB-touching work). With the DB live:
+  28 new integration tests in `tests/integration/shared-groups.test.ts`
+  (group creation, the full invite lifecycle including expired/revoked/
+  already-accepted/already-member rejections, the privilege-escalation
+  bypass-attempt proof, resource sharing, the cross-group-leakage check —
+  a stranger querying a real groupId gets empty arrays back, not an
+  error — a READ-only member's raw update rejected vs. a WRITE member's
+  accepted, un-sharing removing visibility, and the shared-account-but-
+  isolated-transactions proof), plus all pre-existing integration suites
+  still green (64/67 total, 3 skip for the unrelated embedding sidecar).
+  Live `curl` against the running dev server with the real seeded
+  household: invite creation and a forged-Origin 403, an already-a-member
+  accept correctly rejected, an invalid token correctly rejected, sharing
+  a nonexistent resource id correctly 404s, and `/dashboard`+
+  `/budgets?view=household&group=…` both render the real seeded data —
+  correct owner attribution ("Shared by You" / "Shared by Dana Cohen
+  [דנה כהן]"), the full 3-person roster with correct per-member
+  permission dropdowns, and the shared-accounts note about transactions
+  staying personal. Full guard-test suite green, including
+  `admin-client-boundary` (now allowlisting `invite-admin-ops.ts`) and
+  `focus-visible` (after the trap fixes above).
+- **Known limitations, left as such rather than silently expanded
+  scope**: no login/switch-user UI (see the framing note above); no
+  outbound email for invites (raw token returned in the API response
+  once); no per-resource-per-member ACL finer than the group-level
+  READ/WRITE permission (task asked for "read/write permissions," not a
+  full ACL matrix); a member can't rename/delete the group or transfer
+  ownership; the non-owner roster view added late in this pass is
+  read-only by design, not a gap — only the owner can act on it.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
