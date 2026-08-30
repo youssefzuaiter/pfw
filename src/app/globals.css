@@ -212,3 +212,54 @@ body {
 .uv-typing-dot {
   animation: uv-typing-dot 1.2s ease-in-out infinite;
 }
+/* Staggered per-dot delays as nth-child rules, not inline `style=
+   "animationDelay: ..."` (§3x) — even a static, non-dynamic inline style
+   attribute is blocked by this app's CSP (no `unsafe-inline` on
+   `style-src`, and a nonce only ever covers `<style>` elements, never
+   the `style=` attribute) the same way a genuinely dynamic one is; these
+   three values just happen to be fixed, so a plain selector-based rule
+   works instead of copilot-sidebar.tsx needing useInlineStyleProperty. */
+.uv-typing-dots .uv-typing-dot:nth-child(1) {
+  animation-delay: 0ms;
+}
+.uv-typing-dots .uv-typing-dot:nth-child(2) {
+  animation-delay: 150ms;
+}
+.uv-typing-dots .uv-typing-dot:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+/*
+ * Recharts' <ResponsiveContainer> (AGENTS.md §3x) — a REAL, PRE-EXISTING
+ * bug this app's CSP-hardening pass surfaced, unrelated to any single
+ * component here: Recharts sizes its container via its own inline
+ * `style={{width, height, minWidth}}` on the div it renders
+ * (recharts/es6/component/ResponsiveContainer.js), which this app's CSP
+ * (no `unsafe-inline` on style-src) silently blocks in any real browser —
+ * confirmed by hand with a standalone Recharts+CSP repro: the container
+ * measures 0×0 and Recharts never renders a chart <svg> at all. This was
+ * true before this pass touched anything; a dev-only Next.js overlay
+ * happens to mask it in `next dev` (its own devtools UI adds unrelated
+ * CSP noise that looks similar), which is why it went unnoticed — only a
+ * production build (`next build && next start`) shows the real behavior.
+ *
+ * Every call site in this app uses `<ResponsiveContainer width="100%"
+ * height="100%">` with no minWidth/minHeight/maxHeight override
+ * (dashboard's 4 charts, trading's price chart, analytics' Monte Carlo
+ * widget — grep for ResponsiveContainer to confirm), so the exact style
+ * Recharts would have set is fixed and reproducible; these two rules
+ * apply the same values as real stylesheet rules instead, which CSP
+ * doesn't touch at all. `!important` because these are the same
+ * `.recharts-*` classNames Recharts itself defines with no other
+ * consumer in this app that would need to override them.
+ */
+.recharts-responsive-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+}
+.recharts-responsive-container > div {
+  width: 0 !important;
+  height: 0 !important;
+  overflow: visible !important;
+}

@@ -1,4 +1,8 @@
+"use client";
+
+import { useRef } from "react";
 import { formatAgorot } from "../../../lib/money";
+import { useInlineStyleProperty } from "../../../lib/hooks/use-inline-style-property";
 import type { AllocationSlice, AssetClass } from "../../../lib/portfolio-analytics";
 
 const CLASS_LABEL: Record<AssetClass, string> = {
@@ -19,6 +23,13 @@ const CLASS_FILL: Record<AssetClass, string> = {
   CRYPTO: "bg-positive",
 };
 
+/** One allocation slice's width, set via the CSSOM (§3x) rather than React's `style` prop — see `useInlineStyleProperty`'s doc comment for why a plain inline `style` here would be silently blocked by this app's CSP on first paint. */
+function AllocationSliceBar({ assetClass, share }: { assetClass: AssetClass; share: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useInlineStyleProperty(ref, "width", `${share * 100}%`);
+  return <div ref={ref} className={CLASS_FILL[assetClass]} />;
+}
+
 /**
  * A single stacked bar rather than a donut: with at most three asset
  * classes, a donut would be more chart than the data warrants, and a
@@ -30,11 +41,7 @@ export function AllocationBar({ allocation }: { allocation: AllocationSlice[] })
     <div className="flex flex-col gap-3">
       <div className="flex h-3 overflow-hidden rounded-full bg-bg" role="presentation">
         {allocation.map((slice) => (
-          <div
-            key={slice.assetClass}
-            className={CLASS_FILL[slice.assetClass]}
-            style={{ width: `${slice.share * 100}%` }}
-          />
+          <AllocationSliceBar key={slice.assetClass} assetClass={slice.assetClass} share={slice.share} />
         ))}
       </div>
 

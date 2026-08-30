@@ -59,6 +59,29 @@ export function proxy(request: NextRequest) {
   // large files (e.g. cdn-lfs.huggingface.co), which CSP3 browsers check
   // independently at each hop of a fetch redirect chain, not just the
   // initial huggingface.co URL.
+  //
+  // AGENTS.md §3x hardening pass — explicitly confirmed, not just
+  // inherited by omission: script-src and style-src have NEVER carried
+  // 'unsafe-inline' or 'unsafe-eval' in this file, and still don't.
+  // Every legitimately-needed exception to that is narrow and named
+  // above by directive, not a blanket relaxation:
+  // 'wasm-unsafe-eval' (WASM compilation only, not eval()/new Function()),
+  // 'strict-dynamic' (lets Next's own nonce'd bootstrap scripts load
+  // their split chunks without individually nonce-ing each one), and
+  // worker-src's 'blob:' (this app's Web Workers — src/lib/workers/*.worker.ts
+  // — are constructed via `new Worker(new URL(...))`, which Turbopack may
+  // serve through a blob: URL depending on build mode; 'self' alone
+  // isn't reliably sufficient across both, and neither token grants
+  // *script-executing* origins beyond this app's own bundle). connect-src
+  // keeps BOTH of its existing narrow exceptions — cdn.jsdelivr.net
+  // (Tesseract's OCR language data, §3q) alongside huggingface.co
+  // (embedding weights, §3u) — deliberately, not just Hugging Face
+  // alone: dropping cdn.jsdelivr.net would silently break the
+  // already-shipped receipt-OCR feature for a directive this task's
+  // actual target (script-src/style-src's inline/eval posture) never
+  // touches; both exceptions are independently justified, narrow (no
+  // wildcard beyond the one documented LFS subdomain case), and audited
+  // here together rather than one being addressed in isolation.
   const csp = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';

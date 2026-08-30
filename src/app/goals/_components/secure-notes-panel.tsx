@@ -4,15 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
-import {
-  PBKDF2_ITERATIONS,
-  ZK_CANARY_PLAINTEXT,
-  deriveZkKey,
-  encryptWithZkKey,
-  generateZkSalt,
-  verifyZkKey,
-} from "../../../lib/zk-crypto";
+import { PBKDF2_ITERATIONS, generateZkSalt } from "../../../lib/zk-crypto";
 import { useZkVaultStore } from "../../../lib/stores/zk-vault-store";
+import { zkVaultEncrypt, zkVaultSetup, zkVaultUnlock } from "../../../lib/workers/zk-vault-worker-client";
 
 const MIN_PASSPHRASE_LENGTH = 10;
 
@@ -35,7 +29,7 @@ type Props = {
  */
 export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, legacyNoteCount }: Props) {
   const router = useRouter();
-  const key = useZkVaultStore((state) => state.key);
+  const unlocked = useZkVaultStore((state) => state.unlocked);
   const unlock = useZkVaultStore((state) => state.unlock);
   const lock = useZkVaultStore((state) => state.lock);
 
@@ -46,7 +40,7 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  async function migrateLegacyNotes(newKey: CryptoKey) {
+  async function migrateLegacyNotes() {
     const response = await fetch("/api/zk/migrate-legacy", { method: "POST" });
     if (!response.ok) {
       throw new Error("Failed to fetch legacy notes for migration");
@@ -54,7 +48,7 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
     const body = (await response.json()) as { notes: { id: string; plaintext: string }[] };
 
     for (const legacyNote of body.notes) {
-      const ciphertext = await encryptWithZkKey(newKey, legacyNote.plaintext);
+      const { ciphertext } = await zkVaultEncrypt(legacyNote.plaintext);
       const patchResponse = await fetch(`/api/goals/contributions/${legacyNote.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -83,23 +77,22 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
     setIsBusy(true);
     try {
       const newSalt = generateZkSalt();
-      const newKey = await deriveZkKey(passphrase, newSalt, PBKDF2_ITERATIONS);
-      const canary = await encryptWithZkKey(newKey, ZK_CANARY_PLAINTEXT);
+      const { canaryCiphertext } = await zkVaultSetup(passphrase, newSalt, PBKDF2_ITERATIONS);
 
       const response = await fetch("/api/zk/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ salt: newSalt, iterations: PBKDF2_ITERATIONS, canaryCiphertext: canary }),
+        body: JSON.stringify({ salt: newSalt, iterations: PBKDF2_ITERATIONS, canaryCiphertext }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to set up secure notes");
       }
 
-      unlock(newKey);
+      unlock();
 
       if (legacyNoteCount > 0) {
-        const migratedCount = await migrateLegacyNotes(newKey);
+        const migratedCount = await migrateLegacyNotes();
         setStatusMessage(`Secure notes ready — migrated ${migratedCount} existing note(s).`);
       } else {
         setStatusMessage("Secure notes ready.");
@@ -123,17 +116,16 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
 
     setIsBusy(true);
     try {
-      const candidateKey = await deriveZkKey(passphrase, salt, iterations);
-      const isCorrect = await verifyZkKey(candidateKey, canaryCiphertext);
-      if (!isCorrect) {
+      const { valid } = await zkVaultUnlock(passphrase, salt, iterations, canaryCiphertext);
+      if (!valid) {
         setError("Incorrect passphrase");
         return;
       }
 
-      unlock(candidateKey);
+      unlock();
 
       if (legacyNoteCount > 0) {
-        const migratedCount = await migrateLegacyNotes(candidateKey);
+        const migratedCount = await migrateLegacyNotes();
         setStatusMessage(`Unlocked — migrated ${migratedCount} remaining note(s).`);
       } else {
         setStatusMessage("Unlocked.");
@@ -150,11 +142,11 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
   }
 
   async function handleMigrateClick() {
-    if (!key) return;
+    if (!unlocked) return;
     setIsBusy(true);
     setError(null);
     try {
-      const migratedCount = await migrateLegacyNotes(key);
+      const migratedCount = await migrateLegacyNotes();
       setStatusMessage(`Migrated ${migratedCount} remaining note(s).`);
       router.refresh();
     } catch (err) {
@@ -179,7 +171,7 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
   }
 
   // Already unlocked this session.
-  if (key) {
+  if (unlocked) {
     return (
       <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm">
         <Badge variant="positive">Secure notes unlocked</Badge>

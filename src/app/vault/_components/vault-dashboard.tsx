@@ -4,13 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type MouseEvent } from "react";
 import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
-import {
-  decryptVaultValue,
-  deriveVaultKeyBytes,
-  encryptVaultValue,
-  importVaultAesKey,
-  verifyVaultKey,
-} from "../../../lib/dead-mans-switch-crypto";
+import { dmsVaultDecrypt, dmsVaultEncrypt, dmsVaultLock, dmsVaultUnlock } from "../../../lib/workers/dead-mans-switch-worker-client";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function daysBetween(from: Date, to: Date): number {
@@ -38,7 +32,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
   const router = useRouter();
 
   const [passphrase, setPassphrase] = useState("");
-  const [key, setKey] = useState<CryptoKey | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
   const [decrypted, setDecrypted] = useState<Record<string, string>>({});
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -56,20 +50,18 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
 
     setIsBusy(true);
     try {
-      const rawKey = await deriveVaultKeyBytes(passphrase, status.salt, status.iterations);
-      const candidateKey = await importVaultAesKey(rawKey);
-      const isCorrect = await verifyVaultKey(candidateKey, status.canaryCiphertext);
-      if (!isCorrect) {
+      const { valid } = await dmsVaultUnlock(passphrase, status.salt, status.iterations, status.canaryCiphertext);
+      if (!valid) {
         setUnlockError("Incorrect passphrase");
         return;
       }
 
       const nextDecrypted: Record<string, string> = {};
       for (const doc of status.documents) {
-        nextDecrypted[doc.id] = await decryptVaultValue(candidateKey, doc.ciphertext);
+        nextDecrypted[doc.id] = (await dmsVaultDecrypt(doc.ciphertext)).plaintext;
       }
 
-      setKey(candidateKey);
+      setUnlocked(true);
       setDecrypted(nextDecrypted);
       setPassphrase("");
     } catch (err) {
@@ -80,14 +72,15 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
   }
 
   function handleLock() {
-    setKey(null);
+    void dmsVaultLock();
+    setUnlocked(false);
     setDecrypted({});
   }
 
   async function handleAddDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAddDocError(null);
-    if (!key) return;
+    if (!unlocked) return;
     if (!newDocTitle.trim() || !newDocContent.trim()) {
       setAddDocError("Both a title and content are required.");
       return;
@@ -95,7 +88,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
 
     setIsBusy(true);
     try {
-      const ciphertext = await encryptVaultValue(key, newDocContent);
+      const { ciphertext } = await dmsVaultEncrypt(newDocContent);
       const response = await fetch("/api/dead-mans-switch/documents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -235,7 +228,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                   Delete
                 </button>
               </div>
-              {key ? (
+              {unlocked ? (
                 <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{decrypted[doc.id] ?? "…"}</p>
               ) : (
                 <p className="mt-1 text-xs text-muted">Content locked — unlock below to view.</p>
@@ -244,7 +237,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
           ))}
         </ul>
 
-        {key ? (
+        {unlocked ? (
           <div className="mt-4 flex flex-col gap-3 border-t border-border pt-3">
             <div className="flex items-center gap-2">
               <Badge variant="positive">Unlocked</Badge>

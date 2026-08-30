@@ -95,16 +95,31 @@ describe("dead-mans-switch-crypto", () => {
     );
   });
 
-  it("end-to-end: an insufficient set of shares reconstructs the WRONG key, which fails canary verification (never silently decrypts)", async () => {
+  it("end-to-end: an insufficient set of shares never verifies against the canary (never silently decrypts)", async () => {
     const rawKey = await deriveVaultKeyBytes("household emergency passphrase", generateVaultSalt(), DMS_PBKDF2_ITERATIONS);
     const originalKey = await importVaultAesKey(rawKey);
     const canary = await encryptVaultValue(originalKey, DMS_CANARY_PLAINTEXT);
 
     const shares = splitSecret(rawKey, 5, 3);
     const insufficientBytes = combineShares([shares[0], shares[1]]); // 2 of 3 needed
-    const wrongKey = await importVaultAesKey(insufficientBytes);
 
-    expect(await verifyVaultKey(wrongKey, canary)).toBe(false);
+    // secrets.js-grempe's padding scheme (see shamir-secret-sharing.ts's
+    // top comment) means reconstructing from too few shares doesn't
+    // reliably come back at the original byte length the way the old
+    // hand-rolled per-byte-polynomial scheme did — sometimes it's a
+    // same-length wrong key (fails verifyVaultKey), sometimes it's a
+    // wrong-length one (importVaultAesKey itself throws first). This
+    // mirrors exactly what recovery-service.ts's real server-side
+    // reconstruction path already does: attempt it, and treat either
+    // outcome as "not verified" — never a crash, never a false positive.
+    let verified: boolean;
+    try {
+      const wrongKey = await importVaultAesKey(insufficientBytes);
+      verified = await verifyVaultKey(wrongKey, canary);
+    } catch {
+      verified = false;
+    }
+    expect(verified).toBe(false);
   });
 });
 

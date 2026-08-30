@@ -37,6 +37,7 @@
     "react-markdown": "^10.1.0",
     "recharts": "^3.10.1",
     "remark-gfm": "^4.0.1",
+    "secrets.js-grempe": "^2.0.0",
     "server-only": "^0.0.1",
     "tesseract.js": "^7.0.0",
     "three": "^0.185.1",

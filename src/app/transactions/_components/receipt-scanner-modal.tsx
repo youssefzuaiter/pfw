@@ -7,6 +7,7 @@ import { Spinner } from "../../../components/spinner/spinner";
 import { formatAgorot } from "../../../lib/money";
 import type { ParsedReceipt } from "../../../lib/receipt-parser";
 import { parseReceiptText } from "../../../lib/receipt-parser";
+import { useInlineStyleProperty } from "../../../lib/hooks/use-inline-style-property";
 
 type BankAccountOption = { id: string; label: string };
 type Stage = "idle" | "processing" | "review" | "submitting" | "error";
@@ -29,6 +30,11 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [progressStatus, setProgressStatus] = useState("");
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  // Set via the CSSOM (§3x), not React's `style` prop — see
+  // useInlineStyleProperty's doc comment for why a plain inline `style`
+  // here would be silently blocked by this app's CSP on first paint.
+  useInlineStyleProperty(progressBarRef, "width", `${progress}%`);
   const [parsed, setParsed] = useState<ParsedReceipt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -279,7 +285,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                 <Spinner />
                 <p className="text-sm text-muted">{progressStatus || "Reading the receipt…"}</p>
                 <div className="h-1.5 w-full rounded-full bg-border">
-                  <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progress}%` }} />
+                  <div ref={progressBarRef} className="h-full rounded-full bg-accent transition-all" />
                 </div>
               </div>
             )}

@@ -1,24 +1,35 @@
 import { create } from "zustand";
+import { zkVaultLock } from "../workers/zk-vault-worker-client";
 
 /**
- * Holds the derived zero-knowledge key for the current browser session
- * only (AGENTS.md §3m) — no `persist` middleware, nothing written to
- * `localStorage`/`sessionStorage`. Reloading the page or navigating away
- * and back loses the key on purpose: persisting a key derived from a
- * master passphrase anywhere durable would undercut the reason this
- * scheme exists. The `CryptoKey` itself is also non-extractable
- * (`src/lib/zk-crypto.ts`'s `deriveZkKey`), so even code that could read
- * this store can use the key to encrypt/decrypt but can never pull the
- * raw key bytes back out of it.
+ * Tracks whether the zero-knowledge vault is unlocked for the current
+ * browser session (AGENTS.md §3m, §3x) — no `persist` middleware, nothing
+ * written to `localStorage`/`sessionStorage`. Reloading the page or
+ * navigating away and back loses this on purpose: persisting anything
+ * durable about a passphrase-derived unlock state would undercut the
+ * reason this scheme exists.
+ *
+ * This store used to hold the derived `CryptoKey` itself. It no longer
+ * does — the key now lives only inside `zk-crypto.worker.ts`'s own
+ * memory (§3x), a separate V8 isolate that ordinary main-thread JS (this
+ * store included) has no way to read. This store is now just the
+ * main-thread-visible mirror of "is that worker's key currently active",
+ * kept here (rather than plain component state) because several
+ * unrelated components — `SecureNotesPanel`, `ContributionNote`,
+ * `AddContributionForm` — all need to react to the same unlock/lock
+ * transitions.
  */
 type ZkVaultState = {
-  key: CryptoKey | null;
-  unlock: (key: CryptoKey) => void;
+  unlocked: boolean;
+  unlock: () => void;
   lock: () => void;
 };
 
 export const useZkVaultStore = create<ZkVaultState>((set) => ({
-  key: null,
-  unlock: (key) => set({ key }),
-  lock: () => set({ key: null }),
+  unlocked: false,
+  unlock: () => set({ unlocked: true }),
+  lock: () => {
+    void zkVaultLock();
+    set({ unlocked: false });
+  },
 }));

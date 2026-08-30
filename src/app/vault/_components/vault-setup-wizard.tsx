@@ -3,15 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type MouseEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
-import {
-  DMS_CANARY_PLAINTEXT,
-  DMS_PBKDF2_ITERATIONS,
-  deriveVaultKeyBytes,
-  encryptVaultValue,
-  generateVaultSalt,
-  importVaultAesKey,
-} from "../../../lib/dead-mans-switch-crypto";
-import { encodeShare, splitSecret } from "../../../lib/shamir-secret-sharing";
+import { DMS_PBKDF2_ITERATIONS } from "../../../lib/dead-mans-switch-crypto";
+import { dmsVaultEncrypt, dmsVaultSetup } from "../../../lib/workers/dead-mans-switch-worker-client";
 
 const MIN_PASSPHRASE_LENGTH = 12;
 
@@ -35,15 +28,19 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 /**
- * Setup wizard for the Emergency Vault (AGENTS.md §3t). Every
+ * Setup wizard for the Emergency Vault (AGENTS.md §3t, §3x). Every
  * cryptographic operation — key derivation, splitting, document
- * encryption, share/token generation — happens here, client-side, before
- * anything is sent to the server. The raw master key, every raw Shamir
- * share, and every raw invite token exist ONLY in this component's local
- * state, for exactly as long as this setup flow takes; none of them are
- * ever sent to the server, written to browser storage, or held anywhere
- * after the user confirms they've distributed them (`handleDone` simply
- * discards this component's state by unmounting it via `router.refresh()`).
+ * encryption — happens client-side, before anything is sent to the
+ * server, inside `dead-mans-switch-crypto.worker.ts`; this component
+ * never holds the raw master key or an imported `CryptoKey` at all, only
+ * the payloads the worker hands back (encoded shares, share hashes,
+ * ciphertext). Invite tokens are the one thing still generated here
+ * directly — they're independent random bearer tokens, not derived from
+ * the vault key, so they have no reason to route through that worker.
+ * None of this is ever sent to the server, written to browser storage, or
+ * held anywhere after the user confirms they've distributed it
+ * (`handleDone` simply discards this component's state by unmounting it
+ * via `router.refresh()`).
  */
 export function VaultSetupWizard() {
   const router = useRouter();
@@ -131,29 +128,31 @@ export function VaultSetupWizard() {
 
     setIsBusy(true);
     try {
-      const salt = generateVaultSalt();
-      const rawKey = await deriveVaultKeyBytes(passphrase, salt, DMS_PBKDF2_ITERATIONS);
-      const key = await importVaultAesKey(rawKey);
-      const canaryCiphertext = await encryptVaultValue(key, DMS_CANARY_PLAINTEXT);
-
-      const documentPayload = await Promise.all(
-        validDocuments.map(async (d) => ({ title: d.title.trim(), ciphertext: await encryptVaultValue(key, d.content) })),
+      const { salt, canaryCiphertext, shares } = await dmsVaultSetup(
+        passphrase,
+        DMS_PBKDF2_ITERATIONS,
+        labels.length,
+        thresholdShares,
       );
 
-      const shares = splitSecret(rawKey, labels.length, thresholdShares);
+      const documentPayload = await Promise.all(
+        validDocuments.map(async (d) => ({
+          title: d.title.trim(),
+          ciphertext: (await dmsVaultEncrypt(d.content)).ciphertext,
+        })),
+      );
 
       const beneficiaryPayload = await Promise.all(
         shares.map(async (share, i) => {
           const rawToken = randomTokenBase64Url();
           const inviteTokenHash = await sha256Hex(new TextEncoder().encode(rawToken));
-          const shareHash = await sha256Hex(share.value);
           return {
             label: labels[i],
             shareIndex: share.index,
-            shareHash,
+            shareHash: share.shareHash,
             inviteTokenHash,
             rawToken,
-            encodedShare: encodeShare(share),
+            encodedShare: share.encodedShare,
           };
         }),
       );

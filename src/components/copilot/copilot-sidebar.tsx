@@ -20,10 +20,10 @@ const SUGGESTED_PROMPTS = [
  * doesn't token-stream like the cloud advisor). */
 function TypingIndicator() {
   return (
-    <span className="flex items-center gap-1" aria-label="The copilot is thinking">
-      <span className="uv-typing-dot h-1.5 w-1.5 rounded-full bg-muted" style={{ animationDelay: "0ms" }} />
-      <span className="uv-typing-dot h-1.5 w-1.5 rounded-full bg-muted" style={{ animationDelay: "150ms" }} />
-      <span className="uv-typing-dot h-1.5 w-1.5 rounded-full bg-muted" style={{ animationDelay: "300ms" }} />
+    <span className="uv-typing-dots flex items-center gap-1" aria-label="The copilot is thinking">
+      <span className="uv-typing-dot h-1.5 w-1.5 rounded-full bg-muted" />
+      <span className="uv-typing-dot h-1.5 w-1.5 rounded-full bg-muted" />
+      <span className="uv-typing-dot h-1.5 w-1.5 rounded-full bg-muted" />
     </span>
   );
 }

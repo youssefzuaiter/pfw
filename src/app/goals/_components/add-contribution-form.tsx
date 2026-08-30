@@ -3,12 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
-import { encryptWithZkKey } from "../../../lib/zk-crypto";
 import { useZkVaultStore } from "../../../lib/stores/zk-vault-store";
+import { zkVaultEncrypt } from "../../../lib/workers/zk-vault-worker-client";
 
 export function AddContributionForm({ goalId }: { goalId: string }) {
   const router = useRouter();
-  const zkKey = useZkVaultStore((state) => state.key);
+  const zkUnlocked = useZkVaultStore((state) => state.unlocked);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -21,10 +21,11 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
     setIsSubmitting(true);
     setError(null);
     try {
-      // Encrypted client-side under the zero-knowledge key before it ever
-      // leaves the browser (AGENTS.md §3m) — the server only ever
-      // receives the ciphertext blob.
-      const noteCiphertext = note.trim() && zkKey ? await encryptWithZkKey(zkKey, note.trim()) : undefined;
+      // Encrypted inside zk-crypto.worker.ts under the zero-knowledge key
+      // before it ever leaves the browser (AGENTS.md §3m, §3x) — the
+      // server only ever receives the ciphertext blob.
+      const noteCiphertext =
+        note.trim() && zkUnlocked ? (await zkVaultEncrypt(note.trim())).ciphertext : undefined;
 
       const response = await fetch(`/api/goals/${goalId}/contributions`, {
         method: "POST",
@@ -65,8 +66,8 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
         id={`contribution-note-${goalId}`}
         value={note}
         onChange={(event) => setNote(event.target.value)}
-        placeholder={zkKey ? "Note (encrypted)" : "Unlock secure notes to add a note"}
-        disabled={!zkKey}
+        placeholder={zkUnlocked ? "Note (encrypted)" : "Unlock secure notes to add a note"}
+        disabled={!zkUnlocked}
         className="w-40 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       />
       <button
