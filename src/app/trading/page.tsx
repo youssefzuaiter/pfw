@@ -9,6 +9,7 @@ import { getLatestRateTable } from "../../server/dal/exchange-rates";
 import { listPortfolioHoldings, listTrades } from "../../server/dal/portfolio";
 import { PriceChart } from "./_components/price-chart";
 import { TradeForm } from "./_components/trade-form";
+import { TradingNav } from "./_components/trading-nav";
 
 export const instant = false;
 
@@ -69,20 +70,7 @@ export default async function TradingPage({
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-2xl font-semibold text-fg">Trading</h1>
-        <nav className="flex gap-2" aria-label="Trading views">
-          <span
-            aria-current="page"
-            className="rounded-full border border-accent bg-accent/10 px-3 py-1 text-xs font-medium text-accent"
-          >
-            Trading desk
-          </span>
-          <Link
-            href="/trading/portfolio"
-            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Portfolio
-          </Link>
-        </nav>
+        <TradingNav active="desk" />
       </div>
 
       <section className="flex flex-wrap gap-6 rounded-lg border border-border bg-surface p-4">

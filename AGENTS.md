@@ -1899,6 +1899,169 @@ CSV import already gets), not stubbed.
   records (`NotableTransaction` has no line-item concept) — they're
   folded into nothing beyond the review UI's own display.
 
+## 3r. Multi-Jurisdiction Capital Gains & Tax Simulator (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`. **No schema changes and no
+new Prisma models** — this is entirely a "derived truth" replay over data
+that already exists (`Trade` rows), consistent with law #5: nothing here
+is stored as its own row, so there's nothing to migrate and nothing that
+can drift out of sync with the real blotter.
+
+- **A second, parallel cost-basis accounting method, deliberately not a
+  replacement for the existing one.** `PortfolioHolding`'s stored
+  weighted-average cost basis (`portfolio-math.ts`, §3l) still drives the
+  live position P&L on `/trading`/`/trading/portfolio` — unchanged. Real
+  capital-gains tax law (US Schedule D, German Abgeltungssteuer) requires
+  identifying *which specific shares* were sold, which weighted-average
+  accounting can't answer — so `src/lib/tax-lots.ts` replays each symbol's
+  full `Trade` history independently, in chronological order, matching
+  each SELL against open BUY lots via FIFO (oldest first) or LIFO (newest
+  first). A SELL spanning more than one lot produces one `LotDisposal` per
+  lot it draws from, each with that lot's own acquisition date and
+  per-lot realized gain — which is what makes short/long-term
+  classification and per-lot unrealized gain possible at all. Throws if a
+  SELL can't be fully matched against open lots (more sold than ever
+  bought) — a data-integrity bug to surface loudly, not paper over.
+- **`src/lib/tax-rules.ts`**: three jurisdiction profiles (`TaxJurisdiction`
+  = `"US" | "DE" | "INTL"`), pure functions over already-computed lot
+  gains, same `src/lib/` convention as every other engine (§3b — no
+  DAL/DB access). **A deliberate, documented simplification stated
+  plainly in the file's own header, in the spirit of Monte Carlo's single
+  static allocation split and the subscription radar's structural
+  heuristics**: this app has exactly one reporting currency, ILS agorot
+  (law #3), so every bracket threshold is expressed in ILS agorot too —
+  published 2024 US federal single-filer thresholds and Germany's
+  statutory Abgeltungssteuer rate, converted ONCE via this app's own
+  `FALLBACK_RATES` (exchange-rate.ts) and rounded to clean shekel
+  figures. This is a simulator over mock data, not a real tax-filing
+  tool. Explicitly out of scope, flagged in the returned `notes[]` rather
+  than silently assumed away: US state/local tax, non-single filing
+  statuses, Germany's pre-2009 "Altbestand" exemption, and any specific
+  "international" country's real bracket structure (`INTL` is a generic
+  user-tuned flat-rate/allowance model, not a stand-in for one real
+  country).
+  - `computeStackedBracketTax()` is the standard "how much extra tax does
+    this income cause" progressive-bracket calculation real tax software
+    uses (marginal, not `amount * topRate`) — used for both US ordinary
+    income (short-term gains) and US LTCG brackets (long-term gains
+    stacked on top of ordinary income + short-term gains, the correct IRS
+    stacking order).
+  - US: a loss in one term (short/long) nets against a gain in the other
+    before either bracket table applies, matching real US tax law; an
+    optional 3.8% Net Investment Income Tax surtax applies above a MAGI
+    threshold. Germany: flat 25% + 5.5% solidarity surcharge + optional
+    church tax, minus a configurable annual allowance (Sparer-Pauschbetrag),
+    regardless of holding period — Germany's post-2009 rule genuinely
+    doesn't distinguish short/long-term, so `classifyHoldingTerm()`
+    returns `"FLAT"` for both DE and the generic INTL model. A net loss
+    overall never owes tax in any jurisdiction — loss carryforward to
+    future tax years is real law every modeled jurisdiction has, but
+    isn't simulated here, flagged in `notes[]` rather than assumed away.
+- **`src/lib/tax-loss-harvesting.ts`**: named and shaped after the
+  existing subscription radar (`subscription-radar.ts`, §3p) — detect
+  candidates, rank them, leave the decision to the user. Every open lot
+  currently sitting at an unrealized loss is a candidate, ranked biggest
+  loss first, flagged `washSaleRisk` when a BUY of the same symbol
+  executed within the last 30 days (the US wash-sale window, used here as
+  a general anti-abuse-rule proxy since this simulator doesn't encode
+  every jurisdiction's exact equivalent rule individually — this only
+  checks the *past* half of the real "30 days before or after" window,
+  since a future repurchase hasn't happened yet at simulation time).
+  `estimatedTaxSavingsAgorot` uses a single blended marginal rate
+  (`build-tax-data.ts` derives it from the simulated tax actually
+  attributable to the portfolio's *positive* unrealized gains — the thing
+  a harvested loss would actually offset — falling back to a
+  jurisdiction-representative constant when there's no positive
+  unrealized gain to derive an empirical rate from at all) applied
+  uniformly to every candidate — an honestly-approximate estimate, not a
+  full per-candidate before/after re-simulation, documented as such in
+  the function's own doc comment.
+- **`src/server/tax/build-tax-data.ts`** (`buildTaxSimulation`,
+  `cache()`-wrapped per-request like every other `build-*-data.ts`
+  aggregator, §3c — primitive arguments, not a profile object, so
+  `cache()`'s per-argument identity comparison can actually dedupe a call
+  within one request, same reasoning as `build-monte-carlo-data.ts`):
+  replays every symbol's trades into lots, computes tax on gains already
+  realized this calendar year AND on a hypothetical full liquidation
+  today (open lots valued at the mock feed's current price) — reported as
+  two separate figures plus their difference ("additional tax to
+  liquidate"), never silently summed — and runs the harvesting radar over
+  whatever's left open at a loss.
+- **`GET /api/tax/simulate`** (new route): same shape as
+  `GET /api/analytics/monte-carlo` (§3n) — a read-only compute endpoint
+  over the user's own existing trade history, so it deliberately skips
+  `guardMutation`'s Origin/CSRF check (nothing changes state) but keeps
+  identity resolution and rate limiting (30/min per user) by calling
+  those primitives directly. Zod-validates every query param
+  (`method`/`jurisdiction`/`otherOrdinaryIncome`/`includeNiit`/
+  `churchTaxRate`/`annualAllowance`/`flatRatePercent`); malformed values
+  400, everything else defaults sensibly.
+- **`/trading/tax`** (new sub-view, `src/app/trading/_components/`:
+  `tax-simulator.tsx` the interactive client widget — jurisdiction/method
+  selectors, profile-specific sliders, a debounced (400ms) `fetch` with
+  `AbortController` cancellation exactly matching
+  `monte-carlo-widget.tsx`'s pattern — plus `tax-lots-table.tsx` and
+  `harvest-radar-list.tsx`, presentational). Exportable CSV summary
+  (client-side `Blob`/`<a download>`, no server round-trip) runs every
+  free-text cell (symbol, instrument name) through the existing
+  `neutralizeFormulaInjection()` guard (`csv-import/formula-injection.ts`,
+  §3j) per Section 2.4's CSV export law — imported by name (not
+  re-implemented) since it's already a pure, dependency-free function
+  safe to import into a client bundle.
+  - **`src/app/trading/_components/trading-nav.tsx`** (new, extracted
+    from what were two copies of near-identical tab-switcher markup on
+    `/trading` and `/trading/portfolio`): a shared 3-way tab switcher
+    (`"desk" | "portfolio" | "tax"`) now used by all three `/trading`
+    sub-views — a real refactor of existing code, not just new markup for
+    the new tab, done because a third copy of the same markup crossed the
+    line from "three similar lines" into "extract the abstraction."
+  - **Same known trap hit again, caught before merge, not after**: the
+    CSV-export button's first draft used an inline
+    `onClick={() => downloadCsv(data)}` on a `<button>` — the exact
+    `=>`-truncates-the-focus-visible-guard's-regex trap documented in §3c
+    (bug #2) and hit twice more in §3d. Fixed the same way both prior
+    times were: a named `handleExportClick()` handler instead of an
+    inline arrow. `tests/guards/focus-visible.test.ts` caught it
+    immediately on the first `npm run check` run.
+  - Cross-linked from `/trading` and `/trading/portfolio` via the new
+    shared nav, but deliberately not added to
+    `PRIMARY_NAV_ITEMS`/`MobileNav` — same "reachable by direct link, not
+    one of the spec's 9 primary destinations" pattern as `/trading/portfolio`
+    (§3l), `/analytics` (§3n), and `/transactions/subscriptions` (§3p).
+- **Verified, not just written**: `npm run check` clean — 667/706 passing
+  (39 skip, all pre-existing skips for the embedding sidecar not running,
+  unchanged from before this pass), typecheck and lint clean, all guard
+  tests green including `focus-visible` after the fix above. 46 new unit
+  tests across the three engines (FIFO vs. LIFO producing different
+  realized gains from identical trade history, holding-period-day
+  rounding, fractional/crypto quantity handling with no dust lots left
+  behind, insufficient-lot and non-positive-quantity error paths, US
+  bracket-stacking at exact boundaries and the uncapped top bracket,
+  US short/long-term loss netting in both directions, the NIIT surtax
+  threshold boundary, Germany's allowance capping and church-tax opt-in,
+  the INTL flat-rate/allowance model, harvesting's gain-exclusion/
+  price-missing/wash-sale-window/negative-rate-clamping edge cases).
+  Live `curl` against the running dev server with the real seeded demo
+  account: FIFO/US and LIFO/DE produce genuinely different tax figures
+  from the same underlying trades (confirming FIFO vs. LIFO actually
+  changes which lots get matched), Germany's flat-rate-minus-allowance
+  math checked by hand against the raw response, INTL's configurable
+  rate/allowance checked against a hand-computed expected value, the
+  harvesting radar surfaced real candidates with correctly-computed
+  estimated savings, malformed `jurisdiction`/`method` query params both
+  400, and all three `/trading` sub-views return 200 with the new
+  "Tax & Capital Gains" tab present in each one's rendered nav.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no persisted tax-profile settings (jurisdiction/method/sliders
+  reset on reload, same as every Monte Carlo slider, §3n — this app has
+  no per-user settings table to persist them in, and none was added
+  speculatively); no loss-carryforward across tax years; no dividend
+  income folded into the German taxable base (Kapitalerträge legally
+  includes both, but this pass scoped to capital gains only, per the
+  task's own name); wash-sale detection only checks the backward half of
+  the real 30-days-before-or-after window; harvesting's estimated savings
+  is a single blended rate, not a true per-candidate re-simulation.
+
 ## 3s. Granular Household & Shared Budget Spaces (ad hoc)
 
 Explicit user request; not in `pfw-spec.md`. **Ran into the same

@@ -6,6 +6,7 @@ import { AllocationBar } from "../_components/allocation-bar";
 import { DividendSchedule } from "../_components/dividend-schedule";
 import { PortfolioSummary } from "../_components/portfolio-summary";
 import { PositionsTable } from "../_components/positions-table";
+import { TradingNav } from "../_components/trading-nav";
 
 export const instant = false;
 
@@ -17,20 +18,7 @@ export default async function PortfolioPage() {
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-2xl font-semibold text-fg">Portfolio</h1>
-        <nav className="flex gap-2" aria-label="Trading views">
-          <Link
-            href="/trading"
-            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Trading desk
-          </Link>
-          <span
-            aria-current="page"
-            className="rounded-full border border-accent bg-accent/10 px-3 py-1 text-xs font-medium text-accent"
-          >
-            Portfolio
-          </span>
-        </nav>
+        <TradingNav active="portfolio" />
       </div>
 
       <PortfolioSummary totals={data.totals} trailingDividendIncome={data.trailingDividendIncome} />
