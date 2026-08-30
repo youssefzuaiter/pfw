@@ -46,6 +46,19 @@ export function proxy(request: NextRequest) {
   // reached only to fetch the English language *training data* file (a
   // static data blob, never executed) — no receipt image or extracted
   // text is ever sent there, only a GET for that one public asset.
+  //
+  // huggingface.co / *.huggingface.co (AGENTS.md §3u, the Self-Learning
+  // Vector Categorization Engine's client-side embedding model): the same
+  // "self-host the executable runtime, allow a narrow connect-src
+  // exception only for the DATA it needs" split as Tesseract.js above —
+  // onnxruntime-web's WASM binary is self-hosted under
+  // public/onnx-runtime/, so script-src/worker-src stay 'self' only; only
+  // the model's weight files (an .onnx binary + tokenizer JSON, never
+  // executed as script) are fetched remotely, from the Hugging Face Hub.
+  // The wildcard subdomain covers the Hub's LFS CDN redirect target for
+  // large files (e.g. cdn-lfs.huggingface.co), which CSP3 browsers check
+  // independently at each hop of a fetch redirect chain, not just the
+  // initial huggingface.co URL.
   const csp = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';
@@ -53,7 +66,7 @@ export function proxy(request: NextRequest) {
     style-src 'self' 'nonce-${nonce}';
     img-src 'self' blob: data:;
     font-src 'self';
-    connect-src 'self' https://cdn.jsdelivr.net;
+    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co;
     object-src 'none';
     base-uri 'self';
     form-action 'self';

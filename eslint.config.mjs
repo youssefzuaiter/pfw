@@ -25,6 +25,9 @@ const eslintConfig = defineConfig([
     // Vendored, pre-minified Tesseract.js worker/WASM-glue assets
     // (AGENTS.md §3q) — self-hosted static files, not hand-authored code.
     "public/tesseract/**",
+    // Vendored onnxruntime-web WASM-glue asset (AGENTS.md §3u), same
+    // "self-hosted static file, not hand-authored code" treatment.
+    "public/onnx-runtime/**",
   ]),
 ]);
 

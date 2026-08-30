@@ -164,6 +164,16 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
     setError(null);
 
     try {
+      // Dynamically imported so Transformers.js's WASM runtime and model
+      // download never load on an ordinary receipt scan until this final
+      // submit step — same lazy-loading precedent as Tesseract.js above.
+      // The Self-Learning Vector Categorization Engine (AGENTS.md §3u):
+      // this embedding lets the server's categorization cascade try Tier
+      // 3 (similarity match against previously-corrected merchants)
+      // before falling back to Uncategorized/needs-review.
+      const { embedTextWithTimeout } = await import("../../../lib/embeddings/local-embedder");
+      const embedding = await embedTextWithTimeout(merchantName.trim());
+
       const response = await fetch("/api/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -176,6 +186,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
           occurredAt: new Date(occurredAt).toISOString(),
           description: merchantName.trim(),
           merchantName: merchantName.trim(),
+          embedding,
         }),
       });
       const body = await response.json().catch(() => ({}));

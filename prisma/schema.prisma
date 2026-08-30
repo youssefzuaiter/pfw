@@ -155,29 +155,29 @@ model User {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  bankAccounts         BankAccount[]
-  categories           Category[]
-  transactions         NotableTransaction[]
-  budgets              Budget[]
-  goals                Goal[]
-  goalContributions    GoalContribution[]
-  debts                Debt[]
-  debtPayments         DebtPayment[]
-  manualAssets         ManualAsset[]
-  portfolioHoldings    PortfolioHolding[]
-  trades               Trade[]
-  netWorthSnapshots    NetWorthSnapshot[]
-  merchantEmbeddings   MerchantEmbedding[]
-  dividends            Dividend[]
-  subscriptionTracking SubscriptionTracking[]
-  auditLogs            AuditLog[]
-  sharedGroupsCreated  SharedGroup[]          @relation("SharedGroupsCreated")
-  groupMemberships     GroupMember[]
-  groupInvitesCreated  GroupInvite[]          @relation("GroupInvitesCreated")
-  groupInvitesAccepted GroupInvite[]          @relation("GroupInvitesAccepted")
-  deadMansSwitch       DeadMansSwitch?
-  beneficiaries        Beneficiary[]
-  emergencyDocuments   EmergencyDocument[]
+  bankAccounts             BankAccount[]
+  categories               Category[]
+  transactions             NotableTransaction[]
+  budgets                  Budget[]
+  goals                    Goal[]
+  goalContributions        GoalContribution[]
+  debts                    Debt[]
+  debtPayments             DebtPayment[]
+  manualAssets             ManualAsset[]
+  portfolioHoldings        PortfolioHolding[]
+  trades                   Trade[]
+  netWorthSnapshots        NetWorthSnapshot[]
+  merchantEmbeddings       MerchantEmbedding[]
+  dividends                Dividend[]
+  subscriptionTracking     SubscriptionTracking[]
+  auditLogs                AuditLog[]
+  sharedGroupsCreated      SharedGroup[]             @relation("SharedGroupsCreated")
+  groupMemberships         GroupMember[]
+  groupInvitesCreated      GroupInvite[]             @relation("GroupInvitesCreated")
+  groupInvitesAccepted     GroupInvite[]             @relation("GroupInvitesAccepted")
+  deadMansSwitch           DeadMansSwitch?
+  beneficiaries            Beneficiary[]
+  emergencyDocuments       EmergencyDocument[]
   recoveryShareSubmissions RecoveryShareSubmission[]
 }
 
@@ -256,16 +256,16 @@ model DeadMansSwitch {
 /// the app is never in a position to leak both at once after that
 /// moment, because it never stores either of them again.
 model Beneficiary {
-  id               String   @id @default(cuid())
+  id               String         @id @default(cuid())
   userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   deadMansSwitchId String
   deadMansSwitch   DeadMansSwitch @relation(fields: [deadMansSwitchId], references: [id], onDelete: Cascade)
   label            String
   shareIndex       Int
   shareHash        String
-  inviteTokenHash  String   @unique
-  createdAt        DateTime @default(now())
+  inviteTokenHash  String         @unique
+  createdAt        DateTime       @default(now())
 
   submissions RecoveryShareSubmission[]
 
@@ -283,15 +283,15 @@ model Beneficiary {
 /// THIS key is designed to eventually be reconstructed and used
 /// server-side exactly once, during a successful recovery.
 model EmergencyDocument {
-  id               String   @id @default(cuid())
+  id               String         @id @default(cuid())
   userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   deadMansSwitchId String
   deadMansSwitch   DeadMansSwitch @relation(fields: [deadMansSwitchId], references: [id], onDelete: Cascade)
   title            String
   ciphertext       String
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   @@index([userId])
   @@index([deadMansSwitchId])
@@ -311,15 +311,15 @@ model EmergencyDocument {
 /// here is defense-in-depth against a raw database dump between
 /// submissions, not a claim that the server can never combine them.
 model RecoveryShareSubmission {
-  id                   String   @id @default(cuid())
+  id                   String         @id @default(cuid())
   userId               String
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   deadMansSwitchId     String
   deadMansSwitch       DeadMansSwitch @relation(fields: [deadMansSwitchId], references: [id], onDelete: Cascade)
   beneficiaryId        String
   beneficiary          Beneficiary    @relation(fields: [beneficiaryId], references: [id], onDelete: Cascade)
   shareValueCiphertext String
-  submittedAt          DateTime @default(now())
+  submittedAt          DateTime       @default(now())
 
   @@unique([deadMansSwitchId, beneficiaryId])
   @@index([userId])
@@ -354,8 +354,9 @@ model Category {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  transactions NotableTransaction[]
-  budgets      Budget[]
+  transactions       NotableTransaction[]
+  budgets            Budget[]
+  merchantEmbeddings MerchantEmbedding[]
 
   @@unique([userId, slug])
   @@index([userId])
@@ -687,16 +688,34 @@ model NetWorthSnapshot {
 /// column for now — Phase 3's KNN engine can do cosine similarity in
 /// application code at this data scale; revisit if that becomes a
 /// bottleneck.
+///
+/// `categoryId` was added in the Self-Learning Vector Categorization
+/// Engine pass (AGENTS.md §3u) — this table had NEVER been read or
+/// written anywhere in the app before that pass (confirmed by grep, not
+/// assumed), so adding a required column here is not a backward-
+/// compatibility concern; there was no existing data to migrate. Every
+/// row is a "correction": one (user, merchant) pair's confirmed
+/// category, refreshed via upsert every time the user recategorizes a
+/// transaction for that merchant — see `upsertMerchantEmbedding`'s doc
+/// comment for why this is an upsert, not an append-only log.
+/// `onDelete: Cascade` on `category` matches `Budget.categoryId`'s
+/// existing precedent: a hard-deleted category (not merely archived —
+/// see `deleteCategoryWithReassignment`) makes any embedding correction
+/// pointing at it meaningless.
 model MerchantEmbedding {
   id                 String   @id @default(cuid())
   userId             String
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   merchantKey        String
   sampleMerchantName String
+  categoryId         String
+  category           Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   embedding          Float[]
   createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@unique([userId, merchantKey])
+  @@index([categoryId])
 }
 
 /// A dividend declared on a holding the user owns.

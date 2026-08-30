@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { parseShekelsToAgorot } from "../../../lib/money";
+import { EmbeddingSchema } from "../../../server/api/embedding-validation";
 import { guardMutation } from "../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonNotFound, jsonServerError } from "../../../server/api/responses";
 import { recordAuditLog } from "../../../server/dal/audit-log";
@@ -19,6 +20,9 @@ const BodySchema = z.object({
   occurredAt: z.string().datetime(),
   description: z.string().trim().min(1).max(MAX_TEXT_LENGTH),
   merchantName: z.string().trim().min(1).max(MAX_TEXT_LENGTH).optional(),
+  // Self-Learning Vector Categorization Engine (AGENTS.md §3u) — see
+  // embedding-validation.ts's doc comment.
+  embedding: EmbeddingSchema,
 });
 
 /**
@@ -64,6 +68,7 @@ export async function POST(request: NextRequest) {
       occurredAt: new Date(parsed.data.occurredAt),
       description: parsed.data.description,
       merchantName: parsed.data.merchantName,
+      embedding: parsed.data.embedding,
     });
 
     await recordAuditLog(user.id, {

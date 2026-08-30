@@ -53,4 +53,101 @@ describe("knnCategorize() (Tier 3)", () => {
     );
     expect(result?.categoryId).toBe("cat-exact-match");
   });
+
+  it("accumulates weight across more than 2 same-category neighbors, not just pairwise", () => {
+    // Three cat-a neighbors, each similarity 1.0 (weight 3.0 total), vs
+    // one cat-b neighbor at similarity ~0.98. cat-a must win by summed
+    // weight, and confidence must reflect the full 3-vs-1 split, not
+    // just the top-ranked neighbor of each category.
+    const result = knnCategorize(
+      [1, 0],
+      [
+        { categoryId: "cat-a", embedding: [1, 0] },
+        { categoryId: "cat-a", embedding: [1, 0] },
+        { categoryId: "cat-a", embedding: [1, 0] },
+        { categoryId: "cat-b", embedding: [0.99, 0.14] },
+      ],
+      { k: 4 },
+    );
+    expect(result?.categoryId).toBe("cat-a");
+    expect(result?.confidence).toBeGreaterThan(0.75);
+  });
+
+  it("respects the exact minSimilarity boundary — inclusive at the threshold, exclusive just below it", () => {
+    // Construct a neighbor at EXACTLY similarity 0.75 by using the same
+    // vector scaled — cosine similarity of a vector with itself is
+    // always 1, so instead pick an angle whose cosine is precisely 0.75.
+    const target = [1, 0];
+    const exactlyAtThreshold = [0.75, Math.sqrt(1 - 0.75 ** 2)]; // unit vector, cos(angle) = 0.75 exactly
+    const included = knnCategorize(target, [{ categoryId: "cat-a", embedding: exactlyAtThreshold }], {
+      minSimilarity: 0.75,
+    });
+    expect(included?.categoryId).toBe("cat-a");
+
+    const justBelow = knnCategorize(target, [{ categoryId: "cat-a", embedding: exactlyAtThreshold }], {
+      minSimilarity: 0.750001,
+    });
+    expect(justBelow).toBeNull();
+  });
+
+  it("excludes a neighbor with negative (opposite-direction) similarity", () => {
+    const result = knnCategorize([1, 0], [{ categoryId: "cat-opposite", embedding: [-1, 0] }]);
+    expect(result).toBeNull();
+  });
+
+  it("a custom minSimilarity below the default admits a more distant neighbor", () => {
+    const distantNeighbor = { categoryId: "cat-far", embedding: [0.5, Math.sqrt(1 - 0.25)] }; // cos = 0.5
+    expect(knnCategorize([1, 0], [distantNeighbor])).toBeNull(); // rejected under the default 0.75 floor
+    expect(knnCategorize([1, 0], [distantNeighbor], { minSimilarity: 0.4 })?.categoryId).toBe("cat-far");
+  });
+
+  it("k larger than the available corrections uses all of them without error", () => {
+    const result = knnCategorize(
+      [1, 0],
+      [
+        { categoryId: "cat-a", embedding: [1, 0] },
+        { categoryId: "cat-b", embedding: [0, 1] },
+      ],
+      { k: 50 },
+    );
+    expect(result?.categoryId).toBe("cat-a");
+  });
+
+  it("an exact tie in summed weight resolves deterministically to one winner, not a crash or undefined behavior", () => {
+    // Two categories each with exactly one neighbor at identical
+    // similarity — Map iteration order (insertion order for string
+    // keys) makes this deterministic; the point of this test is that it
+    // reliably returns ONE consistent category across repeated runs; not
+    // which specific one wins.
+    const runs = Array.from({ length: 5 }, () =>
+      knnCategorize(
+        [1, 0],
+        [
+          { categoryId: "cat-a", embedding: [1, 0] },
+          { categoryId: "cat-b", embedding: [1, 0] },
+        ],
+      )?.categoryId,
+    );
+    expect(new Set(runs).size).toBe(1); // same winner every time
+    expect(["cat-a", "cat-b"]).toContain(runs[0]);
+  });
+
+  it("throws (via cosineSimilarity) for a target/correction dimension mismatch, rather than silently comparing mismatched vectors", () => {
+    expect(() => knnCategorize([1, 0, 0], [{ categoryId: "cat-a", embedding: [1, 0] }])).toThrow(RangeError);
+  });
+
+  it("real 384-dimension-shaped vectors round-trip through the same logic as the toy examples above", () => {
+    // Not a real model output — just confirms nothing about the KNN math
+    // itself is accidentally coupled to small toy dimensions.
+    const dims = 384;
+    const base = Array.from({ length: dims }, (_, i) => Math.sin(i));
+    const norm = Math.sqrt(base.reduce((sum, v) => sum + v * v, 0));
+    const target = base.map((v) => v / norm);
+    const identical = { categoryId: "cat-a", embedding: [...target] };
+    const orthogonalish = { categoryId: "cat-b", embedding: Array.from({ length: dims }, (_, i) => Math.cos(i)) };
+
+    const result = knnCategorize(target, [identical, orthogonalish]);
+    expect(result?.categoryId).toBe("cat-a");
+    expect(result?.confidence).toBeGreaterThan(0.9);
+  });
 });

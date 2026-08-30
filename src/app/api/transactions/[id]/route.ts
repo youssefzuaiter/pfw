@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getIdempotentResponse, storeIdempotentResponse } from "../../../../server/api/idempotency";
+import { EmbeddingSchema } from "../../../../server/api/embedding-validation";
 import { guardMutation } from "../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonNotFound, jsonServerError } from "../../../../server/api/responses";
 import { recordAuditLog } from "../../../../server/dal/audit-log";
@@ -8,6 +9,9 @@ import { getTransactionById, updateTransactionCategory } from "../../../../serve
 
 const PatchBodySchema = z.object({
   categoryId: z.string().min(1, "categoryId is required"),
+  // Self-Learning Vector Categorization Engine feedback loop (AGENTS.md
+  // §3u) — see embedding-validation.ts's doc comment.
+  embedding: EmbeddingSchema,
 });
 
 /**
@@ -50,7 +54,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // itself re-checks ownership independently inside updateTransactionCategory.
     const before = await getTransactionById(user.id, id);
 
-    const updated = await updateTransactionCategory(user.id, id, parsed.data.categoryId);
+    const updated = await updateTransactionCategory(user.id, id, parsed.data.categoryId, parsed.data.embedding);
     if (!updated) {
       // Covers both "transaction not found/not yours" and "category not
       // found/not yours" — never a 403 either way (Section 2.2).

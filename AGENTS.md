@@ -2532,6 +2532,217 @@ zk-vault's guarantee.
   scheduling wired up, same documented gap `scripts/sync-exchange-rates.ts`
   already has.
 
+## 3u. Self-Learning Vector Categorization Engine (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`, which only describes the
+existing 4-tier cascade's Tier 3 as an interface backed by the Python/
+ONNX sidecar (§3b). **This pass didn't design Tier 3 from scratch — it
+discovered Tier 3 had never actually been wired to anything.** Confirmed
+by grep before writing a line of code: `categorizeTransaction`'s only two
+real call sites (`transaction-import.ts`, `transactions.ts`) both called
+it with `merchantEmbedding`/`embeddingCorrections` omitted, and `.merchantEmbedding.`
+(the Prisma model) appeared nowhere in application code at all — the
+`knnCategorize` engine, the sidecar, and the `MerchantEmbedding` table
+were three fully-built, fully-tested, completely disconnected pieces.
+This pass is what actually connects them, end to end, for the first
+time — and does so with a genuinely different embedding source than the
+sidecar, per the explicit "Transformers.js running in-browser" ask.
+
+- **Why client-side, not the existing Python sidecar**: the sidecar's own
+  docstring already flagged its shipped model as "a seeded random-
+  projection placeholder, not a trained one" (§3b) — a real semantic
+  upgrade was always the acknowledged next step, just not built. Given a
+  choice between training/redeploying the Python sidecar or moving
+  embedding computation into the browser, the task's own wording picked
+  the latter, and it composes better with this app's two genuinely
+  *interactive* categorization moments (inline recategorization, manual
+  transaction entry) — a single client-side embedding costs nothing
+  round-trip-wise for one transaction, unlike CSV bulk import (still
+  intentionally Tier 1-2-only, unchanged — see below). The sidecar itself
+  is untouched and still exists, still unused by any route, exactly as
+  before this pass.
+- **`src/lib/embeddings/local-embedder.ts`** (new, client-only):
+  `@huggingface/transformers` (the actively-maintained successor to the
+  now-frozen `@xenova/transformers`) running `Xenova/all-MiniLM-L6-v2`
+  via WebAssembly — a REAL trained sentence-embedding model, 384
+  dimensions, mean-pooled + L2-normalized. The dimension is a genuine
+  coincidence turned convenience: the schema and Tier 3 engine already
+  said "384-dimension embeddings" since Phase 3, before anything real
+  ever produced one — no migration needed to make the two agree.
+  - **Enforced client-only** by `tests/guards/local-embedder-client-only.test.ts`,
+    the same import-graph-guard pattern as `zk-crypto.ts`, `dead-mans-
+    switch-crypto.ts`, and `receipt-ocr.ts` (§3q) — no file under
+    `src/server/**` may import it.
+  - **Dynamically `import()`-ed only when actually needed** (a category
+    is changed, or a transaction is submitted) — same lazy-loading
+    precedent as Tesseract.js (§3q) and the R3F hero (§3f). Verified
+    against the real production build: the model/runtime code resolves
+    to exactly 2 chunks, both absent from `rootMainFiles` (the shared
+    bundle every route pays for) — confirmed via
+    `.next/build-manifest.json`, the same verification method §3f's
+    bundle-analyzer pass used.
+  - **WASM runtime self-hosted under `public/onnx-runtime/`** (~12.9MB,
+    `ort-wasm-simd-threaded.wasm` + its `.mjs` glue, copied from the
+    installed `onnxruntime-web` package) — same CSP-driven reasoning
+    Tesseract.js's integration already established (§3q): this app's
+    `script-src`/`worker-src` stay `'self'` only, so executable WASM
+    binaries are committed once rather than trusting a third-party origin
+    for code. `numThreads: 1` is set explicitly, deliberately avoiding
+    onnxruntime-web's multi-threaded build, which needs
+    SharedArrayBuffer + cross-origin isolation (COOP/COEP) — enabling
+    that app-wide would risk breaking every other cross-origin fetch this
+    app already relies on (the Frankfurter FX API, the Hugging Face model
+    CDN itself), a much larger blast radius than justified here.
+  - **Model WEIGHTS remain remote**, fetched from the Hugging Face Hub at
+    runtime — data, never executed as script, so this is a narrow
+    `connect-src` exception in `src/proxy.ts` (`https://huggingface.co
+    https://*.huggingface.co`, the wildcard covering the Hub's LFS CDN
+    redirect target for large files, which CSP3 browsers check
+    independently at each hop of a fetch redirect chain) — the same
+    "self-host the executable, allow a narrow connect-src exception only
+    for the data" split Tesseract.js's English language-data fetch
+    already established for `cdn.jsdelivr.net`.
+  - **`npm audit` flagged 4 high-severity transitive advisories**
+    (`onnxruntime-node`'s `adm-zip` dependency, and `sharp`) — both are
+    optional NODE-backend dependencies of `@huggingface/transformers`
+    that this app's actual code path never reaches: the guard test above
+    keeps this package out of `src/server/**` entirely, and the browser
+    build uses the WASM backend, never `onnxruntime-node`/`sharp`.
+    Documented as accepted risk, same treatment §3g's `qs` advisories
+    already got — a real vulnerability in an unreachable code path isn't
+    grounds for blocking a otherwise-scoped feature.
+  - **KNOWN LIMITATION, stated plainly**: `all-MiniLM-L6-v2` is primarily
+    English-trained, not a dedicated multilingual model — similarity
+    quality for this app's Hebrew-heavy mock merchant text is expected to
+    be weaker than for English text. The same honest-caveat treatment the
+    sidecar's own placeholder-model docstring already gives its gap.
+- **`MerchantEmbedding` gained `categoryId`/`updatedAt`** (migration
+  `20260831090000_merchant_embedding_category`, no default — safe
+  precisely because the table had zero existing rows, confirmed before
+  writing the migration, not assumed). Every row is a "correction": one
+  (user, merchant) pair's most recently confirmed category, refreshed via
+  upsert — not an append-only log, so a user who changes their mind about
+  a merchant's category doesn't leave stale corrections for Tier 3 to
+  keep voting on alongside the new, correct one.
+- **`src/server/dal/merchant-embeddings.ts`** (new): `upsertMerchantEmbedding`
+  (the feedback-loop write, IDOR-checked — a `categoryId` that isn't the
+  caller's own returns `{ok: false, error: "category_not_found"}` rather
+  than writing anything) and `listEmbeddingCorrections` (the Tier 3 read,
+  no pagination — this app's scale, a personal ledger's few hundred
+  distinct merchants at most, makes an in-memory KNN scan the right
+  trade-off, same reasoning `listTransactions`' post-decryption `search`
+  filter already documents, §3c).
+- **The feedback loop, requirement #3, wired into the existing
+  recategorization mutation rather than a new endpoint**:
+  `updateTransactionCategory` (`src/server/dal/transactions.ts`) now
+  takes an optional `embedding` parameter and, when present, upserts the
+  merchant's reference vector in the SAME database transaction as the
+  category change — atomicity matters here specifically, since a
+  category update that silently failed to also teach the vector store
+  would defeat the entire point of "feedback loop." `PATCH
+  /api/transactions/[id]` accepts it as an optional body field
+  (`embedding-validation.ts`'s `EmbeddingSchema`, exactly 384 finite
+  numbers, `.optional()` — a malformed array 400s, a missing one is
+  simply "no signal this time," never an error). UI:
+  `category-select.tsx` now takes a `merchantText` prop (plumbed through
+  from `transactions-table.tsx`) and computes the embedding client-side
+  before sending the PATCH, racing it against a 3-second timeout
+  (`embedTextWithTimeout`, in `local-embedder.ts` itself so both UI call
+  sites share one implementation) — a slow first-time model download
+  must never meaningfully delay an otherwise-instant category change; the
+  category update itself never depends on the embedding succeeding.
+- **Similarity matching, requirement #2, wired into manual transaction
+  entry**: `createTransaction` now accepts an optional `embedding` and,
+  when present, fetches this user's stored corrections and passes both
+  into the cascade — Tier 3 becomes genuinely reachable for the first
+  time in this app's history. `POST /api/transactions` /
+  `receipt-scanner-modal.tsx` follow the identical pattern (compute
+  client-side, race a timeout, send alongside the existing fields).
+  **CSV bulk import is deliberately unchanged** — `transaction-import.ts`
+  still runs Tiers 1-2 only, on purpose: embedding potentially hundreds
+  of CSV rows in-browser before a single upload would be a much larger,
+  unrequested UX change than embedding one interactively-submitted
+  transaction, and the existing Tier 1-2-only scope for bulk import was
+  already a deliberate, documented decision (§3j) this pass had no reason
+  to revisit.
+- **Testing**: 8 new edge-case unit tests added to the existing
+  `tier3-knn.test.ts` (which had covered the happy path and the k-cap
+  since Phase 3, but not much else) — the exact minSimilarity boundary
+  (inclusive at 0.75, exclusive one ULP-scale step below it), negative/
+  opposite-direction similarity, weight accumulation across 3+
+  same-category neighbors (not just pairwise), a custom `minSimilarity`
+  override, `k` larger than the available corrections, a same-weight tie
+  resolving deterministically rather than crashing, a dimension-mismatch
+  throw, and a 384-dimension-shaped case confirming nothing about the
+  KNN math was accidentally coupled to the toy 2-3 dimensional examples.
+  `local-embedder.test.ts` (new, 6 cases) mocks
+  `@huggingface/transformers` entirely — a unit test can't meaningfully
+  assert on the real model's semantic quality (same reasoning the
+  Python sidecar's own placeholder-model tests never tried to), so what's
+  actually under test is this module's own logic: the pipeline singleton
+  is genuinely cached across calls (not re-initialized per embedding),
+  `embedTextWithTimeout` returns the real result when it's fast enough,
+  and resolves `undefined` (never rejects) both when the pipeline hangs
+  past the timeout and when it throws outright.
+- **A real, verified bug caught by these tests failing before any fix
+  was written, not by inspection**: the first draft's synthetic 384-dim
+  test vectors (`tests/integration/merchant-embeddings.test.ts`) were
+  built from phase-shifted sine waves (`Math.sin(seed + i)`), on the
+  assumption that different integer seeds would produce sufficiently
+  unrelated vectors. An IDOR test failed in a confusing way — a
+  transaction appeared to pick up a category it had no legitimate way to
+  reach — until tracing it back revealed two "unrelated" seeds' sine-wave
+  vectors were, in fact, similar enough to cross the 0.75 KNN threshold
+  by coincidence, because a phase shift between two sinusoids sampled at
+  384 points doesn't reliably guarantee low correlation. Not a product
+  bug — `tests/integration/merchant-embeddings.test.ts`'s own fixture
+  generator, not `knnCategorize` or the DAL. Fixed by switching to
+  single-dominant-spike vectors (a value of 1 at a seed-specific index,
+  0.01 baseline elsewhere) — two different indices are then
+  *verifiably*, not just probabilistically, near-orthogonal
+  (cosine ≈ 383 × 0.01² ≈ 0.04, far under the threshold), which is what
+  a real embedding model's own near-orthogonality property for unrelated
+  text actually resembles far better than a shared sinusoidal basis does
+  anyway.
+- **Verified live, not just by test**: `npm run check` clean (809/812, 3
+  skip for the unrelated embedding sidecar), including a 0-lint-warning
+  fix along the way — the vendored `ort-wasm-simd-threaded.mjs` glue file
+  under `public/onnx-runtime/` was initially linted as hand-authored
+  source (59 `no-unused-expressions` warnings from its minified body)
+  until added to `eslint.config.mjs`'s ignore list, same treatment
+  `public/tesseract/` already has. Full `npm run build` clean;
+  `verify:client-bundle-secrets` clean; confirmed via `curl` against the
+  real running dev server that both self-hosted WASM assets 200 with the
+  correct MIME types (`application/wasm`, `application/javascript`) and
+  the CSP header carries the new `connect-src` entries. Full live `curl`
+  walkthrough against the real seeded demo account: a `PATCH` with a
+  valid 384-float embedding succeeds and a real `MerchantEmbedding` row
+  appears in Postgres with the corrected category; the same request with
+  a wrong-length array (`[1, 2, 3]`) correctly 400s with a clear Zod
+  message; a `PATCH` with no `embedding` field at all still succeeds
+  exactly as it always did; and — the actual point of the whole
+  feature — a `POST /api/transactions` for a BRAND NEW, never-before-seen
+  merchant description, carrying an embedding deliberately constructed to
+  be near the just-stored correction, came back auto-categorized to the
+  correct category with `needsReview: false`, entirely without a keyword
+  match or an exact prior merchant string — genuine Tier 3 similarity
+  categorization, working end to end through the real HTTP routes, not
+  just proven at the DAL level. All test data (the manual transaction,
+  the `MerchantEmbedding` row, and the recategorized seeded transaction)
+  was deleted/restored afterward via `psql`, confirmed by re-querying.
+- **Not built, out of scope for this pass**: no UI surfacing of a Tier 3
+  suggestion BEFORE a category is picked (e.g. a "we think this is
+  Groceries" inline hint) — the task asked for automatic assignment and a
+  feedback loop, not a suggestion-with-confirmation UX, and this
+  reuses the cascade's own existing "assign automatically, flag
+  `needsReview` below 0.5 confidence" behavior rather than adding a new
+  interaction pattern; CSV import gaining Tier 3 (see above); a way to
+  bulk-recompute/backfill `MerchantEmbedding` rows for transactions
+  categorized before this pass shipped — the reference vector database
+  starts empty and grows only from new corrections going forward, same
+  "no migration for pre-existing data" honesty the zero-knowledge vault's
+  legacy-note path (§3m) makes explicit for a different feature.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

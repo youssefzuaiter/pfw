@@ -64,7 +64,12 @@ export function TransactionsTable({
                   {row.needsReview && <span className="text-xs text-signature">Needs review</span>}
                 </td>
                 <td className="px-4 py-3">
-                  <CategorySelect transactionId={row.id} categoryId={row.categoryId} categories={categories} />
+                  <CategorySelect
+                    transactionId={row.id}
+                    categoryId={row.categoryId}
+                    categories={categories}
+                    merchantText={row.merchantName ?? row.description}
+                  />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   <AmountCell amount={row.amount} />
@@ -87,7 +92,12 @@ export function TransactionsTable({
             </div>
             {row.needsReview && <p className="mt-1 text-xs text-signature">Needs review</p>}
             <div className="mt-2">
-              <CategorySelect transactionId={row.id} categoryId={row.categoryId} categories={categories} />
+              <CategorySelect
+                transactionId={row.id}
+                categoryId={row.categoryId}
+                categories={categories}
+                merchantText={row.merchantName ?? row.description}
+              />
             </div>
           </li>
         ))}

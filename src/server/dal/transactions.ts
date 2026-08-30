@@ -78,11 +78,24 @@ export type UpdateTransactionCategoryResult = Awaited<ReturnType<typeof getTrans
  * shouldn't keep flagging it. Returns `null` on an ownership mismatch,
  * same convention as every other DAL getter (never throws to signal
  * "not yours").
+ *
+ * The Self-Learning Vector Categorization Engine's feedback loop
+ * (AGENTS.md §3u): when `embedding` is supplied (computed client-side by
+ * src/lib/embeddings/local-embedder.ts, for exactly this transaction's
+ * merchant text), this manual correction upserts the merchant's
+ * reference vector in the SAME transaction as the category update —
+ * atomicity matters here specifically because these two writes are the
+ * whole point of "feedback loop": a category change that silently failed
+ * to also update the vector it should teach would leave Tier 3 KNN
+ * stuck learning from a stale correction. `embedding` is optional
+ * (older/non-JS clients, or a browser where the local model failed to
+ * load) — the category update itself never depends on it.
  */
 export async function updateTransactionCategory(
   userId: string,
   id: string,
   categoryId: string,
+  embedding?: readonly number[],
 ): Promise<UpdateTransactionCategoryResult> {
   return withUserScope(userId, async (tx) => {
     const existing = await tx.notableTransaction.findFirst({ where: { id, userId } });
@@ -91,11 +104,23 @@ export async function updateTransactionCategory(
     const category = await tx.category.findFirst({ where: { id: categoryId, userId } });
     if (!category) return null;
 
-    return tx.notableTransaction.update({
+    const updated = await tx.notableTransaction.update({
       where: { id },
       data: { categoryId, needsReview: false },
       include: { category: true, bankAccount: true },
     });
+
+    if (embedding) {
+      const merchantText = updated.merchantName ?? updated.description;
+      const merchantKey = normalizeMerchantKey(merchantText);
+      await tx.merchantEmbedding.upsert({
+        where: { userId_merchantKey: { userId, merchantKey } },
+        create: { userId, merchantKey, sampleMerchantName: merchantText, categoryId, embedding: [...embedding] },
+        update: { sampleMerchantName: merchantText, categoryId, embedding: [...embedding] },
+      });
+    }
+
+    return updated;
   });
 }
 
@@ -110,21 +135,36 @@ export type CreateTransactionInput = {
   occurredAt: Date;
   description: string;
   merchantName?: string;
+  /**
+   * The Self-Learning Vector Categorization Engine's similarity match
+   * (AGENTS.md §3u) — a 384-dimension embedding for this transaction's
+   * merchant text, computed client-side by
+   * src/lib/embeddings/local-embedder.ts. Optional: when present, Tier 3
+   * KNN joins Tiers 1-2 in the cascade (still gated by the cascade's own
+   * "both merchantEmbedding AND embeddingCorrections must be present"
+   * rule — see cascade.ts); when absent (an older client, or a browser
+   * where the local model failed to load), categorization falls back to
+   * exactly the Tier 1-2-only behavior this function already had, same
+   * as CSV bulk import still does on purpose (see the reasoning below).
+   */
+  embedding?: readonly number[];
 };
 
 /**
- * Manual transaction entry (AGENTS.md §3q) — previously not built at
- * all (the app's only prior write paths were CSV import and the seed
- * script). ILS-only, matching the CSV pipeline's own precedent
- * (`src/lib/csv-import/`, §3j: "Foreign-currency rows are refused, not
- * converted") — a receipt or a hand-typed entry is exactly the same
- * kind of untrusted free text a CSV row is, so it gets the same
- * formula-injection neutralization and the same Tier 1-2-only
- * categorization cascade (Tier 3 needs the embedding sidecar, Tier 4
- * needs a live Anthropic call — both are deliberately out of the
- * critical path of a single interactive "add transaction" submission
- * the same way they're out of a bulk import's, per that module's own
- * documented reasoning).
+ * Manual transaction entry (AGENTS.md §3q). ILS-only, matching the CSV
+ * pipeline's own precedent (`src/lib/csv-import/`, §3j: "Foreign-currency
+ * rows are refused, not converted") — a receipt or a hand-typed entry is
+ * exactly the same kind of untrusted free text a CSV row is, so it gets
+ * the same formula-injection neutralization. Tier 4 (a live Anthropic
+ * call) is still deliberately out of the critical path of a single
+ * interactive submission, same reasoning as CSV bulk import — but Tier 3
+ * is now genuinely reachable here (§3u), unlike CSV import: computing a
+ * *client-side* embedding for one interactively-submitted transaction
+ * costs nothing extra round-trip-wise, whereas embedding potentially
+ * hundreds of CSV rows in-browser before a single upload would be a much
+ * bigger, unrequested UX change — so CSV import intentionally keeps its
+ * existing Tier 1-2-only scope (`src/server/dal/transaction-import.ts`
+ * is unchanged by this pass).
  *
  * `isManual: true` here is the correct, already-documented flag for
  * this (§3j: "`isManual` means... manually *entered*") — this is the
@@ -152,11 +192,19 @@ export async function createTransaction(userId: string, input: CreateTransaction
       .filter((prior) => normalizeMerchantKey(prior.merchantName ?? prior.description) === normalizeMerchantKey(merchantText))
       .map((prior) => ({ categoryId: prior.categoryId, isManual: !prior.needsReview }));
 
+    const embeddingCorrections = input.embedding
+      ? (await tx.merchantEmbedding.findMany({ where: { userId }, select: { categoryId: true, embedding: true } })).map(
+          (row) => ({ categoryId: row.categoryId, embedding: row.embedding }),
+        )
+      : undefined;
+
     const suggestion = await categorizeTransaction({
       merchantText,
       pastOccurrences,
       resolveCategoryIdBySlug: (slug) => categoryIdBySlug.get(slug),
       uncategorizedCategoryId: uncategorized.id,
+      merchantEmbedding: input.embedding,
+      embeddingCorrections,
     });
 
     return tx.notableTransaction.create({
