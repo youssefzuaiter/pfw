@@ -2247,6 +2247,291 @@ never "becomes" someone else in the browser.
   ownership; the non-owner roster view added late in this pass is
   read-only by design, not a gap — only the owner can act on it.
 
+## 3t. Cryptographic Dead Man's Switch (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`. **A new, dedicated "Emergency
+Vault," deliberately NOT an extension of the zero-knowledge goal-notes
+vault (`User.zk*`, §3m)** — flagged and resolved before writing any code,
+the same "check for a real architecture conflict before building" habit
+§3o/§3s already established: the spec's "master PBKDF2 decryption key"
+language pattern-matches the zk-vault's derived key, but that key is
+deliberately created with `extractable: false` specifically so it can
+never be exported from the browser — Shamir's Secret Sharing
+fundamentally requires exporting raw key bytes to split them, so sharding
+the zk-vault's key would silently undermine the one property it exists
+for. This feature's vault therefore derives its own, separately-salted,
+deliberately EXTRACTABLE master key — a different, weaker-sounding but
+functionally NECESSARY security property (recoverable custody vs. true
+zero-knowledge) — documented plainly rather than conflated with the
+zk-vault's guarantee.
+
+- **`src/lib/shamir-secret-sharing.ts`** (new, pure engine, `src/lib/`
+  convention per §3b — no crypto.subtle/Node-crypto dependency, so unlike
+  every other crypto module in this app it needs no client-only guard:
+  it's importable from both the browser (splitting at setup) and the
+  server (combining at recovery)). Hand-written GF(256) arithmetic rather
+  than a dependency, matching this project's habit of owning small,
+  well-understood algorithms directly (the CSV tokenizer, the seeded RNG,
+  Monte Carlo's Box-Muller, the subscription radar's Levenshtein
+  distance) — the security here comes from well-established finite-field
+  math, not from any cleverness in this file, and owning it keeps the
+  whole cryptographic surface auditable with no supply-chain risk from an
+  unvetted npm package.
+  - **A real, verified bug in the table construction, caught by the
+    module's own round-trip tests failing before any comment was
+    written, not by inspection**: the standard AES-style log/exp table
+    build doubles the running value each step (`value << 1` + reduce),
+    which is multiplication by the field element 2 — the first draft
+    assumed 2 was a valid generator (a `GENERATOR = 3` constant was even
+    declared, then accidentally never used). Verified by hand with a
+    small Node script: 2 has multiplicative order only 51 under this
+    reduction polynomial (0x11B), not 255 — it generates barely a fifth
+    of the field, and `splitSecret`/`combineShares` silently round-tripped
+    correctly for some inputs and produced garbage for others depending
+    on which field elements happened to get hit. 3 genuinely has order
+    255. Fixed by computing each step as `(value*2) XOR value` (GF
+    multiplication distributes over XOR, and 3 = 2 XOR 1) instead of a
+    plain shift — confirmed after the fix that all 255 nonzero field
+    elements appear exactly once before the sequence repeats.
+  - `encodeShare`/`decodeShare`: `dms-share1:<index>:<base64url
+    value>:<base64url 4-byte checksum>` — the checksum is a cheap
+    non-cryptographic typo guard (nothing in a single share is secret on
+    its own, information-theoretically, below the threshold), not a
+    security control, so a beneficiary who mis-pastes their share gets an
+    immediate, clear client-side rejection rather than a confusing
+    server-side hash mismatch later.
+  - `combineShares` given fewer than the true threshold does NOT throw —
+    it silently reconstructs the WRONG secret, the same
+    information-theoretic property working in reverse. This is why
+    `dead-mans-switch-crypto.ts`'s canary verification (below) exists:
+    nothing in this app ever trusts `combineShares`'s output without
+    first checking it against the canary.
+- **`src/lib/dead-mans-switch-crypto.ts`** (new, client-only, mirrors
+  `zk-crypto.ts`'s structure but derives raw, extractable key bytes via
+  `deriveBits` rather than a non-extractable `CryptoKey` via `deriveKey`
+  — see this section's opening rationale). `dms1:iv:ciphertext` format,
+  deliberately distinct from both `zk1:` and field-encryption's `v1:` so
+  a value's prefix alone tells you which scheme, and therefore which
+  custody model, it's under. Same canary pattern as `zk-crypto.ts`
+  (`DMS_CANARY_PLAINTEXT`), used both by the owner re-entering their
+  passphrase AND, critically, by the server confirming a set of combined
+  Shamir shares actually reconstructed the correct key before it ever
+  attempts to decrypt a real document.
+  - Enforced client-only by `tests/guards/dead-mans-switch-crypto-client-only.test.ts`,
+    the same import-graph-guard pattern as `zk-client-only.test.ts` — no
+    file under `src/server/**` may import it.
+  - **Decrypting a document during recovery deliberately does NOT go
+    through this module** — recovery fundamentally requires the server to
+    combine >= threshold shares itself (beneficiaries submit
+    asynchronously, from different browsers, over however long it takes),
+    so a genuinely separate Node-crypto companion,
+    `src/server/dead-mans-switch/vault-cipher-node.ts`, produces
+    byte-compatible AES-256-GCM output for the same `dms1:` format
+    (splitting WebCrypto's appended GCM auth tag out for
+    `createDecipheriv`'s `setAuthTag`) — proven genuinely
+    cross-compatible, not just similarly-formatted, by
+    `tests/integration/dead-mans-switch-vault-cipher.test.ts` (which
+    lives under `tests/integration/`, not `src/server/`, specifically so
+    importing the client module for the test doesn't trip its own
+    client-only guard).
+- **Schema** (migration `20260830130000_dead_mans_switch`, generated via
+  `prisma migrate diff` against the live dev DB — `prisma migrate dev`
+  refuses non-interactively for the same reason as §3p/§3s: prior
+  migrations in this history were hand-edited post-apply, invalidating
+  the shadow-database replay): new `DeadMansSwitchStatus` enum
+  (`ACTIVE`/`GRACE_PERIOD`/`TRIGGERED`/`RECOVERED`); `DeadMansSwitch` (one
+  per user, unique on `userId`), `Beneficiary`, `EmergencyDocument`,
+  `RecoveryShareSubmission` — all four RLS-`FORCE`d with the standard
+  single `tenant_isolation` policy (no per-command split needed here,
+  unlike the household-spaces tables in §3s: there's no "fellow member
+  needs read access" case). Every child table carries its own `userId`
+  directly, per this schema's stated invariant.
+  - `Beneficiary.shareHash` is the SHA-256 hash of the raw share value,
+    computed client-side at setup — the server NEVER stores a raw share,
+    only its hash, which is what lets the recovery flow verify a
+    submitted share belongs to its slot without ever having held it.
+    `inviteTokenHash` is the same "hash it, never store the secret"
+    treatment `GroupInvite.tokenHash` already established (§3s).
+  - `RecoveryShareSubmission.shareValueCiphertext` is genuinely NOT a
+    zero-knowledge value — it's the raw submitted share, encrypted at
+    rest under the app-wide field-encryption codec (defense-in-depth
+    against a raw DB dump between submissions), because reconstructing
+    the key fundamentally requires the server to combine >= threshold
+    shares together in one place at some point. This is the one
+    deliberate, narrowly-scoped, DOCUMENTED server-side exposure the
+    whole feature rests on — the same honest treatment
+    `findLegacyNoteContributions` gives its own unavoidable exposure
+    (§3m), never pretended to be zero-knowledge.
+  - `EmergencyDocument.title` is plaintext (not encrypted) on purpose —
+    only `.ciphertext` (the actual content) is client-side encrypted.
+    Lets the owner and, implicitly, the app browse a document list
+    without needing the vault unlocked, the same trade-off a filing
+    cabinet's labeled-but-locked folders make.
+- **DAL split mirrors the Household Spaces invite pattern exactly
+  (§3s)**: `src/server/dal/dead-mans-switch.ts` is the normal
+  owner-side, `withUserScope`-scoped path (setup, add/delete document,
+  cancel recovery, read status) — everything here is called by the
+  authenticated owner and never sees a passphrase, a raw share, or
+  decrypted document content.
+  `src/server/dead-mans-switch/recovery-admin-ops.ts` is a THIRD narrow
+  admin-client exception (alongside `current-user.ts` and
+  `invite-admin-ops.ts`, now allowlisted in
+  `tests/guards/admin-client-boundary.test.ts`) — a beneficiary holding
+  an invite token is by definition not the authenticated owner and has no
+  row-level standing under `tenant_isolation` (which is scoped to the
+  OWNER's `userId`), so looking a beneficiary up by token hash and
+  recording their submitted share both have to happen before any
+  row-level standing could exist — same bootstrap shape as the household
+  invite-accept flow.
+  `src/server/dead-mans-switch/inactivity-check.ts` is a FOURTH, genuinely
+  DIFFERENT kind of admin-client exception: a scheduled batch job with no
+  authenticated request at all, and therefore no single `userId` to scope
+  a `withUserScope` transaction by — it has to scan every user's
+  `DeadMansSwitch` row in one pass, which is precisely what RLS is
+  designed to prevent a normal request from doing.
+- **Activity Monitor, built in two genuinely different halves, not one
+  polling loop**:
+  1. **Real-time**: `src/server/auth/current-user.ts`'s `getCurrentUser()`
+     — the one chokepoint every page/route already calls — now also
+     touches the caller's `DeadMansSwitch.lastActivityAt` and reverts
+     `GRACE_PERIOD` back to `ACTIVE` on any resolved request. Debounced
+     in-memory (a `Map<userId, lastTouchMs>`, same single-process pattern
+     as `rate-limit.ts`) to once per 5 minutes, so a page rendering
+     several components sharing this cached lookup doesn't hammer the DB
+     with a write per request. Deliberately does NOT touch a `TRIGGERED`
+     switch — see the model comment for why an already-open recovery
+     needs the owner's explicit `cancelRecovery()` action instead of a
+     passive page load silently undoing beneficiaries' already-submitted
+     shares.
+  2. **Batch**: `src/server/dead-mans-switch/inactivity-check.ts`'s
+     `runInactivityCheck()` — scans every `ACTIVE` switch for elapsed
+     `inactivityThresholdDays` (-> `GRACE_PERIOD`) and every
+     `GRACE_PERIOD` switch for elapsed `gracePeriodDays` (->
+     `TRIGGERED`), idempotent to repeated runs. Entry point:
+     `scripts/check-dead-mans-switch.ts` / `npm run
+     check:dead-mans-switch`, same "manual/cron entry point, actual
+     scheduling is a deployment step" precedent as
+     `scripts/sync-exchange-rates.ts` (§3l) — nothing in this app runs
+     scheduled jobs on its own.
+- **Recovery orchestration**
+  (`src/server/dead-mans-switch/recovery-service.ts`): `submitRecoveryShare`
+  is idempotent per-beneficiary (upsert keyed on `(deadMansSwitchId,
+  beneficiaryId)`, so a corrected resubmission after a typo never counts
+  as two shares toward the threshold) and rejects outright unless the
+  switch is `TRIGGERED` — the vault is completely sealed during
+  `ACTIVE`/`GRACE_PERIOD`, proven by both the integration suite and a
+  live `curl` walkthrough (below). The moment a submission crosses
+  `thresholdShares`, reconstruction happens in that SAME request/response
+  — the reconstructed key and decrypted document plaintext are local
+  variables only, never written to the database, a log line, or anywhere
+  else the response doesn't already go, then `DeadMansSwitch.status`
+  flips to `RECOVERED`.
+  - **Canary verification after reconstruction is real defense-in-depth,
+    not an expected-to-fail path** — documented explicitly in the code:
+    since every stored submission already passed its own `shareHash`
+    check before being accepted, combining any correctly-hash-verified
+    subset mathematically MUST reconstruct the true key (that's the
+    guarantee SSS gives); a canary failure at that point would only mean
+    a genuine bug, never normal operation, and is handled as a server
+    error rather than a client-facing rejection.
+  - `getRecoveryPortalStatus` deliberately reveals only the calling
+    beneficiary's own label and submission state, never the identities or
+    submission status of any OTHER beneficiary on the same switch —
+    co-beneficiaries may not know each other.
+- **Routes**: owner-side (`POST /api/dead-mans-switch/setup`,
+  `POST .../documents`, `DELETE .../documents/[id]`,
+  `POST .../cancel-recovery`) are all normal `guardMutation()`-fronted
+  routes, identical shape to every other mutating route in this app.
+  **`GET`/`POST /api/dead-mans-switch/recover/[token]` is the ONE surface
+  in this entire app reachable by someone who is NOT the authenticated
+  seeded demo user** — a beneficiary is, by design, a different
+  real-world person. Deliberately does NOT call `guardMutation()` (which
+  resolves `getCurrentUser()`, the wrong identity entirely for this
+  flow): Origin verification is still applied by hand for the
+  state-changing `POST` (CSRF defense-in-depth still applies), and rate
+  limiting is keyed by the token itself rather than a user id, since
+  there is no user id here.
+- **UI**: `/vault` (owner — setup wizard performing every cryptographic
+  operation client-side before anything reaches the server, status
+  display with a live-computed grace-period countdown, unlock-to-view
+  documents, cancel-recovery button) and `/vault/recover/[token]`
+  (beneficiary — no login, reachable only via a per-beneficiary link
+  shown once at setup). Both reachable by direct link only, deliberately
+  not added to `PRIMARY_NAV_ITEMS`/`MobileNav` — same "sub-view, not one
+  of the spec's 9 primary destinations" pattern as `/trading/portfolio`
+  (§3l), `/analytics` (§3n), and `/transactions/subscriptions` (§3p). A
+  compact `DeadMansSwitchSummary` card cross-links from `/dashboard`,
+  same pattern as `HouseholdSummary` (§3s).
+  - **Same known trap hit again, caught immediately by the guard
+    test**: `vault-setup-wizard.tsx` and `vault-dashboard.tsx` both
+    initially used inline `onClick={() => removeX(index)}` handlers on
+    `<button>` elements — the documented `=>`-truncates-the-
+    focus-visible-guard's-regex trap (§3c bug #2, hit repeatedly since:
+    §3d, §3r, §3s). Fixed with named handlers reading
+    `event.currentTarget.dataset.*`, same pattern as `advisor-chat.tsx`
+    and `household-admin-panel.tsx`. Hit the OTHER documented shape of
+    the same trap too (§3d's "a doc comment that talks about `<button>`
+    tags in prose") — two explanatory code comments literally contained
+    the string `<button>`, which the guard's regex matched as if it were
+    real JSX; fixed by rewording to "button element" instead.
+- **Verified live, not just by test**: `npm run check` clean
+  (783/786, 3 skip for the unrelated embedding sidecar). 6 new
+  integration tests (`tests/integration/dead-mans-switch.test.ts`)
+  against real Postgres with RLS active: the full lifecycle (sealed while
+  `ACTIVE` → refuses even a correct share → triggered → stays sealed
+  below threshold → decrypts the real document correctly exactly at
+  threshold → `RECOVERED` → a late submission gets "already recovered"),
+  an insufficient-shares case that never decrypts anything even with
+  every submitted share individually hash-valid, `cancelRecovery`
+  reverting `TRIGGERED` → `ACTIVE` and clearing prior submissions so a
+  future trigger starts clean, `runInactivityCheck` advancing both
+  lifecycle stages correctly under backdated timestamps, and an IDOR
+  check (one user's vault never visible in another's status). Full
+  `npm run build` clean, including confirming the one page in this app
+  with a dynamic route segment (`/vault/recover/[token]`, which Next
+  classifies as "Partial Prerender" rather than fully dynamic — a new
+  rendering shape for this app) still gets the CSP nonce correctly
+  stamped on every script tag — checked by hand against
+  `next start`, since AGENTS.md §3 already documents a real, previously-
+  verified nonce/static-rendering conflict in this exact app, and this
+  was a genuinely new rendering shape worth re-checking rather than
+  assuming the existing fix covers it. `verify:client-bundle-secrets`
+  clean; grepped the compiled `.next/static/` output directly for
+  `decryptVaultValueNode`/`adminUpsertShareSubmission`/
+  `adminFindBeneficiaryByTokenHash`/`createAdminClient`/`encryptField`
+  and found none, confirming every server-only piece of this feature
+  never reaches the client bundle. Live `curl`/`tsx` walkthrough against
+  the real running dev server, using the real WebCrypto/Shamir modules to
+  generate a genuine setup payload for the seeded demo user: setup (201)
+  → setup again (400, "already set up") → forged cross-origin `Origin` on
+  `cancel-recovery` (403) → invalid recovery token (404) → a real,
+  correctly-hash-verified share submitted before the switch was ever
+  triggered (400, "not currently open for recovery") → 11 rapid status
+  requests against one token (429 on the 11th) → manually flipped the
+  switch to `TRIGGERED` via `psql` (simulating what
+  `runInactivityCheck` would eventually do) → first share (200,
+  `accepted_pending`, 1 of 2) → second share (200, `recovered`, the
+  decrypted document plaintext byte-for-byte matches what was encrypted
+  at setup) → confirmed via `psql` that all four tables' rows cascade-
+  deleted correctly when the vault was removed, then confirmed
+  `/dashboard` and `/vault` (back to the setup wizard) both render
+  cleanly afterward. No test data was left behind.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no add/remove-beneficiary-after-setup flow and no
+  passphrase-rotation flow — either would require re-splitting the
+  secret and redistributing every share from scratch, the same
+  "no rotation without a full re-key" honesty §3m already establishes for
+  the zero-knowledge vault; a lost passphrase before setup, or losing
+  more than `totalShares - thresholdShares` beneficiaries' shares, makes
+  the vault permanently unrecoverable, the honest cost stated plainly in
+  the setup wizard's own copy; no outbound email/SMS to actually deliver
+  a beneficiary's link or share (both are shown once in the owner's
+  browser at setup, exactly like `GroupInvite`'s raw token, §3s) — real
+  distribution is the owner's problem, same as every invite flow in this
+  app; the Activity Monitor's batch check has no automatic OS-level
+  scheduling wired up, same documented gap `scripts/sync-exchange-rates.ts`
+  already has.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

@@ -125,6 +125,13 @@ enum InviteStatus {
   EXPIRED
 }
 
+enum DeadMansSwitchStatus {
+  ACTIVE
+  GRACE_PERIOD
+  TRIGGERED
+  RECOVERED
+}
+
 /// `zk*` columns back the zero-knowledge vault for `GoalContribution.note`
 /// (AGENTS.md §3m) — none of them are secret. `zkSalt` and
 /// `zkKdfIterations` are PBKDF2 parameters (a salt's job is to be public;
@@ -168,6 +175,155 @@ model User {
   groupMemberships     GroupMember[]
   groupInvitesCreated  GroupInvite[]          @relation("GroupInvitesCreated")
   groupInvitesAccepted GroupInvite[]          @relation("GroupInvitesAccepted")
+  deadMansSwitch       DeadMansSwitch?
+  beneficiaries        Beneficiary[]
+  emergencyDocuments   EmergencyDocument[]
+  recoveryShareSubmissions RecoveryShareSubmission[]
+}
+
+/// Cryptographic Dead Man's Switch (AGENTS.md §3t) — one row per user,
+/// protecting a dedicated "Emergency Vault" of `EmergencyDocument` rows.
+///
+/// This is deliberately a SEPARATE vault with its OWN master key, not an
+/// extension of the zero-knowledge goal-notes vault above (`User.zk*`,
+/// §3m): that vault's derived key is created with `extractable: false`
+/// specifically so it can never be exported from the browser, by design.
+/// Splitting a key via Shamir's Secret Sharing fundamentally requires
+/// exporting its raw bytes at setup time — doing that to the zk-vault key
+/// would silently undermine the one property it exists for. This vault's
+/// key (`vaultSalt`/`vaultKdfIterations`, derived in
+/// src/lib/dead-mans-switch-crypto.ts) is deliberately extractable for
+/// exactly as long as setup takes, then immediately split into
+/// `totalShares` Shamir shares and discarded — the server never stores
+/// the raw key or any share (see Beneficiary's `shareHash`).
+/// `vaultCanaryCiphertext` is the same "encrypt a known constant, verify
+/// by attempting to decrypt it" pattern as `User.zkCanaryCiphertext` —
+/// used both by the owner (confirming their recovery passphrase still
+/// works) and, critically, by the server during recovery to confirm a
+/// set of combined shares reconstructed the CORRECT key before it ever
+/// attempts to decrypt a real document.
+///
+/// `status` lifecycle: ACTIVE -> GRACE_PERIOD (inactivity threshold
+/// crossed) -> TRIGGERED (grace period also elapsed — the recovery portal
+/// opens for beneficiaries) -> RECOVERED (threshold shares combined
+/// successfully). GRACE_PERIOD reverts to ACTIVE automatically on any
+/// activity (src/server/auth/current-user.ts's activity touch); TRIGGERED
+/// does NOT auto-revert on activity — a switch already open for recovery
+/// requires an explicit owner action (`cancelRecovery`) rather than a
+/// passive page load, so an incidental API call mid-recovery can't
+/// silently undo beneficiaries' already-submitted shares. See
+/// AGENTS.md §3t for the full design rationale.
+model DeadMansSwitch {
+  id                      String               @id @default(cuid())
+  userId                  String               @unique
+  user                    User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                  DeadMansSwitchStatus @default(ACTIVE)
+  inactivityThresholdDays Int                  @default(90)
+  gracePeriodDays         Int                  @default(14)
+  lastActivityAt          DateTime             @default(now())
+  graceStartedAt          DateTime?
+  triggeredAt             DateTime?
+  recoveredAt             DateTime?
+  /// N — total number of Shamir shares generated at setup.
+  totalShares             Int
+  /// M — shares required to reconstruct the master key (M <= N).
+  thresholdShares         Int
+  /// PBKDF2 salt — public by design, see zkSalt's comment above for why.
+  vaultSalt               String
+  vaultKdfIterations      Int
+  vaultCanaryCiphertext   String
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+
+  beneficiaries    Beneficiary[]
+  documents        EmergencyDocument[]
+  shareSubmissions RecoveryShareSubmission[]
+
+  @@index([status])
+}
+
+/// One row per Shamir share slot (`shareIndex` 1..totalShares). The raw
+/// share VALUE is never persisted anywhere in this app — only
+/// `shareHash` (SHA-256 hex of the raw share bytes, computed client-side
+/// at setup), which lets the recovery portal verify a beneficiary's
+/// submitted share belongs to this slot without the server ever needing
+/// to already hold it. `inviteTokenHash` is the standard "hash it, never
+/// store the secret" treatment `GroupInvite.tokenHash` already uses
+/// (§3s) — the raw token (which page to visit) and the raw share value
+/// (the actual secret) are shown to the owner together exactly once at
+/// setup, then distributed out-of-band to two different real-world
+/// channels by convention (e.g. the token by email, the share on paper) —
+/// the app is never in a position to leak both at once after that
+/// moment, because it never stores either of them again.
+model Beneficiary {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deadMansSwitchId String
+  deadMansSwitch   DeadMansSwitch @relation(fields: [deadMansSwitchId], references: [id], onDelete: Cascade)
+  label            String
+  shareIndex       Int
+  shareHash        String
+  inviteTokenHash  String   @unique
+  createdAt        DateTime @default(now())
+
+  submissions RecoveryShareSubmission[]
+
+  @@unique([deadMansSwitchId, shareIndex])
+  @@index([userId])
+  @@index([deadMansSwitchId])
+}
+
+/// An emergency document — arbitrary free text (account instructions,
+/// asset locations, final wishes, etc.) AES-256-GCM encrypted entirely
+/// client-side (src/lib/dead-mans-switch-crypto.ts, "dms1:" format)
+/// under the vault's master key before ever reaching the server. Same
+/// zero-knowledge-at-rest property `GoalContribution.note` has (§3m) —
+/// the crucial difference (see DeadMansSwitch's model comment) is that
+/// THIS key is designed to eventually be reconstructed and used
+/// server-side exactly once, during a successful recovery.
+model EmergencyDocument {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deadMansSwitchId String
+  deadMansSwitch   DeadMansSwitch @relation(fields: [deadMansSwitchId], references: [id], onDelete: Cascade)
+  title            String
+  ciphertext       String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+  @@index([deadMansSwitchId])
+}
+
+/// A beneficiary's submitted share during an active recovery (only
+/// accepted while `DeadMansSwitch.status = TRIGGERED`).
+/// `shareValueCiphertext` is the raw share value, encrypted at rest under
+/// the app-wide field-encryption codec (src/server/crypto/field-encryption.ts
+/// — the same codec `NotableTransaction.description` uses), deliberately
+/// NOT a zero-knowledge value: reconstructing the master key fundamentally
+/// requires the server to combine >= threshold shares together in one
+/// place at some point, which is a one-time, narrowly-scoped, DOCUMENTED
+/// server-side exposure — the same honest treatment
+/// `findLegacyNoteContributions` gives its own unavoidable exposure
+/// (§3m), never pretended to be zero-knowledge. Field-level encryption
+/// here is defense-in-depth against a raw database dump between
+/// submissions, not a claim that the server can never combine them.
+model RecoveryShareSubmission {
+  id                   String   @id @default(cuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deadMansSwitchId     String
+  deadMansSwitch       DeadMansSwitch @relation(fields: [deadMansSwitchId], references: [id], onDelete: Cascade)
+  beneficiaryId        String
+  beneficiary          Beneficiary    @relation(fields: [beneficiaryId], references: [id], onDelete: Cascade)
+  shareValueCiphertext String
+  submittedAt          DateTime @default(now())
+
+  @@unique([deadMansSwitchId, beneficiaryId])
+  @@index([userId])
+  @@index([deadMansSwitchId])
 }
 
 /// User-defined categories with permanent slugs: renaming changes `name`

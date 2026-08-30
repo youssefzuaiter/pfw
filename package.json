@@ -21,7 +21,8 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "verify:client-bundle-secrets": "tsx --conditions=react-server scripts/check-no-secrets-in-client-bundle.ts",
-    "sync:rates": "tsx --conditions=react-server scripts/sync-exchange-rates.ts"
+    "sync:rates": "tsx --conditions=react-server scripts/sync-exchange-rates.ts",
+    "check:dead-mans-switch": "tsx --conditions=react-server scripts/check-dead-mans-switch.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.121.0",

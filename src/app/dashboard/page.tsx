@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { buildDashboardData } from "../../server/dashboard/build-dashboard-data";
+import { getVaultStatus } from "../../server/dal/dead-mans-switch";
 import { getSharedGroupData, listMyGroups } from "../../server/dal/shared-groups";
 import { AttentionFeed } from "./_components/attention-feed";
 import { CashFlowChart } from "./_components/cash-flow-chart";
 import { CategoryDonut } from "./_components/category-donut";
+import { DeadMansSwitchSummary } from "./_components/dead-mans-switch-summary";
 import { HouseholdSummary } from "./_components/household-summary";
 import { IncomeExpenseChart } from "./_components/income-expense-chart";
 import { NetWorthHero } from "./_components/net-worth-hero";
@@ -17,7 +19,11 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const [data, myGroups] = await Promise.all([buildDashboardData(user.id), listMyGroups(user.id)]);
+  const [data, myGroups, vaultStatus] = await Promise.all([
+    buildDashboardData(user.id),
+    listMyGroups(user.id),
+    getVaultStatus(user.id),
+  ]);
 
   const households = await Promise.all(
     myGroups.map(async ({ group, membership }) => {
@@ -50,7 +56,10 @@ export default async function DashboardPage() {
         <AttentionFeed insights={data.insights} />
       </div>
 
-      <HouseholdSummary households={households} />
+      <div className="grid gap-6 md:grid-cols-2">
+        <HouseholdSummary households={households} />
+        <DeadMansSwitchSummary isSetUp={vaultStatus.isSetUp} status={vaultStatus.status} />
+      </div>
 
       <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="cash-flow-heading">
         <h2 id="cash-flow-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">

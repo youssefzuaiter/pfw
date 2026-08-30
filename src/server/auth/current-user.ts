@@ -27,11 +27,45 @@ import { createAdminClient } from "../db/admin-client";
  */
 const SEED_USER_EMAIL = "demo@pfw.local";
 
+/**
+ * The Activity Monitor's real-time half (AGENTS.md §3t) — every resolved
+ * request is "proof of life" for the Dead Man's Switch. Debounced
+ * in-memory (same `Map`-based, single-process pattern as
+ * src/server/api/rate-limit.ts — a multi-instance Tier 3 deployment
+ * would swap this for a shared store behind the same function shape) so
+ * a page that renders three components sharing this cached lookup, or a
+ * user browsing normally, doesn't write to `DeadMansSwitch` on every
+ * single request — only once per `ACTIVITY_TOUCH_DEBOUNCE_MS`.
+ *
+ * Deliberately only reverts GRACE_PERIOD -> ACTIVE, never touches a
+ * TRIGGERED switch — see DeadMansSwitch's model comment for why an
+ * already-triggered recovery requires the owner's explicit
+ * `cancelRecovery()` action instead of a passive page load silently
+ * undoing beneficiaries' already-submitted shares.
+ */
+const ACTIVITY_TOUCH_DEBOUNCE_MS = 5 * 60 * 1000;
+const lastActivityTouchAt = new Map<string, number>();
+
+async function touchDeadMansSwitchActivity(admin: ReturnType<typeof createAdminClient>, userId: string): Promise<void> {
+  const now = Date.now();
+  const lastTouch = lastActivityTouchAt.get(userId);
+  if (lastTouch !== undefined && now - lastTouch < ACTIVITY_TOUCH_DEBOUNCE_MS) return;
+  lastActivityTouchAt.set(userId, now);
+
+  await admin.deadMansSwitch.updateMany({
+    where: { userId, status: { in: ["ACTIVE", "GRACE_PERIOD"] } },
+    data: { status: "ACTIVE", lastActivityAt: new Date(now), graceStartedAt: null },
+  });
+}
+
 export const getCurrentUser = cache(async () => {
   const admin = createAdminClient();
   const user = await admin.user.findUnique({ where: { email: SEED_USER_EMAIL } });
   if (!user) {
     throw new Error(`Seed user not found (${SEED_USER_EMAIL}). Run \`npm run db:seed\` first.`);
   }
+
+  await touchDeadMansSwitchActivity(admin, user.id);
+
   return user;
 });
