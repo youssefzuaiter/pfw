@@ -55,6 +55,26 @@ enum AssetType {
   OTHER
 }
 
+/// The Real-Time Liquidity Runway & Burn-Rate Engine's asset-classification
+/// taxonomy (AGENTS.md §3v). LIQUID = spendable within days with no market
+/// risk (bank checking/savings). SEMI_LIQUID = convertible to cash within
+/// days-to-weeks but subject to market price risk (equities/crypto).
+/// ILLIQUID = property, vehicles, retirement accounts with a real lock-in
+/// (Keren Hishtalmut's 6-year window) — not realistically spendable during
+/// a liquidity crunch. `BankAccount` and `PortfolioHolding` don't need
+/// their own column for this: a bank account's `accountType` and the mere
+/// fact of being a `PortfolioHolding` already unambiguously imply LIQUID
+/// and SEMI_LIQUID respectively (src/lib/liquidity-classification.ts) —
+/// only `ManualAsset` has a genuinely ambiguous default (its `assetType`
+/// enum mixes clearly-illiquid PROPERTY/VEHICLE with a CRYPTO value that's
+/// really semi-liquid), which is what `ManualAsset.liquidityTier` exists
+/// to let a user override.
+enum LiquidityTier {
+  LIQUID
+  SEMI_LIQUID
+  ILLIQUID
+}
+
 enum TradeSide {
   BUY
   SELL
@@ -566,19 +586,34 @@ model DebtPayment {
 /// read time, never stored. `taxAdvantaged`/`liquidityDate` exist mainly
 /// for KEREN_HISHTALMUT, which has a real 6-year liquidity lock-in under
 /// Israeli law.
+///
+/// `liquidityTier` (AGENTS.md §3v) is nullable BY DESIGN, not merely
+/// "not migrated yet": null means "derive the tier from `assetType`" (the
+/// sensible default for every existing row, since this app had no notion
+/// of liquidity tiers before this column existed) via
+/// `classifyManualAssetLiquidity` — a non-null value is an explicit user
+/// override for the genuinely ambiguous cases the default can't get right
+/// on its own (e.g. a self-custodied CRYPTO holding the user considers
+/// effectively illiquid, or an OTHER asset — a gold bar, a collectible —
+/// they consider more liquid than the conservative ILLIQUID default).
+/// This is the "derived truth, overridable" shape law #5 already
+/// establishes elsewhere in this schema (valuation freshness above is
+/// the pure-derived case with no override at all; this is the same idea
+/// with one).
 model ManualAsset {
-  id            String    @id @default(cuid())
+  id            String         @id @default(cuid())
   userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   name          String
   assetType     AssetType
   /// Agorot.
   currentValue  BigInt
   valuedAt      DateTime
-  taxAdvantaged Boolean   @default(false)
+  taxAdvantaged Boolean        @default(false)
   liquidityDate DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  liquidityTier LiquidityTier?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([userId])
 }

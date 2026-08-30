@@ -20,6 +20,8 @@ export async function createManualAsset(
     valuedAt: Date;
     taxAdvantaged?: boolean;
     liquidityDate?: Date;
+    /** The Real-Time Liquidity Runway & Burn-Rate Engine's per-asset override (AGENTS.md §3v) — omit to use `assetType`'s default tier (see schema.prisma's `ManualAsset.liquidityTier` comment for why null, not a stored default, means "derive it"). No dedicated UI sets this yet (out of this pass's scope, per its own known-limitations note); wired here so it's usable via the API today rather than dead schema nothing can reach. */
+    liquidityTier?: Prisma.ManualAssetCreateInput["liquidityTier"];
   },
 ) {
   return withUserScope(userId, (tx) => tx.manualAsset.create({ data: { userId, ...input } }));

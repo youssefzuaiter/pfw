@@ -2,6 +2,7 @@ import "server-only";
 import { addAgorot, agorot, multiplyAgorot, subtractAgorot, type Agorot } from "../../lib/money";
 import { nativeAmount } from "../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
+import { classifyLiquidity, type LiquidityBreakdown } from "../../lib/liquidity-classification";
 import { getMockPriceAgorot } from "../../lib/mock-market-data";
 import { withUserScope } from "../db/with-user-scope";
 import { getLatestRateTable } from "./exchange-rates";
@@ -16,6 +17,8 @@ export type LiveNetWorth = {
     portfolio: Agorot;
     debts: Agorot;
   };
+  /** The Real-Time Liquidity Runway & Burn-Rate Engine's asset classification (AGENTS.md §3v) — computed from the SAME already-fetched rows as `breakdown` above, purely additive, so this costs no extra database round trip. */
+  liquidity: LiquidityBreakdown;
 };
 
 /**
@@ -55,9 +58,10 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
   const toAgorot = (balance: bigint, currency: keyof typeof rateTable) =>
     convertNativeAmountToAgorot(nativeAmount(Number(balance)), currency, rateTable[currency]);
 
-  const bankAssetAmounts = accounts
+  const bankAssetRows = accounts
     .filter((a) => a.accountType !== "CREDIT_CARD")
-    .map((a) => toAgorot(a.nativeBalance, a.currency));
+    .map((a) => ({ accountType: a.accountType, valueAgorot: toAgorot(a.nativeBalance, a.currency) }));
+  const bankAssetAmounts = bankAssetRows.map((r) => r.valueAgorot);
   const bankLiabilityAmounts = accounts
     .filter((a) => a.accountType === "CREDIT_CARD")
     .map((a) => toAgorot(a.nativeBalance, a.currency));
@@ -75,6 +79,16 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
   const totalAssets = addAgorot(bankAccountsTotal, manualAssetsTotal, portfolioTotal);
   const totalLiabilities = debtsTotal;
 
+  const liquidity = classifyLiquidity(
+    bankAssetRows,
+    assets.map((a) => ({
+      assetType: a.assetType,
+      liquidityTierOverride: a.liquidityTier,
+      valueAgorot: agorot(Number(a.currentValue)),
+    })),
+    portfolioAmounts.map((valueAgorot) => ({ valueAgorot })),
+  );
+
   return {
     totalAssets,
     totalLiabilities,
@@ -85,6 +99,7 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
       portfolio: portfolioTotal,
       debts: debtsTotal,
     },
+    liquidity,
   };
 }
 

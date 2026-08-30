@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { formatAgorot } from "../../lib/money";
+import { formatAgorot, type Agorot } from "../../lib/money";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import {
   calculateCashDrag,
@@ -31,6 +31,8 @@ export type SubscriptionRadarData = {
   subscriptions: SubscriptionRow[];
   possibleFreeTrials: (ReturnType<typeof buildFreeTrialRow>)[];
   cashDrag: { monthly: string; annual: string };
+  /** The same monthly cash-drag total as `cashDrag.monthly`, as a raw `Agorot` rather than a formatted display string — added for the Real-Time Liquidity Runway & Burn-Rate Engine (AGENTS.md §3v), which needs the actual number to compute a burn-rate floor, not text to render. Purely additive; the existing `cashDrag` field and every prior consumer of it are unchanged. */
+  cashDragMonthlyAgorot: Agorot;
 };
 
 function buildFreeTrialRow(trial: PossibleFreeTrial) {
@@ -107,5 +109,6 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     }),
     possibleFreeTrials: radarResult.possibleFreeTrials.map(buildFreeTrialRow),
     cashDrag: { monthly: formatAgorot(cashDrag.monthlyAgorot), annual: formatAgorot(cashDrag.annualAgorot) },
+    cashDragMonthlyAgorot: cashDrag.monthlyAgorot,
   };
 });

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { buildLiquidityRunwayData } from "../../server/analytics/build-liquidity-runway-data";
 import { buildDashboardData } from "../../server/dashboard/build-dashboard-data";
 import { getVaultStatus } from "../../server/dal/dead-mans-switch";
 import { getSharedGroupData, listMyGroups } from "../../server/dal/shared-groups";
@@ -9,6 +10,7 @@ import { CategoryDonut } from "./_components/category-donut";
 import { DeadMansSwitchSummary } from "./_components/dead-mans-switch-summary";
 import { HouseholdSummary } from "./_components/household-summary";
 import { IncomeExpenseChart } from "./_components/income-expense-chart";
+import { LiquidityRunwayCard } from "./_components/liquidity-runway-card";
 import { NetWorthHero } from "./_components/net-worth-hero";
 
 // This screen is entirely live, per-user financial data — never a
@@ -19,10 +21,11 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const [data, myGroups, vaultStatus] = await Promise.all([
+  const [data, myGroups, vaultStatus, liquidityRunway] = await Promise.all([
     buildDashboardData(user.id),
     listMyGroups(user.id),
     getVaultStatus(user.id),
+    buildLiquidityRunwayData(user.id),
   ]);
 
   const households = await Promise.all(
@@ -55,6 +58,15 @@ export default async function DashboardPage() {
         <NetWorthHero netWorth={data.netWorth} history={data.netWorthHistory} />
         <AttentionFeed insights={data.insights} />
       </div>
+
+      <LiquidityRunwayCard
+        availableAgorot={liquidityRunway.runway.availableAgorot}
+        liquidAgorot={liquidityRunway.breakdown.liquidAgorot}
+        semiLiquidAgorot={liquidityRunway.breakdown.semiLiquidAgorot}
+        monthlyBurnRateAgorot={liquidityRunway.runway.monthlyBurnRateAgorot}
+        runwayDays={liquidityRunway.runway.runwayDays}
+        burnRateSource={liquidityRunway.burnRate.source}
+      />
 
       <div className="grid gap-6 md:grid-cols-2">
         <HouseholdSummary households={households} />

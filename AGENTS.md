@@ -2743,6 +2743,193 @@ sidecar, per the explicit "Transformers.js running in-browser" ask.
   "no migration for pre-existing data" honesty the zero-knowledge vault's
   legacy-note path (§3m) makes explicit for a different feature.
 
+## 3v. Real-Time Liquidity Runway & Burn-Rate Engine (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`. Reuses two already-built
+engines rather than duplicating their logic — `computeLiveNetWorth`
+(§4's live net-worth calculation) for the raw asset rows, and the
+subscription radar's `calculateCashDrag` (§3p) for known recurring
+commitments — composing them with two genuinely new pure engines into a
+third figure neither of those two answers on its own: "at your current
+spend, how many days of cash-and-market-sellable assets do you have."
+
+- **Scope decision, made explicitly rather than assumed**: the task's
+  "monthly essential expenses" is read as "your regular committed
+  monthly outflow" (the standard meaning of "burn rate" in a runway
+  calculation), NOT as a request to invent a new essential-vs-
+  discretionary category taxonomy this app has no other use for. Total
+  monthly expense history already captures "regular committed spending"
+  well enough once combined with the subscription radar's cash-drag
+  floor (below) — inventing a `Category.isEssential` schema column and
+  its own settings UI for a single feature would have been the kind of
+  unrequested-abstraction scope creep this project avoids. If a future
+  pass wants a true essential/discretionary split for OTHER reasons
+  (e.g. a stricter emergency-budget mode), this burn-rate function's
+  `monthlyExpenseHistory` input is generic enough to accept a
+  category-filtered history without changing its own logic at all.
+- **Asset classification** (`src/lib/liquidity-classification.ts`, new
+  pure engine, `src/lib/` convention per §3b): a three-tier taxonomy —
+  LIQUID (spendable in days, no market risk), SEMI_LIQUID (market-
+  sellable in days-to-weeks, subject to price risk), ILLIQUID (not
+  realistically spendable in a liquidity crunch). `BankAccount` and
+  `PortfolioHolding` need no new column at all — `accountType` and the
+  mere fact of being a `PortfolioHolding` already unambiguously imply
+  LIQUID and SEMI_LIQUID respectively. Only `ManualAsset` genuinely
+  needs one: its `assetType` enum mixes clearly-illiquid PROPERTY/
+  VEHICLE/PENSION/KEREN_HISHTALMUT with a CRYPTO value that's really
+  semi-liquid, and an OTHER catch-all that could honestly be either.
+  - **`ManualAsset.liquidityTier`** (new, nullable, migration
+    `20260901090000_liquidity_runway_classification` — no backfill
+    needed, unlike §3k's required-column case: null has a real, correct
+    meaning here, "derive it from `assetType`," so every pre-existing
+    seeded row is already valid with nothing to fill in). Non-null is an
+    explicit user override for the genuinely ambiguous cases (a
+    self-custodied CRYPTO holding considered effectively illiquid; an
+    OTHER asset — a gold bar, a collectible — considered more liquid
+    than the conservative ILLIQUID default). The same "derived truth,
+    overridable" shape law #5 already gives valuation freshness
+    elsewhere on this same model, just with an override this time.
+    Wired additively into `createManualAsset` (accepts an optional
+    `liquidityTier`) so it's reachable via the API today — **no
+    dedicated settings UI was built for it** (out of this pass's
+    explicit scope, which named only a dashboard indicator), flagged in
+    known-limitations below rather than left as silent dead schema.
+  - A `CREDIT_CARD` "account" is a liability (stored positive = money
+    owed, per `computeLiveNetWorth`'s own doc comment), never an asset —
+    `classifyBankAccountLiquidity` throws loudly rather than accepting
+    one, so a caller that forgot to filter credit cards out gets an
+    error immediately instead of a silently-inflated liquid total.
+- **`computeLiveNetWorth` gained a `liquidity: LiquidityBreakdown`
+  field** (`src/server/dal/net-worth.ts`) computed from the SAME
+  already-fetched bank-account/manual-asset/portfolio-holding rows its
+  existing `breakdown` field uses — purely additive, costs no extra
+  database round trip. Every existing caller (the advisor's
+  `get_net_worth_summary` tool, the Monte Carlo engine, the dashboard)
+  is unaffected; only this pass's own new aggregator reads the new
+  field.
+- **`src/lib/burn-rate.ts`** (new pure engine): burn rate = the LARGER
+  of (a) a trailing 3-month rolling average of total monthly expense
+  history, and (b) the subscription radar's cash-drag total — never
+  less than (b), because an active recurring bill is real committed
+  spend regardless of whether a short or unusually quiet transaction
+  history window under-represents it. This is also what makes a
+  brand-new account with little history well-behaved: it still reports
+  a meaningful floor instead of a misleadingly-low or zero burn rate.
+  `BurnRateResult.source` (`"historical_average"` /
+  `"recurring_commitments_floor"` / `"none"`) is surfaced to the UI so
+  the dashboard card can explain which figure actually drove the
+  number, not present one opaque total.
+- **`buildSubscriptionRadarData` gained a raw `cashDragMonthlyAgorot:
+  Agorot` field** (`src/server/subscriptions/build-subscription-radar-data.ts`)
+  alongside its existing formatted `cashDrag: {monthly, annual}` strings
+  — the burn-rate engine needs the actual number, not display text. Purely
+  additive; `/transactions/subscriptions` and every existing consumer of
+  the formatted strings is unchanged. Calling this `cache()`-wrapped
+  function again from the new runway aggregator, in the same request as
+  `/transactions/subscriptions` would, shares one computation rather than
+  running the radar twice.
+- **`src/lib/liquidity-runway.ts`** (new pure engine): `runwayDays =
+  availableAgorot / dailyBurnRateAgorot`, where `availableAgorot =
+  liquid + semiLiquid` (illiquid assets deliberately excluded — a
+  paid-off apartment can't fund next month's rent no matter how large
+  it is, per the spec's own framing: "divide available liquid/semi-liquid
+  assets by burn rate") and `dailyBurnRateAgorot = monthlyBurnRateAgorot
+  / AVERAGE_DAYS_PER_MONTH` (365.25/12, the standard "average Gregorian
+  month" constant — not a flat 30 or 31, and not a real calendar walk
+  like `cash-flow-forecast.ts`'s day-by-day simulation: a runway figure
+  is a single point-in-time rate-based estimate, not a projection onto
+  specific future calendar dates, so there's no real calendar for it to
+  walk).
+  - **`runwayDays: number | null`** — `null` means infinite runway (zero
+    or negative burn rate), deliberately not `Infinity`: `Infinity`
+    survives arithmetic in confusing ways and doesn't survive
+    `JSON.stringify` cleanly (silently becomes `null` in a
+    `NextResponse.json()` body anyway), so this makes that conversion
+    explicit rather than an accidental serialization quirk. A finite
+    result is never negative — `availableAgorot <= 0` with a positive
+    burn rate reports exactly `0` days, never a negative "days already
+    overdrawn" figure, which has no natural reading a user is trying to
+    picture.
+- **`src/server/analytics/build-liquidity-runway-data.ts`** (new
+  aggregator, `cache()`-wrapped like every other `build-*-data.ts`,
+  §3c): assembles `computeLiveNetWorth`, a 3-month trailing
+  `getMonthlyIncomeExpenseHistory` read, and `buildSubscriptionRadarData`,
+  then runs the two new engines. No new API route — this is a
+  server-rendered dashboard indicator with no interactivity to re-fetch
+  for (unlike the Monte Carlo widget's sliders), so a plain DAL-calling
+  Server Component is the right shape here, same as `HouseholdSummary`/
+  `DeadMansSwitchSummary`.
+- **Dashboard UI**: `LiquidityRunwayCard`
+  (`src/app/dashboard/_components/`) — a day-precise headline figure
+  ("652.1 days", not rounded to whole days or months), a `Badge`/
+  `Tickbar` health indicator (critical under 30 days, warning under 90,
+  good at 90+ — the same 3-6-month emergency-fund range most personal-
+  finance guidance treats as an adequate cash buffer; the Tickbar's
+  100%-mark is set at 180 days so the healthy zone isn't a single
+  hairline at the bar's very end), the liquid/semi-liquid split shown
+  separately (not just their sum), and a one-line explanation of which
+  `BurnRateResult.source` produced the number. Placed prominently near
+  the top of `/dashboard`, right after the net-worth hero row.
+- **Testing, the task's explicit emphasis**: 41 new unit tests across
+  the three new engines. `liquidity-classification.test.ts` (13 cases):
+  every `assetType`'s default tier, an override winning over the
+  default, an unrecognized `assetType` throwing rather than silently
+  defaulting, the `CREDIT_CARD` guard, and a realistic mixed-portfolio
+  bucketing check. `burn-rate.test.ts` (13 cases): the trailing-window
+  slice genuinely excluding older months, fewer months than requested
+  handled without error, the recurring-commitments floor winning vs.
+  losing vs. exactly tying the historical average, a genuine zero-spend
+  month correctly lowering the average (not excluded from it),
+  non-integer-average rounding, and invalid `trailingMonths` inputs.
+  `liquidity-runway.test.ts` (15 cases, the module the task named
+  explicitly): zero burn → `null` (infinite) runway, a hypothetically
+  negative burn rate also treated as infinite, zero available assets
+  with a positive burn rate → exactly `0` (never negative), a
+  hypothetically negative available total clamped to `0` (defensive —
+  structurally shouldn't occur, same belt-and-suspenders habit as
+  elsewhere in this app), illiquid assets confirmed fully excluded from
+  the available total, a very large available-vs-tiny-burn case staying
+  finite with no overflow, a tiny-available-vs-large-burn case
+  correctly producing a sub-1-day fractional result, an exact
+  one-average-month case resolving to precisely `AVERAGE_DAYS_PER_MONTH`,
+  and two linearity checks (doubling assets doubles runway; halving
+  burn doubles runway) that would catch a subtle arithmetic mistake a
+  single fixed-number test could miss. A 4-case integration suite
+  (`tests/integration/liquidity-runway.test.ts`) then proves the
+  server-side wiring against REAL Prisma rows (actual `BigInt`s, actual
+  enum values, actual RLS) rather than trusting that the pure-function
+  unit tests alone imply the DAL glue is correct: real bank-account/
+  manual-asset rows classify into the right buckets (including a real
+  liquidity-tier override), a second user's net worth shows zero
+  liquidity (IDOR), the full aggregator produces a coherent result for
+  an account with no history (zero burn, infinite runway), and three
+  real recurring `NotableTransaction` rows raise the burn-rate floor and
+  produce a genuine finite runway.
+- **Verified live, not just by test**: `npm run check` clean
+  (854/857, 3 skip for the unrelated embedding sidecar). Full `npm run
+  build` clean. Confirmed via `curl` against the real running dev
+  server, on the real seeded demo account: the dashboard renders
+  "Liquidity Runway" with a day-precise "652.1 days" figure, a Tickbar
+  correctly clamped to 100% (652 days far exceeds the 180-day target),
+  and a coherent breakdown — Available ₪196,279.16 = Liquid ₪58,828.00 +
+  Semi-liquid ₪137,451.16 exactly, Monthly burn ₪9,160.90, sourced from
+  "your trailing 3-month average spend" — hand-verified by dividing
+  the figures back out (₪196,279.16 / ₪9,160.90 × 30.4375 ≈ 652.3 days,
+  matching the rendered 652.1 within expected rounding).
+- **Known limitations, left as such rather than silently expanded
+  scope**: no settings UI to set `ManualAsset.liquidityTier` (wired into
+  the DAL/API, reachable today, just not from any screen — see above);
+  no essential-vs-discretionary category split (a deliberate scope
+  decision, see above, not an oversight); the 30/90/180-day health
+  thresholds are fixed constants, not user-configurable (the task named
+  a visual indicator, not a settings screen for it); burn rate uses a
+  flat 3-month trailing average with no seasonality adjustment (e.g. a
+  known annual insurance payment spikes one month's average without
+  being smoothed across the year) — the same kind of simplification
+  Monte Carlo's single static allocation split (§3n) and the tax
+  simulator's blended-rate harvesting estimate (§3r) already make and
+  document rather than hide.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
