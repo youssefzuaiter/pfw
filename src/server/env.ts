@@ -192,6 +192,33 @@ export function getOllamaConfig(): OllamaConfig {
   };
 }
 
+/**
+ * The public EVM JSON-RPC endpoint the Advanced Crypto & On-Chain Asset
+ * Tracking module (AGENTS.md §3w) calls for `eth_getBalance`. Not a
+ * secret — a public RPC endpoint's URL grants no special access (the
+ * whole point of a *public* RPC endpoint is that anyone can call it with
+ * no credential at all), same "service address, not a credential"
+ * reasoning as `getEmbeddingSidecarUrl()`/`getOllamaConfig()`. No API
+ * key, no rate-limit-tier signup, consistent with this app's existing
+ * preference for keyed-provider-free integrations wherever one exists
+ * (Frankfurter for FX, §3k; CoinGecko's free tier for crypto prices,
+ * `src/server/crypto/price-sync.ts`).
+ *
+ * Defaults to PublicNode (https://ethereum.publicnode.com), NOT
+ * Cloudflare's often-cited free gateway (https://cloudflare-eth.com) —
+ * a real, verified difference, not a style preference: a direct `curl`
+ * `eth_getBalance` test against Cloudflare's endpoint from this
+ * project's own environment consistently returned `{"error":{"code":
+ * -32046,"message":"Cannot fulfill request"}}` even for a trivial
+ * `eth_blockNumber` call with no parameters at all, while the identical
+ * request against PublicNode returned a correct, real balance every
+ * time. Worth knowing if this ever needs revisiting: whatever Cloudflare
+ * is rejecting on, it isn't the address or the JSON-RPC method itself.
+ */
+export function getEvmRpcUrl(): string {
+  return process.env.EVM_RPC_URL ?? "https://ethereum.publicnode.com";
+}
+
 // === Tier 3 scaffolding: future bank-integration API credentials =========
 //
 // Preparation for real bank linkage (docs/SECURITY.md §1's Tier 3 —

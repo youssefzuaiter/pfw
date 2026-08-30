@@ -4,6 +4,7 @@ import { nativeAmount } from "../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { classifyLiquidity, type LiquidityBreakdown } from "../../lib/liquidity-classification";
 import { getMockPriceAgorot } from "../../lib/mock-market-data";
+import { buildWalletBalances } from "../crypto/build-wallet-balances";
 import { withUserScope } from "../db/with-user-scope";
 import { getLatestRateTable } from "./exchange-rates";
 
@@ -15,6 +16,8 @@ export type LiveNetWorth = {
     bankAccounts: Agorot;
     manualAssets: Agorot;
     portfolio: Agorot;
+    /** Live on-chain wallet balances (AGENTS.md §3w) — kept as its own line rather than folded into `portfolio` (the simulated trading desk): a wallet balance is externally observed, never bought/sold through this app's own `Trade` model, so conflating the two would misrepresent where the figure actually came from. */
+    cryptoWallets: Agorot;
     debts: Agorot;
   };
   /** The Real-Time Liquidity Runway & Burn-Rate Engine's asset classification (AGENTS.md §3v) — computed from the SAME already-fetched rows as `breakdown` above, purely additive, so this costs no extra database round trip. */
@@ -43,7 +46,7 @@ export type LiveNetWorth = {
  * BankAccount's own schema comment).
  */
 export async function computeLiveNetWorth(userId: string, asOf: Date = new Date()): Promise<LiveNetWorth> {
-  const [rateTable, [accounts, assets, holdings, debts]] = await Promise.all([
+  const [rateTable, [accounts, assets, holdings, debts], walletBalances] = await Promise.all([
     getLatestRateTable(asOf),
     withUserScope(userId, (tx) =>
       Promise.all([
@@ -53,6 +56,13 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
         tx.debt.findMany({ where: { userId } }),
       ]),
     ),
+    // Runs in parallel with everything else above — a user with no
+    // tracked wallets (the common case; nothing seeds one by default)
+    // resolves this near-instantly (an empty findMany + one cached
+    // price-table read), and a user WITH wallets is still bounded by
+    // build-wallet-balances.ts's own per-wallet RPC timeout, not this
+    // function's own logic.
+    buildWalletBalances(userId),
   ]);
 
   const toAgorot = (balance: bigint, currency: keyof typeof rateTable) =>
@@ -74,9 +84,10 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
   const bankAccountsTotal = addAgorot(...bankAssetAmounts);
   const manualAssetsTotal = addAgorot(...manualAssetAmounts);
   const portfolioTotal = addAgorot(...portfolioAmounts);
+  const cryptoWalletsTotal = walletBalances.totalValueAgorot;
   const debtsTotal = addAgorot(...bankLiabilityAmounts, ...debtAmounts);
 
-  const totalAssets = addAgorot(bankAccountsTotal, manualAssetsTotal, portfolioTotal);
+  const totalAssets = addAgorot(bankAccountsTotal, manualAssetsTotal, portfolioTotal, cryptoWalletsTotal);
   const totalLiabilities = debtsTotal;
 
   const liquidity = classifyLiquidity(
@@ -87,6 +98,7 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
       valueAgorot: agorot(Number(a.currentValue)),
     })),
     portfolioAmounts.map((valueAgorot) => ({ valueAgorot })),
+    walletBalances.wallets.map((w) => ({ valueAgorot: w.valueAgorot })),
   );
 
   return {
@@ -97,6 +109,7 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
       bankAccounts: bankAccountsTotal,
       manualAssets: manualAssetsTotal,
       portfolio: portfolioTotal,
+      cryptoWallets: cryptoWalletsTotal,
       debts: debtsTotal,
     },
     liquidity,

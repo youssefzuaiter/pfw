@@ -77,18 +77,24 @@ export type LiquidityBreakdown = {
 export type ClassifiableBankAccount = { accountType: string; valueAgorot: Agorot };
 export type ClassifiableManualAsset = { assetType: string; liquidityTierOverride: LiquidityTier | null; valueAgorot: Agorot };
 export type ClassifiablePortfolioHolding = { valueAgorot: Agorot };
+/** A live-valued `CryptoWallet` balance (AGENTS.md §3w, `src/server/crypto/build-wallet-balances.ts`) — same shape as `ClassifiablePortfolioHolding` since both are unconditionally SEMI_LIQUID, but kept as its own named type rather than reusing that one directly: a wallet balance isn't a portfolio holding, and calling it one at this function's boundary would misdescribe where the value actually came from to a future reader. */
+export type ClassifiableCryptoWallet = { valueAgorot: Agorot };
 
 /**
  * Buckets every asset row (bank accounts already filtered to exclude
  * CREDIT_CARD by the caller — see `classifyBankAccountLiquidity`'s doc
- * comment — manual assets, portfolio holdings) into the three-tier
- * liquidity breakdown that `calculateLiquidityRunway` (`liquidity-
- * runway.ts`) consumes.
+ * comment — manual assets, portfolio holdings, live crypto wallet
+ * balances) into the three-tier liquidity breakdown that
+ * `calculateLiquidityRunway` (`liquidity-runway.ts`) consumes.
+ * `cryptoWallets` defaults to empty so every pre-existing call site
+ * (written before the Advanced Crypto & On-Chain Asset Tracking module,
+ * §3w, added this parameter) keeps working unchanged.
  */
 export function classifyLiquidity(
   bankAccounts: readonly ClassifiableBankAccount[],
   manualAssets: readonly ClassifiableManualAsset[],
   portfolioHoldings: readonly ClassifiablePortfolioHolding[],
+  cryptoWallets: readonly ClassifiableCryptoWallet[] = [],
 ): LiquidityBreakdown {
   const liquidAmounts = bankAccounts.map((a) => {
     classifyBankAccountLiquidity(a.accountType); // throws for CREDIT_CARD, per its own doc comment
@@ -109,7 +115,11 @@ export function classifyLiquidity(
     (tier === "SEMI_LIQUID" ? semiLiquidFromManualAssets : illiquidFromManualAssets).push(asset.valueAgorot);
   }
 
-  const semiLiquidAmounts = [...semiLiquidFromManualAssets, ...portfolioHoldings.map((h) => h.valueAgorot)];
+  const semiLiquidAmounts = [
+    ...semiLiquidFromManualAssets,
+    ...portfolioHoldings.map((h) => h.valueAgorot),
+    ...cryptoWallets.map((w) => w.valueAgorot),
+  ];
 
   return {
     liquidAgorot: addAgorot(...liquidAmounts),

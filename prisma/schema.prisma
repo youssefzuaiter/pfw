@@ -199,6 +199,7 @@ model User {
   beneficiaries            Beneficiary[]
   emergencyDocuments       EmergencyDocument[]
   recoveryShareSubmissions RecoveryShareSubmission[]
+  cryptoWallets            CryptoWallet[]
 }
 
 /// Cryptographic Dead Man's Switch (AGENTS.md §3t) — one row per user,
@@ -630,13 +631,26 @@ model ManualAsset {
 /// historical accumulations of Trade.totalAgorot/nativeTotalAgorot, so
 /// keeping both is consistent with those being stored historical facts,
 /// not a re-derivable aggregate stored twice.
+///
+/// `Decimal(30, 18)` (widened from `Decimal(20, 8)` in the Advanced
+/// Crypto & On-Chain Asset Tracking pass, AGENTS.md §3w) — 18 fractional
+/// digits is the real precision on-chain ERC-20/native-token quantities
+/// need (1 wei = 1e-18 ETH); 8 was already generous for a fractional
+/// stock/ETF share but would silently truncate a genuine on-chain
+/// quantity. Safe, lossless widening for every existing row: Postgres
+/// preserves an existing `numeric` value exactly when both precision and
+/// scale increase, confirmed against the actual migrated rows, not
+/// assumed — see that migration's own note. `src/lib/crypto/token-units.ts`
+/// is the actual 18-decimal-safe arithmetic this column's values should
+/// be run through (BigInt wei, never a float) — this column just needed
+/// to stop being the precision ceiling before that math could matter.
 model PortfolioHolding {
   id              String     @id @default(cuid())
   userId          String
   user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   symbol          String
   assetClass      AssetClass @default(STOCK)
-  quantity        Decimal    @db.Decimal(20, 8)
+  quantity        Decimal    @db.Decimal(30, 18)
   currency        Currency   @default(USD)
   /// Agorot.
   totalCostBasis  BigInt
@@ -673,7 +687,8 @@ model Trade {
   portfolioHolding    PortfolioHolding @relation(fields: [portfolioHoldingId], references: [id], onDelete: Cascade)
   symbol              String
   side                TradeSide
-  quantity            Decimal          @db.Decimal(20, 8)
+  /// `Decimal(30, 18)` — see PortfolioHolding.quantity's doc comment for why.
+  quantity            Decimal          @db.Decimal(30, 18)
   currency            Currency         @default(USD)
   /// Agorot, price per share at execution.
   priceAgorot         BigInt
@@ -832,6 +847,81 @@ model ExchangeRate {
 
   @@unique([currency, asOfDate])
   @@index([currency, asOfDate])
+}
+
+/// Daily crypto-asset prices against ILS, fetched by the background sync
+/// service (`src/server/crypto/price-sync.ts`, AGENTS.md §3w) — the
+/// Advanced Crypto & On-Chain Asset Tracking module's real (non-mock)
+/// price feed, deliberately mirroring `ExchangeRate` in every structural
+/// respect: same "public market data, not user-scoped or RLS-protected"
+/// reasoning (a symbol's price belongs to no user), same Decimal-ratio
+/// storage (`rate` is ILS per 1 WHOLE unit of `symbol` — e.g. per 1 ETH,
+/// never per wei — a genuinely different number from the 18-decimal
+/// on-chain balance math this feed's consumer,
+/// `src/server/crypto/build-wallet-balances.ts`, does separately), same
+/// `@@unique([symbol, asOfDate])` upsert-idempotency shape. Kept as its
+/// own model rather than folded into `ExchangeRate` because `Currency` is
+/// a closed fiat enum (ILS/USD/EUR/GBP) — reusing it for "ETH" would mean
+/// either widening a fiat-currency enum to include crypto symbols (wrong
+/// on its face) or storing crypto prices as a string abuse of an enum
+/// column; a separate free-text `symbol` column is the honest fit.
+model CryptoAssetPrice {
+  id        String   @id @default(cuid())
+  /// e.g. "ETH" — free text, not a closed enum (see model comment for why), but always uppercase (enforced at the DAL write path).
+  symbol    String
+  /// ILS per 1 whole unit of `symbol`.
+  rate      Decimal  @db.Decimal(20, 6)
+  asOfDate  DateTime @db.Date
+  source    String
+  fetchedAt DateTime @default(now())
+
+  @@unique([symbol, asOfDate])
+  @@index([symbol, asOfDate])
+}
+
+/// A tracked public EVM (Ethereum-compatible) wallet address (AGENTS.md
+/// §3w) — read-only observation, never custody: this app never asks for,
+/// stores, or could even represent a private key or seed phrase (Tier 0
+/// defense, AGENTS.md §2.1's "never store bank login credentials" law
+/// applied to the on-chain equivalent). Only the public `address` — which
+/// anyone can already see on a public block explorer — is stored.
+///
+/// The wallet's balance is NEVER stored here — it's fetched live from a
+/// public RPC endpoint (`eth_getBalance`,
+/// `src/server/crypto/evm-rpc-client.ts`) every time it's needed, the
+/// same "derived truth" law (#5) `computeLiveNetWorth` already applies to
+/// a live bank-account balance or a live mock stock price: a wallet's
+/// real balance changes outside this app entirely (the user's own
+/// on-chain transactions), so a stored mirror would go stale the moment
+/// it did.
+///
+/// `stakingYieldBps`/`cumulativeGasFeesWei` are deliberately USER-SUPPLIED
+/// informational fields, not auto-discovered — `eth_getBalance` alone
+/// (this module's one integration point, per the task's own framing)
+/// cannot discover historical gas spend or a staking position's actual
+/// yield; that needs a full transaction-history indexer (an Etherscan-
+/// style API), which is out of this pass's scope — see AGENTS.md §3w's
+/// known-limitations note. `stakingYieldBps` follows this app's existing
+/// basis-points-for-rates law (#2); `cumulativeGasFeesWei` follows the
+/// same "the smallest on-chain unit is already an integer, so BigInt is
+/// the correct type, no Decimal needed" reasoning `src/lib/crypto/token-units.ts`
+/// uses throughout — 1 wei is indivisible, exactly like 1 agorot.
+model CryptoWallet {
+  id                   String   @id @default(cuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Lowercase-normalized at the DAL write path (EVM addresses are case-insensitive at the protocol level; EIP-55 mixed-case checksum validation is explicitly NOT implemented — see AGENTS.md §3w).
+  address              String
+  /// EVM chain id — 1 = Ethereum mainnet, the only chain this pass's RPC client targets.
+  chainId              Int      @default(1)
+  label                String
+  stakingYieldBps      Int?
+  cumulativeGasFeesWei BigInt?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([userId, address, chainId])
+  @@index([userId])
 }
 
 enum SubscriptionReviewStatus {

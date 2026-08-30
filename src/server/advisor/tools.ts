@@ -89,6 +89,7 @@ const getNetWorthSummary = defineTool({
         bankAccounts: formatAgorot(summary.breakdown.bankAccounts),
         manualAssets: formatAgorot(summary.breakdown.manualAssets),
         portfolio: formatAgorot(summary.breakdown.portfolio),
+        cryptoWallets: formatAgorot(summary.breakdown.cryptoWallets),
         debts: formatAgorot(summary.breakdown.debts),
       },
     };

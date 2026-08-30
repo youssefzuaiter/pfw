@@ -2930,6 +2930,216 @@ spend, how many days of cash-and-market-sellable assets do you have."
   simulator's blended-rate harvesting estimate (§3r) already make and
   document rather than hide.
 
+## 3w. Advanced Crypto & On-Chain Asset Tracking (ad hoc)
+
+Explicit user request; not in `pfw-spec.md`. Genuinely new external
+integrations — a real (non-mock) public EVM RPC endpoint and a real
+crypto price feed — deliberately kept SEPARATE from the existing
+simulated trading desk (`PortfolioHolding`/`Trade`, §3l) rather than
+routed through it: a wallet balance is externally observed (the user's
+own on-chain activity, outside this app entirely), never bought/sold
+through this app's own order flow, and conflating the two would
+misrepresent where a figure actually came from.
+
+- **Wallet integration** — `CryptoWallet` (new model, migration
+  `20260902090000_crypto_wallet_tracking`): stores ONLY a public address,
+  chain id, and a label. No private key or seed phrase field exists
+  anywhere in the schema, the DAL, the routes, or the UI — the same Tier
+  0 "never store a credential" law (§2.1) already governs bank data,
+  applied here to its on-chain equivalent. The balance itself is NEVER
+  stored — `src/server/crypto/evm-rpc-client.ts`'s `getEthBalanceWei`
+  calls a public RPC endpoint's `eth_getBalance` fresh every time
+  (`"latest"` block tag), same "derived truth" law (#5)
+  `computeLiveNetWorth` already applies to a live bank balance.
+  - **A real, verified endpoint-reliability finding, not a style
+    choice**: the obvious default (Cloudflare's `https://cloudflare-eth.com`
+    free gateway) was tried first and consistently rejected requests from
+    this project's own environment with `{"error":{"code":-32046,
+    "message":"Cannot fulfill request"}}` — including for a trivial
+    parameterless `eth_blockNumber` call, ruling out anything about the
+    address or method being the cause. `https://ethereum.publicnode.com`
+    was tried as an alternative and worked correctly and consistently;
+    it's the default now (`getEvmRpcUrl()`, `src/server/env.ts`). Neither
+    needs an API key — same "no keyed provider where a free one exists"
+    preference already established for FX (Frankfurter, §3k).
+  - `src/lib/crypto/evm-address.ts`: format validation (`0x` + 40 hex)
+    and lowercase normalization. **KNOWN LIMITATION, stated plainly**: no
+    EIP-55 mixed-case checksum verification — that needs real Keccak-256
+    (NOT the same algorithm as Node's built-in SHA-3, despite the naming
+    similarity — a well-known gotcha), unavailable without a new
+    dependency. Acceptable given this module only ever reads a PUBLIC
+    address: the cost of skipping it is a possible silent typo (a
+    tracked wallet that never matches a real balance), not a security
+    hole the way it would be for validating a destination address before
+    sending funds — which this app never does at all.
+- **Asset schema expansion**: `PortfolioHolding.quantity` and
+  `Trade.quantity` widened from `Decimal(20, 8)` to `Decimal(30, 18)` —
+  8 fractional digits was already generous for a stock/ETF share but
+  would silently truncate a genuine on-chain token quantity (1 wei =
+  1e-18 ETH). Verified lossless for every existing seeded row by reading
+  them back after the migration, not assumed (Postgres preserves an
+  existing `numeric` value exactly when both precision and scale
+  increase). `src/lib/crypto/token-units.ts` is the actual 18-decimal-
+  safe arithmetic — see below for the precision hazard it exists to
+  solve.
+  - **The central precision hazard this module is built around**: 1
+    whole ETH is 1e18 wei, which ALREADY exceeds
+    `Number.MAX_SAFE_INTEGER` (~9.007e15) — converting a wei amount to a
+    plain JS `number` at any point before it's been reduced to a small
+    enough final figure silently loses precision below roughly 0.009 ETH
+    worth of wei. Every function in `token-units.ts` that touches a raw
+    wei quantity uses `bigint` arithmetic end to end (`parseHexQuantity`/
+    `toHexQuantity` for the RPC wire format, `etherStringToWei`/
+    `weiToEtherString` for decimal-string display, both via pure
+    string/BigInt digit manipulation — never `parseFloat(...) * 1e18`,
+    the same discipline `money.ts`'s `parseShekelsToAgorot` already gives
+    for agorot). `convertWeiToAgorot` — the function that actually
+    matters for net-worth aggregation — scales the exchange rate to a
+    `bigint` too (matching `CryptoAssetPrice.rate`'s stored
+    `Decimal(20, 6)` precision) BEFORE it ever touches the wei `bigint`,
+    so the whole wei→agorot computation happens in exact integer
+    arithmetic throughout; only the FINAL, always-small agorot result
+    (safely within `Number.MAX_SAFE_INTEGER` for any realistic wallet —
+    even an implausible 1,000,000 ETH holding lands ~7,500x below the
+    safe-integer ceiling) ever becomes a plain `number`, via `money.ts`'s
+    own `agorot()` safe-integer assertion as the final backstop.
+  - `on-chain metrics` (staking yields, gas fees): `CryptoWallet.stakingYieldBps`
+    (basis points, matching this app's existing APR-in-bps law #2) and
+    `cumulativeGasFeesWei` (`BigInt`, same "the smallest on-chain unit is
+    already an integer" reasoning as wei generally). Deliberately
+    USER-SUPPLIED, not auto-discovered — `eth_getBalance` alone (this
+    module's one named integration point) cannot discover historical gas
+    spend or a staking position's real yield; that needs a full
+    transaction-history indexer (an Etherscan-style API), explicitly out
+    of this pass's scope rather than silently faked.
+- **Real-time pricing**: `CryptoAssetPrice` (new model) + `src/server/crypto/price-sync.ts`
+  deliberately mirror `ExchangeRate`/`rate-sync.ts` (§3k) in every
+  structural respect — same public-data/no-RLS treatment, same
+  Decimal-ratio storage, same "fetch/parse separated from persist, never
+  throws from the sync entry point, degrades to a fallback" resilience
+  contract. Synced from CoinGecko's free `/simple/price` endpoint (no API
+  key), via `scripts/sync-crypto-prices.ts` / `npm run sync:crypto-prices`
+  — same "manual/cron entry point, real scheduling is a deployment step"
+  precedent `sync:rates` already has. The price LOOKUP
+  (`getLatestCryptoRate`) is a fast cached DB read, never a live external
+  call at request time — the same "live balance, cached price" split
+  every other live-conversion path in this app already uses (a bank
+  account's FX conversion reads `getLatestRateTable`, never calls
+  Frankfurter itself mid-request).
+  - `src/server/crypto/build-wallet-balances.ts` (`cache()`-wrapped like
+    every other `build-*-data.ts` aggregator, §3c): fetches every one of
+    a user's wallets' live balance via `Promise.allSettled`, not
+    `Promise.all` — one unreachable or slow wallet must never take down
+    every other wallet's figure, nor `computeLiveNetWorth`'s entire
+    computation, bounded by a 3-second per-wallet RPC timeout. A wallet
+    whose RPC call failed still appears in the list (with `balanceWei:
+    null`, `rpcError` set) rather than disappearing or crashing the page.
+  - **`computeLiveNetWorth` gained a `cryptoWallets` breakdown line**
+    (`src/server/dal/net-worth.ts`) — added to `totalAssets` and, via
+    `classifyLiquidity`'s new `cryptoWallets` parameter
+    (`src/lib/liquidity-classification.ts`), to the Liquidity Runway
+    engine's `semiLiquidAgorot` bucket (§3v) — a self-custodied on-chain
+    balance is genuinely semi-liquid, the same tier `ManualAsset.CRYPTO`'s
+    own default already uses. Purely additive to every existing caller
+    (dashboard, Monte Carlo, the advisor's `get_net_worth_summary` tool —
+    which also gained the new `cryptoWallets` field); a user with zero
+    tracked wallets (every account by default, since nothing seeds one)
+    pays negligible extra latency — an empty `findMany` plus one cached
+    price read.
+- **UI**: a new "Crypto Wallets" section on `/assets` — `AddWalletForm`
+  (a public-address-only input, with explicit copy warning against ever
+  entering a private key), `WalletBalanceRow` (the multi-currency display
+  the task's component-testing ask specifically named: native ETH
+  balance — up to the full 18 decimal places, via `weiToEtherString` —
+  shown directly alongside its live ILS-converted value, the same "never
+  show a native amount without its currency, never conflate it with a
+  base-currency figure" convention `formatNativeAmount` already
+  establishes for fiat, §3k, extended to a genuinely different currency
+  *kind*). `bigint` fields (`balanceWei`, `cumulativeGasFeesWei`) cross
+  the Server→Client boundary as base-10 strings, not raw `bigint` — the
+  same "`NextResponse.json()`/RSC serialization cannot handle a raw
+  bigint" bug class already documented in §3d, applied here to props
+  instead of a JSON response body.
+- **Testing, the task's explicit emphasis**: 60 new unit tests
+  (`token-units.test.ts` — 33 cases including a value beyond
+  `Number.MAX_SAFE_INTEGER` round-tripping exactly, half-away-from-zero
+  rounding verified rather than assumed from bigint truncation, and
+  `agorot()`'s own safe-integer guard catching an engineered-absurd
+  result; `evm-address.test.ts` — 14 cases; `evm-rpc-client.test.ts` and
+  `price-sync.test.ts` — 13 cases with a stubbed `fetch`, mirroring
+  `sidecar-client.test.ts`'s established mocking convention). An
+  11-case integration suite (`tests/integration/crypto-wallets.test.ts`)
+  specifically targets the 18-decimal precision math surviving a REAL
+  Postgres round trip, per the task's own explicit ask — a `BigInt`
+  column, the widened `Decimal(30,18)` column, and a `Decimal(20,6)` rate
+  column all read back and fed through the real conversion pipeline, not
+  just asserted against in-memory JS values — plus full CRUD/IDOR
+  coverage for the wallet DAL. A 7-case component suite
+  (`wallet-balance-row.test.tsx`) covers the multi-currency display
+  specifically: native + converted figures both present and never
+  conflated, the full 18-decimal fraction actually rendered (not
+  truncated), a zero balance displaying correctly rather than blank, and
+  the RPC-failure state showing an honest error instead of a fabricated
+  balance.
+  - **Two real bugs caught by these tests failing before any
+    implementation change, not by inspection** — both in the TEST
+    fixtures, not the implementation being tested, worth recording
+    because they're exactly the kind of mistake this task's own emphasis
+    on precision testing is meant to catch: (1) a hand-typed 40-hex-
+    character EVM address fixture was actually 39 (later, in a second
+    file, 38) characters — `isValidEvmAddress` correctly rejected it,
+    and every test built on top of that fixture failed in a way that
+    initially looked like an implementation bug until counted by hand;
+    fixed by generating addresses programmatically
+    (`crypto.randomBytes(20).toString("hex")`) and length-asserting them,
+    rather than hand-typing hex strings again. (2) An integration test
+    upserted a `CryptoAssetPrice` row dated TOMORROW, intending to avoid
+    colliding with an earlier test's same-day row under the
+    `@@unique([symbol, asOfDate])` constraint — this instead tripped
+    `getLatestCryptoRate`'s `asOfDate: { lte: now }` filter (a
+    future-dated rate is correctly excluded, since "today's rate" can't
+    be one dated tomorrow) and silently read back the WRONG test's rate,
+    caught by the resulting agorot figure not matching the hand-computed
+    expectation. Fixed by using today's date and letting the upsert
+    correctly overwrite the same day's row — which is the real,
+    intended behavior for re-syncing a price on the same calendar day.
+- **Verified live, not just by test**: `npm run check` clean (926/929, 3
+  skip for the unrelated embedding sidecar). Full `npm run build` clean.
+  A REAL end-to-end walkthrough against the running dev server, using a
+  well-known real public address (`vitalik.eth`'s
+  `0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045`) and the real (not
+  stubbed) PublicNode RPC endpoint and CoinGecko price feed: added via
+  `POST /api/crypto-wallets` (201); `/assets` rendered a genuine live
+  balance (`6.6421781652213403 ETH`, all 16 significant fractional
+  digits intact) converted at the fallback rate (₪12,000/ETH, since no
+  sync had run yet — correct, expected graceful-degradation behavior,
+  not a bug) to `₪79,706.14`; ran the real `npm run sync:crypto-prices`
+  against CoinGecko live (synced ETH at a real ₪7,324.11) and confirmed
+  `/assets` immediately reflected the new rate (`₪48,648.04` — hand-
+  verified: `6.6421781652213403 × 7324.11 ≈ 48,648.05`, matching within
+  expected rounding); confirmed the SAME `₪48,648.04` delta showed up in
+  `/dashboard`'s Liquidity Runway card's semi-liquid figure (§3v),
+  proving the full pipeline from live on-chain balance through to the
+  runway engine, not just to `/assets` in isolation. Deleted the test
+  wallet via `DELETE /api/crypto-wallets/[id]` (200) and confirmed via
+  `psql` that `/assets` and `/dashboard` both reverted EXACTLY to their
+  pre-wallet figures (`₪196,279.16` available, matching §3v's own
+  earlier-recorded verification number precisely) and that zero
+  `CryptoWallet` rows remained — the synced `CryptoAssetPrice` row was
+  deliberately left in place afterward, since it's legitimate market
+  data infrastructure (the same thing an `ExchangeRate` sync leaves
+  behind), not throwaway test data.
+- **Not built, out of scope for this pass**: no on-chain transaction
+  history / indexer integration (an Etherscan-style API) — the task
+  named `eth_getBalance` specifically as the integration point, and a
+  full indexer is a materially larger, separate scope; no support for
+  ERC-20 token balances beyond native ETH (the same `eth_getBalance`
+  scope boundary — an ERC-20 balance needs a contract `eth_call`, a
+  different RPC method entirely); no EIP-55 checksum validation (see
+  above); no multi-chain UI beyond the `chainId` column already existing
+  in the schema (only Ethereum mainnet, chain id 1, is ever actually
+  queried by `evm-rpc-client.ts` today).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

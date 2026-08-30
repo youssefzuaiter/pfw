@@ -1,10 +1,13 @@
 import { Badge, type BadgeVariant } from "../../components/badge/badge";
 import { deriveValuationFreshness, type ValuationFreshness } from "../../lib/valuation-freshness";
 import { agorot, formatAgorot } from "../../lib/money";
+import { buildWalletBalances } from "../../server/crypto/build-wallet-balances";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { listManualAssets } from "../../server/dal/manual-assets";
+import { AddWalletForm } from "./_components/add-wallet-form";
 import { CreateAssetForm } from "./_components/create-asset-form";
 import { UpdateValuationForm } from "./_components/update-valuation-form";
+import { WalletBalanceRow } from "./_components/wallet-balance-row";
 
 export const instant = false;
 
@@ -31,7 +34,7 @@ const FRESHNESS_VARIANT: Record<ValuationFreshness, BadgeVariant> = {
 
 export default async function AssetsPage() {
   const user = await getCurrentUser();
-  const assets = await listManualAssets(user.id);
+  const [assets, walletBalances] = await Promise.all([listManualAssets(user.id), buildWalletBalances(user.id)]);
   const now = new Date();
 
   const totalValue = assets.reduce((sum, asset) => sum + asset.currentValue, 0n);
@@ -85,6 +88,49 @@ export default async function AssetsPage() {
           );
         })}
       </ul>
+
+      <section aria-labelledby="crypto-wallets-heading" className="flex flex-col gap-4 border-t border-border pt-6">
+        <div>
+          <h2 id="crypto-wallets-heading" className="font-display text-lg font-semibold text-fg">
+            Crypto Wallets
+          </h2>
+          <p className="mt-1 text-sm text-muted">
+            Track public wallet addresses — live balances fetched from a public Ethereum RPC endpoint, read-only, no
+            private key ever involved.
+          </p>
+        </div>
+
+        {walletBalances.wallets.length > 0 && (
+          <p className="font-tabular-figures text-sm text-muted">
+            Total tracked value: <span className="text-fg">{formatAgorot(walletBalances.totalValueAgorot)}</span>
+          </p>
+        )}
+
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <AddWalletForm />
+        </div>
+
+        {walletBalances.wallets.length === 0 && (
+          <p className="text-sm text-muted">No wallets tracked yet — add one above.</p>
+        )}
+
+        <ul className="flex flex-col gap-4">
+          {walletBalances.wallets.map((wallet) => (
+            <WalletBalanceRow
+              key={wallet.id}
+              id={wallet.id}
+              address={wallet.address}
+              label={wallet.label}
+              chainId={wallet.chainId}
+              balanceWei={wallet.balanceWei !== null ? wallet.balanceWei.toString() : null}
+              valueAgorot={Number(wallet.valueAgorot)}
+              stakingYieldBps={wallet.stakingYieldBps}
+              cumulativeGasFeesWei={wallet.cumulativeGasFeesWei !== null ? wallet.cumulativeGasFeesWei.toString() : null}
+              rpcError={wallet.rpcError}
+            />
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }
