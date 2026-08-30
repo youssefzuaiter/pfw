@@ -1,8 +1,9 @@
 import "server-only";
 import { z } from "zod";
 import { BASE_CURRENCY, isSupportedCurrency, type CurrencyCode } from "../../lib/currency";
-import { currenciesToSync, upsertRate, type RateTable } from "../dal/exchange-rates";
+import { currenciesToSync, getLatestRateFetchedAt, upsertRate, type RateTable } from "../dal/exchange-rates";
 import { getLatestRateTable } from "../dal/exchange-rates";
+import { STALE_DATA_THRESHOLD_HOURS, StaleDataError } from "../stale-data-error";
 
 /**
  * Daily exchange-rate sync against Frankfurter (https://frankfurter.dev),
@@ -111,11 +112,17 @@ export async function fetchLatestRates(
 }
 
 /**
- * Fetches and persists today's rates. Never throws: a provider outage
- * must not take down whatever triggered the sync, and every consumer
- * already degrades to the last stored rate (or `FALLBACK_RATE_TABLE`)
- * on its own — so a failed sync is a logged non-event, not an error
- * path callers have to handle.
+ * Fetches and persists today's rates. Ordinarily never throws: a
+ * provider outage must not take down whatever triggered the sync, and
+ * every consumer already degrades to the last stored rate (or
+ * `FALLBACK_RATE_TABLE`) on its own — so a failed sync is usually a
+ * logged non-event, not an error path callers have to handle — UNLESS
+ * the fetch failure lines up with an already-stale stored rate (see
+ * `StaleDataError`'s doc comment): then this throws `StaleDataError`
+ * instead, so the sync SCRIPT (`scripts/sync-exchange-rates.ts`) exits
+ * non-zero rather than an unattended Frankfurter outage compounding
+ * silently while the Liquidity Runway engine keeps converting foreign-
+ * currency balances at an increasingly outdated rate.
  */
 export async function syncExchangeRates(fetchImpl: typeof fetch = fetch): Promise<RateSyncResult> {
   const source = "frankfurter.dev (ECB)";
@@ -138,6 +145,23 @@ export async function syncExchangeRates(fetchImpl: typeof fetch = fetch): Promis
       skipped: wanted.filter((c) => !syncedCurrencies.has(c)),
     };
   } catch (error) {
+    const staleCurrencies: { currency: CurrencyCode; ageHours: number }[] = [];
+    for (const currency of wanted) {
+      const latestFetchedAt = await getLatestRateFetchedAt(currency);
+      if (!latestFetchedAt) continue; // Never synced at all — FALLBACK_RATE_TABLE covers this; it's a "no data yet" state, not a "data went stale" one.
+      const ageHours = (Date.now() - latestFetchedAt.getTime()) / (60 * 60 * 1000);
+      if (ageHours > STALE_DATA_THRESHOLD_HOURS) staleCurrencies.push({ currency, ageHours });
+    }
+
+    if (staleCurrencies.length > 0) {
+      const oldest = Math.max(...staleCurrencies.map((c) => c.ageHours));
+      throw new StaleDataError(
+        `Exchange rate sync failed (${error instanceof Error ? error.message : String(error)}) and the stored rate for ` +
+          `${staleCurrencies.map((c) => c.currency).join(", ")} is already ${oldest.toFixed(1)}h old (> ${STALE_DATA_THRESHOLD_HOURS}h threshold). ` +
+          `Refusing to let the Liquidity Runway engine keep converting against it silently.`,
+      );
+    }
+
     return {
       ok: false,
       source,

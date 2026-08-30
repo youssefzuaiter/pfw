@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
-import { upsertCryptoRate } from "../dal/crypto-prices";
+import { getLatestCryptoRateFetchedAt, upsertCryptoRate } from "../dal/crypto-prices";
+import { STALE_DATA_THRESHOLD_HOURS, StaleDataError } from "../stale-data-error";
 
 /**
  * Daily crypto-asset price sync against CoinGecko's free public API
@@ -98,11 +99,19 @@ export type CryptoPriceSyncResult = {
 };
 
 /**
- * Fetches and persists today's crypto rates. Never throws — a provider
- * outage must not take down whatever triggered the sync, and every
- * consumer already degrades to the last stored rate (or
+ * Fetches and persists today's crypto rates. Ordinarily never throws — a
+ * provider outage must not take down whatever triggered the sync, and
+ * every consumer already degrades to the last stored rate (or
  * `FALLBACK_CRYPTO_RATES`) on its own, same resilience contract
- * `rate-sync.ts`'s `syncExchangeRates` already has.
+ * `rate-sync.ts`'s `syncExchangeRates` already has — UNLESS the fetch
+ * failure lines up with an already-stale stored rate (see
+ * `StaleDataError`'s own doc comment for exactly why that combination,
+ * and only that combination, is the one case worth failing loudly for):
+ * then this throws `StaleDataError` instead of returning `{ ok: false }`,
+ * so the sync SCRIPT (`scripts/sync-crypto-prices.ts`) exits non-zero
+ * rather than silently repeating the same "nothing happened" no-event
+ * indefinitely while the Liquidity Runway engine keeps computing against
+ * an increasingly outdated ETH price.
  */
 export async function syncCryptoPrices(fetchImpl: typeof fetch = fetch): Promise<CryptoPriceSyncResult> {
   const source = "coingecko.com";
@@ -118,6 +127,23 @@ export async function syncCryptoPrices(fetchImpl: typeof fetch = fetch): Promise
     const syncedSymbols = new Set(rates.map((r) => r.symbol));
     return { ok: true, source, synced: rates, skipped: wanted.filter((s) => !syncedSymbols.has(s)) };
   } catch (error) {
+    const staleSymbols: { symbol: string; ageHours: number }[] = [];
+    for (const symbol of wanted) {
+      const latestFetchedAt = await getLatestCryptoRateFetchedAt(symbol);
+      if (!latestFetchedAt) continue; // Never synced at all — FALLBACK_CRYPTO_RATES covers this; it's a "no data yet" state, not a "data went stale" one.
+      const ageHours = (Date.now() - latestFetchedAt.getTime()) / (60 * 60 * 1000);
+      if (ageHours > STALE_DATA_THRESHOLD_HOURS) staleSymbols.push({ symbol, ageHours });
+    }
+
+    if (staleSymbols.length > 0) {
+      const oldest = Math.max(...staleSymbols.map((s) => s.ageHours));
+      throw new StaleDataError(
+        `Crypto price sync failed (${error instanceof Error ? error.message : String(error)}) and the stored rate for ` +
+          `${staleSymbols.map((s) => s.symbol).join(", ")} is already ${oldest.toFixed(1)}h old (> ${STALE_DATA_THRESHOLD_HOURS}h threshold). ` +
+          `Refusing to let the Liquidity Runway engine keep projecting against it silently.`,
+      );
+    }
+
     return {
       ok: false,
       source,

@@ -10,6 +10,7 @@
 import "dotenv/config";
 import { syncCryptoPrices } from "../src/server/crypto/price-sync";
 import { getLatestCryptoRate } from "../src/server/dal/crypto-prices";
+import { StaleDataError } from "../src/server/stale-data-error";
 
 async function main() {
   const result = await syncCryptoPrices();
@@ -36,6 +37,12 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error);
+  if (error instanceof StaleDataError) {
+    console.error("=== STALE-DATA CIRCUIT BREAKER TRIPPED (AGENTS.md §3y) ===");
+    console.error(error.message);
+    console.error("The Liquidity Runway engine is now computing against data this old — investigate the CoinGecko outage.");
+  } else {
+    console.error(error);
+  }
   process.exit(1);
 });

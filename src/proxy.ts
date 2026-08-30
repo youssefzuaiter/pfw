@@ -47,18 +47,32 @@ export function proxy(request: NextRequest) {
   // static data blob, never executed) — no receipt image or extracted
   // text is ever sent there, only a GET for that one public asset.
   //
-  // huggingface.co / *.huggingface.co (AGENTS.md §3u, the Self-Learning
-  // Vector Categorization Engine's client-side embedding model): the same
+  // huggingface.co / *.huggingface.co / *.hf.co (+ its two known Xet CDN
+  // subdomain shapes) (AGENTS.md §3u, §3y — the Self-Learning Vector
+  // Categorization Engine's client-side embedding model): the same
   // "self-host the executable runtime, allow a narrow connect-src
   // exception only for the DATA it needs" split as Tesseract.js above —
   // onnxruntime-web's WASM binary is self-hosted under
   // public/onnx-runtime/, so script-src/worker-src stay 'self' only; only
   // the model's weight files (an .onnx binary + tokenizer JSON, never
   // executed as script) are fetched remotely, from the Hugging Face Hub.
-  // The wildcard subdomain covers the Hub's LFS CDN redirect target for
-  // large files (e.g. cdn-lfs.huggingface.co), which CSP3 browsers check
-  // independently at each hop of a fetch redirect chain, not just the
-  // initial huggingface.co URL.
+  // `*.huggingface.co` alone was verified INSUFFICIENT by hand (§3y): a
+  // real browser trace of an actual model download showed the large
+  // `.onnx` weights file's redirect resolving to
+  // `us.aws.cdn.hf.co` — Hugging Face's newer "Xet" storage backend
+  // (https://huggingface.co/blog/migrating-the-hub-to-xet), a
+  // *different* domain (hf.co, not huggingface.co) that a bare
+  // `*.huggingface.co` wildcard never covered. Worth recording precisely
+  // why three more entries are needed rather than one: CSP wildcards
+  // match exactly one subdomain label, so `*.hf.co` alone does NOT cover
+  // a two-label host like `us.aws.cdn.hf.co` — `*.aws.cdn.hf.co` and
+  // `*.gcp.cdn.hf.co` (Hugging Face's two documented multi-region CDN
+  // shapes) are what's actually needed, alongside `*.xethub.hf.co` for
+  // the Xet content-addressed-storage bridge itself. Every one of these
+  // still resolves to Hugging Face-operated infrastructure serving the
+  // same non-executed model-weight data `*.huggingface.co` already
+  // covers — this is a same-provider CDN-domain gap being closed, not a
+  // new third party being trusted.
   //
   // AGENTS.md §3x hardening pass — explicitly confirmed, not just
   // inherited by omission: script-src and style-src have NEVER carried
@@ -73,15 +87,16 @@ export function proxy(request: NextRequest) {
   // serve through a blob: URL depending on build mode; 'self' alone
   // isn't reliably sufficient across both, and neither token grants
   // *script-executing* origins beyond this app's own bundle). connect-src
-  // keeps BOTH of its existing narrow exceptions — cdn.jsdelivr.net
-  // (Tesseract's OCR language data, §3q) alongside huggingface.co
-  // (embedding weights, §3u) — deliberately, not just Hugging Face
-  // alone: dropping cdn.jsdelivr.net would silently break the
-  // already-shipped receipt-OCR feature for a directive this task's
+  // keeps BOTH of its pre-existing exceptions — cdn.jsdelivr.net
+  // (Tesseract's OCR language data, §3q) alongside every Hugging
+  // Face-operated host (embedding weights, §3u/§3y, see the block above
+  // for why that's now 5 entries, not 2) — deliberately, not just
+  // Hugging Face alone: dropping cdn.jsdelivr.net would silently break
+  // the already-shipped receipt-OCR feature for a directive this task's
   // actual target (script-src/style-src's inline/eval posture) never
-  // touches; both exceptions are independently justified, narrow (no
-  // wildcard beyond the one documented LFS subdomain case), and audited
-  // here together rather than one being addressed in isolation.
+  // touches; every exception here is independently justified, narrow (no
+  // wildcard broader than one documented CDN subdomain shape per entry),
+  // and audited together rather than one being addressed in isolation.
   const csp = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';
@@ -89,7 +104,7 @@ export function proxy(request: NextRequest) {
     style-src 'self' 'nonce-${nonce}';
     img-src 'self' blob: data:;
     font-src 'self';
-    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co;
+    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co;
     object-src 'none';
     base-uri 'self';
     form-action 'self';

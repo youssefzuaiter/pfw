@@ -1,7 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createRpcClient, serveRpc, type PostMessageTarget } from "../../src/lib/workers/worker-rpc";
 import { createZkCryptoHandlers } from "../../src/lib/workers/zk-crypto-worker-handlers";
 import { createDmsCryptoHandlers } from "../../src/lib/workers/dead-mans-switch-crypto-worker-handlers";
+import { createLocalEmbedderHandlers } from "../../src/lib/embeddings/local-embedder-worker-handlers";
+
+// local-embedder-worker-handlers.ts dynamically imports
+// @huggingface/transformers — mocked here the same way
+// local-embedder.test.ts mocks it, so this file never loads a real
+// model/WASM runtime either.
+const embeddingPipelineMock = vi.fn().mockResolvedValue(
+  vi.fn().mockResolvedValue({ data: new Float32Array([0.1, 0.2, 0.3]) }),
+);
+vi.mock("@huggingface/transformers", () => ({
+  pipeline: (...args: unknown[]) => embeddingPipelineMock(...args),
+  env: { backends: { onnx: { wasm: {} } } },
+}));
 
 /**
  * Integration coverage for this app's Web Worker message-passing protocol
@@ -234,5 +247,47 @@ describe("dead-man's-switch worker handlers, over the real RPC protocol", () => 
     // Now genuinely unlocked — a document encrypted here decrypts back correctly.
     const { ciphertext } = await freshCall<{ ciphertext: string }>("encrypt", { plaintext: "recovered document" });
     await expect(freshCall("decrypt", { ciphertext })).resolves.toEqual({ plaintext: "recovered document" });
+  });
+});
+
+describe("local-embedder worker handlers, over the real RPC protocol", () => {
+  it("embed round-trips a merchant text into an embedding vector", async () => {
+    const [mainSide, workerSide] = createChannelPair();
+    serveRpc(createLocalEmbedderHandlers(), workerSide);
+    const call = createRpcClient(mainSide);
+
+    const result = await call<{ embedding: number[] }>("embed", { text: "coffee shop" });
+    expect(result.embedding).toEqual([Math.fround(0.1), Math.fround(0.2), Math.fround(0.3)]);
+  });
+
+  it("reuses one pipeline across several embed calls on the same channel (a batch, before local-embedder.ts's aggressive terminate/respawn kicks in)", async () => {
+    const [mainSide, workerSide] = createChannelPair();
+    serveRpc(createLocalEmbedderHandlers(), workerSide);
+    const call = createRpcClient(mainSide);
+
+    embeddingPipelineMock.mockClear();
+    await call("embed", { text: "a" });
+    await call("embed", { text: "b" });
+    await call("embed", { text: "c" });
+
+    // The pipeline (the expensive model-load step) is constructed once per
+    // handlers instance, not once per call — exactly what makes batching
+    // several embeds through one still-warm Worker cheaper than
+    // respawning per item, per local-embedder.ts's embedBatch doc comment.
+    expect(embeddingPipelineMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a fresh handlers instance (simulating a respawned Worker after termination) starts with no cached pipeline of its own", async () => {
+    const [firstMain, firstWorker] = createChannelPair();
+    serveRpc(createLocalEmbedderHandlers(), firstWorker);
+    await createRpcClient(firstMain)("embed", { text: "before terminate" });
+
+    embeddingPipelineMock.mockClear();
+
+    const [secondMain, secondWorker] = createChannelPair();
+    serveRpc(createLocalEmbedderHandlers(), secondWorker);
+    await createRpcClient(secondMain)("embed", { text: "after respawn" });
+
+    expect(embeddingPipelineMock).toHaveBeenCalledTimes(1);
   });
 });

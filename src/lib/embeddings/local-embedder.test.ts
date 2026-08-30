@@ -4,11 +4,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * Mocks `@huggingface/transformers` entirely — this suite never loads a
  * real model or WASM runtime (that would need a real browser and a
  * multi-MB network fetch, neither available/desirable in a unit test).
- * What's actually under test is this module's OWN logic around the
- * model: the timeout race in `embedTextWithTimeout` and the pipeline
- * singleton caching in `getPipeline` — see local-embedder.ts's own doc
- * comment for why the model's semantic quality itself isn't something a
- * unit test can meaningfully assert on anyway.
+ * What's actually under test is `createLocalEmbedderHandlers`'s own
+ * logic around the model: the pooling/normalize options passed to the
+ * pipeline, and the pipeline singleton caching within one handler
+ * instance — see local-embedder.ts's own doc comment for why the
+ * model's semantic quality itself isn't something a unit test can
+ * meaningfully assert on anyway.
+ *
+ * This tests `local-embedder-worker-handlers.ts` directly, not
+ * `local-embedder.ts` — the latter is now a thin main-thread client that
+ * constructs a real `Worker`, which neither this project's "unit" (Node)
+ * nor "component" (jsdom) vitest environment provides (same reasoning
+ * `zk-crypto-worker-handlers.ts`/`dead-mans-switch-crypto-worker-
+ * handlers.ts` are tested directly rather than through their `.worker.ts`
+ * entry files, §3x). `local-embedder.ts`'s own Worker-lifecycle
+ * orchestration (`embedBatch`'s terminate-after-batch behavior) is
+ * verified live, in a real browser, instead — see AGENTS.md §3y.
  */
 const pipelineMock = vi.fn();
 vi.mock("@huggingface/transformers", () => ({
@@ -16,74 +27,60 @@ vi.mock("@huggingface/transformers", () => ({
   env: { backends: { onnx: { wasm: {} } } },
 }));
 
-describe("embedText / embedTextWithTimeout", () => {
-  afterEach(async () => {
+describe("createLocalEmbedderHandlers", () => {
+  afterEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    const { _resetLocalEmbedderForTests } = await import("./local-embedder");
-    _resetLocalEmbedderForTests();
   });
 
-  it("embedText returns the pipeline's mean-pooled, normalized output as a plain array", async () => {
-    pipelineMock.mockResolvedValue(
-      vi.fn().mockResolvedValue({ data: new Float32Array([0.1, 0.2, 0.3]) }),
-    );
-    const { embedText } = await import("./local-embedder");
+  it("embed() returns the pipeline's mean-pooled, normalized output as a plain array", async () => {
+    pipelineMock.mockResolvedValue(vi.fn().mockResolvedValue({ data: new Float32Array([0.1, 0.2, 0.3]) }));
+    const { createLocalEmbedderHandlers } = await import("./local-embedder-worker-handlers");
+    const handlers = createLocalEmbedderHandlers();
 
-    const result = await embedText("coffee shop");
-    expect(result).toEqual([
-      Math.fround(0.1),
-      Math.fround(0.2),
-      Math.fround(0.3),
-    ]);
+    const result = await handlers.embed({ text: "coffee shop" });
+    expect(result).toEqual({ embedding: [Math.fround(0.1), Math.fround(0.2), Math.fround(0.3)] });
   });
 
-  it("embedText calls the pipeline with pooling=mean and normalize=true", async () => {
+  it("embed() calls the pipeline with pooling=mean and normalize=true", async () => {
     const extractor = vi.fn().mockResolvedValue({ data: [1, 2, 3] });
     pipelineMock.mockResolvedValue(extractor);
-    const { embedText } = await import("./local-embedder");
+    const { createLocalEmbedderHandlers } = await import("./local-embedder-worker-handlers");
+    const handlers = createLocalEmbedderHandlers();
 
-    await embedText("supermarket");
+    await handlers.embed({ text: "supermarket" });
     expect(extractor).toHaveBeenCalledWith("supermarket", { pooling: "mean", normalize: true });
   });
 
-  it("only initializes the pipeline once across multiple embedText calls (singleton caching)", async () => {
+  it("only initializes the pipeline once across multiple embed() calls on the SAME handlers instance (singleton caching)", async () => {
     const extractor = vi.fn().mockResolvedValue({ data: [1] });
     pipelineMock.mockResolvedValue(extractor);
-    const { embedText } = await import("./local-embedder");
+    const { createLocalEmbedderHandlers } = await import("./local-embedder-worker-handlers");
+    const handlers = createLocalEmbedderHandlers();
 
-    await embedText("a");
-    await embedText("b");
-    await embedText("c");
+    await handlers.embed({ text: "a" });
+    await handlers.embed({ text: "b" });
+    await handlers.embed({ text: "c" });
 
     expect(pipelineMock).toHaveBeenCalledTimes(1);
     expect(extractor).toHaveBeenCalledTimes(3);
   });
 
-  it("embedTextWithTimeout resolves the real embedding when it completes before the timeout", async () => {
-    const extractor = vi.fn().mockResolvedValue({ data: [9, 9, 9] });
+  it("a FRESH handlers instance (mirroring a respawned Worker) re-initializes its own pipeline independently", async () => {
+    const extractor = vi.fn().mockResolvedValue({ data: [1] });
     pipelineMock.mockResolvedValue(extractor);
-    const { embedTextWithTimeout } = await import("./local-embedder");
+    const { createLocalEmbedderHandlers } = await import("./local-embedder-worker-handlers");
 
-    const result = await embedTextWithTimeout("fast", 1000);
-    expect(result).toEqual([9, 9, 9]);
+    await createLocalEmbedderHandlers().embed({ text: "a" });
+    await createLocalEmbedderHandlers().embed({ text: "b" });
+
+    expect(pipelineMock).toHaveBeenCalledTimes(2);
   });
 
-  it("embedTextWithTimeout resolves undefined (never rejects) when the pipeline never resolves in time", async () => {
-    vi.useFakeTimers();
-    pipelineMock.mockReturnValue(new Promise(() => {})); // never resolves
-    const { embedTextWithTimeout } = await import("./local-embedder");
-
-    const resultPromise = embedTextWithTimeout("slow", 50);
-    await vi.advanceTimersByTimeAsync(51);
-
-    await expect(resultPromise).resolves.toBeUndefined();
-  });
-
-  it("embedTextWithTimeout resolves undefined (never rejects) when the pipeline itself throws", async () => {
+  it("propagates a pipeline failure as a rejection (no silent swallowing at this layer — that's local-embedder.ts's embedTextWithTimeout's job)", async () => {
     pipelineMock.mockRejectedValue(new Error("model failed to load"));
-    const { embedTextWithTimeout } = await import("./local-embedder");
+    const { createLocalEmbedderHandlers } = await import("./local-embedder-worker-handlers");
+    const handlers = createLocalEmbedderHandlers();
 
-    await expect(embedTextWithTimeout("broken", 1000)).resolves.toBeUndefined();
+    await expect(handlers.embed({ text: "broken" })).rejects.toThrow("model failed to load");
   });
 });

@@ -63,6 +63,25 @@ export async function getLatestRateTable(asOf: Date = new Date()): Promise<RateT
   return table;
 }
 
+/**
+ * The `fetchedAt` timestamp (NOT `asOfDate`, deliberately — see
+ * `getLatestCryptoRateFetchedAt`'s doc comment, crypto-prices.ts, for
+ * the exact reasoning, identical here) of the single most recent stored
+ * row for `currency`, or `null` if nothing has ever been synced — the
+ * staleness check `rate-sync.ts`'s circuit breaker (AGENTS.md §3y)
+ * needs, kept separate from `getLatestRateTable` since that function's
+ * fallback-to-`FALLBACK_RATE_TABLE` behavior deliberately hides whether
+ * a real row exists at all.
+ */
+export async function getLatestRateFetchedAt(currency: CurrencyCode): Promise<Date | null> {
+  const row = await prisma.exchangeRate.findFirst({
+    where: { currency },
+    orderBy: { asOfDate: "desc" },
+    select: { fetchedAt: true },
+  });
+  return row?.fetchedAt ?? null;
+}
+
 /** The stored rate history for one currency, oldest first — backs a rate-trend view. */
 export async function listRateHistory(currency: CurrencyCode, days: number) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -85,7 +104,9 @@ export type UpsertRateInput = {
  * appending a duplicate, backed by the `@@unique([currency, asOfDate])`
  * constraint. ILS is rejected outright: storing a row asserting "1 ILS =
  * 1 ILS" would create a second, silently-divergable source of truth for
- * a constant.
+ * a constant. `fetchedAt` is set explicitly on both branches — see
+ * `upsertCryptoRate`'s matching comment (crypto-prices.ts) for why
+ * relying on the column's `@default(now())` alone isn't enough.
  */
 export async function upsertRate(input: UpsertRateInput) {
   if (input.currency === BASE_CURRENCY) {
@@ -95,6 +116,7 @@ export async function upsertRate(input: UpsertRateInput) {
     throw new RangeError(`Exchange rate for ${input.currency} must be positive and finite, received ${input.rate}`);
   }
 
+  const fetchedAt = new Date();
   return prisma.exchangeRate.upsert({
     where: { currency_asOfDate: { currency: input.currency, asOfDate: input.asOfDate } },
     create: {
@@ -102,8 +124,9 @@ export async function upsertRate(input: UpsertRateInput) {
       rate: input.rate.toString(),
       asOfDate: input.asOfDate,
       source: input.source,
+      fetchedAt,
     },
-    update: { rate: input.rate.toString(), source: input.source },
+    update: { rate: input.rate.toString(), source: input.source, fetchedAt },
   });
 }
 

@@ -10,6 +10,7 @@
 import "dotenv/config";
 import { syncExchangeRates } from "../src/server/currency/rate-sync";
 import { getLatestRateTable } from "../src/server/dal/exchange-rates";
+import { StaleDataError } from "../src/server/stale-data-error";
 
 async function main() {
   const result = await syncExchangeRates();
@@ -36,6 +37,12 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error);
+  if (error instanceof StaleDataError) {
+    console.error("=== STALE-DATA CIRCUIT BREAKER TRIPPED (AGENTS.md §3y) ===");
+    console.error(error.message);
+    console.error("The Liquidity Runway engine is now computing against data this old — investigate the Frankfurter outage.");
+  } else {
+    console.error(error);
+  }
   process.exit(1);
 });
