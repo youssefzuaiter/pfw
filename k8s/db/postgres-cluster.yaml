@@ -1,0 +1,359 @@
+# Production stateful database layer for PFW, managed by the CloudNativePG
+# (CNPG) operator instead of a raw StatefulSet — the operator owns primary
+# election, streaming replication, automated failover, TLS certificate
+# rotation, and connection-routing Services (<cluster>-rw/-ro/-r).
+#
+# Prerequisite: the CNPG operator must already be installed in the cluster
+# (https://cloudnative-pg.io/documentation/current/installation_upgrade/).
+# This file only defines a Cluster for the operator to reconcile.
+#
+# Role model — this mirrors the two-role split already used in
+# prisma/migrations/20260827133632_rls_and_runtime_role and
+# src/server/db/{client,admin-client}.ts:
+#   - pfw_app     — the CNPG bootstrap "owner" role. Every `prisma migrate`
+#                   and the seed script (admin-client.ts) connect as this
+#                   role. Locally (compose.yaml) it happens to be a real
+#                   Postgres superuser because that's what the official
+#                   `postgres` image makes POSTGRES_USER. CNPG deliberately
+#                   does NOT make the bootstrap owner a superuser
+#                   (enableSuperuserAccess: false below, the operator's own
+#                   recommended default) — so we explicitly grant it
+#                   BYPASSRLS via `managed.roles` instead. That preserves
+#                   the exact invariant the RLS migration and
+#                   admin-client.ts depend on ("pfw_app bypasses RLS"),
+#                   with a materially smaller blast radius than full
+#                   superuser (can't touch pg_authid, can't disable RLS on
+#                   arbitrary tables, etc.) — a real hardening over local
+#                   dev, not just a port of it.
+#   - pfw_runtime — created by that same Prisma migration, unchanged here.
+#                   Subject to RLS, DML-only. Nothing to configure at the
+#                   cluster level.
+#   - backup_reader — a new, read-only, cert-auth-only role for the logical
+#                   backup CronJob (./db-backup-cronjob.yaml). Created by
+#                   the companion Prisma migration
+#                   prisma/migrations/20260902100000_backup_reader_role
+#                   (NOT by CNPG `managed.roles`, to keep one source of
+#                   truth for role/grant definitions — CNPG only owns
+#                   cluster infrastructure and the pg_hba entry that routes
+#                   it to cert auth, below).
+#
+# Backup strategy — two independent, complementary layers, on purpose:
+#   1. Barman Cloud (this file, `spec.backup` below): continuous WAL
+#      archiving + nightly base backups, run by CNPG's own instance
+#      manager (no extra role, no extra pod) straight to S3. This is what
+#      gives point-in-time recovery (PITR) — restoring to any second, not
+#      just to whenever the last backup happened to run.
+#   2. The logical pg_dump CronJob (./db-backup-cronjob.yaml): a
+#      human-restorable, cross-version-portable, client-side-`age`-
+#      encrypted dump on its own schedule, connecting as the separate
+#      `backup_reader` role over mTLS.
+#   Losing one doesn't lose the other — a corrupted Barman archive doesn't
+#   take out the logical dumps and vice versa. Barman backups are
+#   server-side-encrypted (SSE-S3) in transit to/at rest in S3, which is a
+#   materially different, weaker guarantee than the CronJob's client-side
+#   `age` encryption (whoever holds the S3 bucket credentials AND
+#   Postgres's own TLS can read a Barman backup; only the offline `age`
+#   identity can ever read a logical dump) — stated plainly, not
+#   conflated, same honesty AGENTS.md §3m/§3t already hold client-side vs.
+#   server-side encryption to elsewhere in this app.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pfw-data
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# ---------------------------------------------------------------------------
+# Zero-trust networking: nothing may reach the database pods except what is
+# explicitly allowed below. Adjust the app-side namespace/label selectors to
+# match wherever the Next.js app and the CNPG operator actually run.
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: pfw-data
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-app
+  namespace: pfw-data
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pfw-postgres
+  policyTypes: ["Ingress"]
+  ingress:
+    # 1) The Next.js app (pfw_app / pfw_runtime, password+TLS over the
+    #    CNPG-generated Secrets — never a literal credential in any
+    #    manifest or env value).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pfw-app
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pfw
+      ports:
+        - protocol: TCP
+          port: 5432
+    # 2) The logical-backup CronJob (backup_reader, cert-auth only).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pfw-data
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pfw-db-backup
+      ports:
+        - protocol: TCP
+          port: 5432
+    # 3) Intra-cluster streaming replication between CNPG instances.
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: pfw-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-egress
+  namespace: pfw-data
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: pfw-postgres
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: pfw-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to: [] # DNS
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Barman Cloud WAL archiving + base backups (spec.backup below) need
+    # HTTPS egress straight from the Postgres pods to the S3-compatible
+    # endpoint — no separate backup pod does this hop for continuous
+    # archiving. Plain NetworkPolicy can't match by FQDN and a real S3
+    # endpoint's IP range varies by provider/region, so this allows HTTPS
+    # to any non-private destination and leans on mTLS-verified TLS (S3's
+    # own cert) as the actual trust boundary, same posture the CronJob's
+    # AWS CLI call takes. If your CNI supports FQDN-based policies (e.g.
+    # Cilium's CiliumNetworkPolicy `toFQDNs`), replace this with an
+    # explicit rule for your real endpoint once it's known.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# ---------------------------------------------------------------------------
+# cert-manager CA Issuer bootstrapped from CNPG's own operator-managed CA
+# (auto-generated as Secret "pfw-postgres-ca" — contains ca.crt + ca.key —
+# the moment the Cluster below is created; no certificates.* override is
+# set, so this is CNPG's default, zero-extra-config PKI). This lets us mint
+# an additional client certificate for backup_reader signed by the exact
+# CA the Postgres server already trusts for `cert` auth, without hand-
+# rolling a separate PKI or storing any private key material outside
+# Kubernetes-managed Secrets.
+#
+# Prerequisite: cert-manager must be installed in the cluster.
+# ---------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: pfw-postgres-ca-issuer
+  namespace: pfw-data
+spec:
+  ca:
+    secretName: pfw-postgres-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: pfw-postgres-backup-reader-cert
+  namespace: pfw-data
+spec:
+  secretName: pfw-postgres-backup-reader-tls
+  # CNPG's `cert` auth method maps the certificate's CN directly to the
+  # Postgres role name — this MUST equal the role created by
+  # prisma/migrations/20260902100000_backup_reader_role.
+  commonName: backup_reader
+  usages: ["client auth"]
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  issuerRef:
+    name: pfw-postgres-ca-issuer
+    kind: Issuer
+---
+# ---------------------------------------------------------------------------
+# S3 credentials for Barman Cloud WAL/base-backup archiving. Kept
+# deliberately separate from ./db-backup-cronjob.yaml's
+# pfw-db-backup-s3-credentials Secret — least privilege: the IAM principal
+# behind THIS Secret only ever needs write access under
+# s3://pfw-db-backups/barman/pfw-postgres/*, never the CronJob's
+# s3://pfw-db-backups/pfw/* prefix, and vice versa. Same "populate via a
+# real secret pipeline, never `kubectl apply` with real values checked
+# into git" rule as every other placeholder Secret in this directory.
+# If running on real AWS S3, prefer IRSA instead (annotate the Cluster's
+# own pod ServiceAccount via spec.serviceAccountTemplate below with
+# `eks.amazonaws.com/role-arn`) and drop this Secret + the s3Credentials
+# block entirely in favor of `inheritFromAzureAD`-style ambient creds —
+# CNPG picks up the AWS SDK's default credential chain automatically when
+# no explicit s3Credentials are set.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pfw-postgres-barman-s3-credentials
+  namespace: pfw-data
+  annotations:
+    pfw.internal/managed-by: "REPLACE — populate via External Secrets Operator / Vault / sealed-secrets, never `kubectl apply` with real values checked into git"
+type: Opaque
+stringData:
+  ACCESS_KEY_ID: "REPLACE_ME"
+  SECRET_ACCESS_KEY: "REPLACE_ME"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pfw-postgres
+  namespace: pfw-data
+spec:
+  # 1 primary + 2 replicas: any single node/AZ loss triggers automated
+  # failover with no manual intervention and no data-owning StatefulSet
+  # to babysit.
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2 # keep in sync with compose.yaml's postgres:17
+  primaryUpdateStrategy: unsupervised
+
+  # Never a real Postgres superuser in production — see the role-model
+  # note at the top of this file for how pfw_app's RLS-bypass need is met
+  # instead (managed.roles below).
+  enableSuperuserAccess: false
+
+  bootstrap:
+    initdb:
+      database: pfw
+      owner: pfw_app
+      # No `secret:` field — CNPG auto-generates and manages the
+      # "pfw-postgres-app" Secret (keys: username, password, dbname, host,
+      # port, uri, jdbc-uri) with a random password. That Secret is what
+      # requirement #3 depends on: nothing in this repo ever writes a
+      # plaintext password for pfw_app; consumers reference it via
+      # secretKeyRef.
+
+  storage:
+    storageClass: "" # set to your CSI StorageClass (e.g. a replicated/ZFS-backed block class)
+    size: 20Gi
+
+  # Barman Cloud continuous WAL archiving + nightly base backups to S3 —
+  # see the "Backup strategy" note at the top of this file for how this
+  # relates to ./db-backup-cronjob.yaml's separate logical-dump path.
+  backup:
+    retentionPolicy: "30d"
+    target: prefer-standby # base backups run against a replica, not the primary, on a 3-instance cluster
+    barmanObjectStore:
+      destinationPath: "s3://pfw-db-backups/barman/pfw-postgres"
+      endpointURL: "https://minio.example.internal" # omit entirely for real AWS S3
+      s3Credentials:
+        accessKeyId:
+          name: pfw-postgres-barman-s3-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: pfw-postgres-barman-s3-credentials
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+        encryption: AES256 # SSE-S3; server-side only — see the header note on this vs. the CronJob's client-side age encryption
+        maxParallel: 4
+      data:
+        compression: gzip
+        encryption: AES256
+        jobs: 2
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: topology.kubernetes.io/zone
+
+  postgresql:
+    pg_hba:
+      # Order matters: the first matching line wins. backup_reader must be
+      # routed to `cert` before the catch-all scram-sha-256 rule below, and
+      # `clientcert=verify-full` means presenting a valid client cert is
+      # mandatory, not merely accepted.
+      - "hostssl all backup_reader all cert clientcert=verify-full"
+      - "hostssl all all all scram-sha-256"
+      # No `host` (non-TLS) entries at all: an unencrypted connection
+      # attempt has no matching rule and is rejected outright.
+
+  managed:
+    roles:
+      - name: pfw_app
+        ensure: present
+        # Attributes only — CNPG will ALTER, not recreate, the existing
+        # bootstrap-owner role. Grants BYPASSRLS without full superuser;
+        # see the role-model note at the top of this file.
+        bypassrls: true
+        superuser: false
+        createdb: false
+        createrole: false
+
+  monitoring:
+    enablePodMonitor: false # flip to true once a Prometheus Operator PodMonitor CRD is confirmed installed
+---
+# Nightly Barman Cloud base backup. WAL archiving above already runs
+# continuously and gives PITR between base backups on its own — this is
+# what bounds how much WAL a restore ever has to replay, not what makes
+# PITR possible in the first place.
+#
+# Scheduled deliberately BEFORE the logical CronJob's 03:00 UTC run
+# (./db-backup-cronjob.yaml) so the two don't contend for the replica's
+# I/O at the same moment.
+#
+# Note the 6-field schedule (seconds first) — CNPG's ScheduledBackup uses
+# the robfig/cron format, NOT the 5-field format batch/v1 CronJob uses
+# below in ./db-backup-cronjob.yaml. Easy to get wrong by copy-pasting
+# between the two.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pfw-postgres-backup
+  namespace: pfw-data
+spec:
+  schedule: "0 0 2 * * *" # daily at 02:00:00 UTC
+  backupOwnerReference: self
+  method: barmanObjectStore
+  cluster:
+    name: pfw-postgres

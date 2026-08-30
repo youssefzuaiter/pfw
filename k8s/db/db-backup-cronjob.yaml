@@ -1,0 +1,251 @@
+# Daily encrypted logical backup of the pfw-postgres CNPG cluster, streamed
+# directly to an S3-compatible endpoint (AWS S3, MinIO, etc.) without ever
+# touching node-local disk.
+#
+# This is the second, complementary half of a two-layer backup strategy —
+# see ./postgres-cluster.yaml's "Backup strategy" header note for how this
+# relates to that file's Barman Cloud continuous WAL archiving / nightly
+# base backups (spec.backup / ScheduledBackup).
+#
+# Zero-trust / no-plaintext-credential design:
+#   - DB auth: mTLS client certificate for `backup_reader`
+#     (./postgres-cluster.yaml), a role with SELECT-only grants and
+#     BYPASSRLS, created by prisma/migrations/20260902100000_backup_reader_role.
+#     No password exists for this role at all — PGSSLKEY never leaves a
+#     mounted, 0600, tmpfs-backed emptyDir; it is never an env var.
+#   - Encryption: age (https://age-encryption.org), asymmetric. Only the
+#     PUBLIC recipient key lives in the cluster (ConfigMap, not a Secret —
+#     it isn't sensitive). The matching private identity key is generated
+#     and stored OUTSIDE Kubernetes entirely (offline, e.g. your secret
+#     manager / an operator's hardware key) — a compromised backup Job can
+#     encrypt but can never decrypt past or future backups.
+#   - S3 credentials: sourced from a Kubernetes Secret via secretKeyRef
+#     only (never a literal value in this file or in any container env
+#     block). Populate `pfw-db-backup-s3-credentials` through your actual
+#     secret pipeline (External Secrets Operator, Vault CSI/agent-inject,
+#     sealed-secrets, etc.) — the stringData below is a placeholder shape,
+#     not a real value, and must never be applied as-is.
+#     If running on real AWS S3 rather than MinIO, prefer IRSA
+#     (annotate the ServiceAccount below with
+#     `eks.amazonaws.com/role-arn`) and drop the AWS_* secretKeyRefs
+#     entirely — that removes static S3 credentials from the cluster
+#     altogether.
+#
+# Image prerequisite: `${BACKUP_IMAGE}` must be a prebuilt, internally
+# published image containing `pg_dump`/`psql` (postgresql-client), `age`,
+# and the `aws` CLI (or `mc`) — deliberately NOT assembled at Job runtime
+# via curl/apt, since pulling arbitrary tooling from the internet inside a
+# locked-down, egress-restricted namespace is itself a zero-trust
+# violation. A minimal Dockerfile is:
+#
+#   FROM postgres:17-bookworm
+#   RUN apt-get update && apt-get install -y --no-install-recommends \
+#         age awscli ca-certificates && rm -rf /var/lib/apt/lists/*
+#   USER 1000:1000
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pfw-db-backup
+  namespace: pfw-data
+  labels:
+    app.kubernetes.io/name: pfw-db-backup
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/pfw-db-backup-s3-writer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pfw-db-backup-age-recipient
+  namespace: pfw-data
+data:
+  # Public key only — not secret. Generate the matching identity offline
+  # with `age-keygen`, store the private key outside the cluster, and
+  # place the "# public key: age1..." line it prints here.
+  age-recipient.txt: "age1REPLACE_WITH_REAL_RECIPIENT_PUBLIC_KEY"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pfw-db-backup-s3-credentials
+  namespace: pfw-data
+  annotations:
+    pfw.internal/managed-by: "REPLACE — populate via External Secrets Operator / Vault / sealed-secrets, never `kubectl apply` with real values checked into git"
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "REPLACE_ME"
+  AWS_SECRET_ACCESS_KEY: "REPLACE_ME"
+  S3_ENDPOINT: "https://minio.example.internal" # omit/blank for real AWS S3
+  S3_BUCKET: "pfw-db-backups"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pfw-db-backup
+  namespace: pfw-data
+  labels:
+    app.kubernetes.io/name: pfw-db-backup
+spec:
+  schedule: "0 3 * * *" # daily at 03:00
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pfw-db-backup
+        spec:
+          serviceAccountName: pfw-db-backup
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+
+          # The backup_reader client-cert Secret is mounted read-only from
+          # cert-manager's output; libpq refuses a private key that is
+          # group/world-readable as delivered by a Secret volume (owned by
+          # root, 0440-ish), so an initContainer re-lays it into an
+          # emptyDir with the exact 0600 permissions libpq requires.
+          initContainers:
+            - name: prepare-client-cert
+              image: busybox:1.36
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  cp /src/tls.crt /out/tls.crt
+                  cp /src/tls.key /out/tls.key
+                  cp /src/ca.crt /out/ca.crt
+                  chmod 600 /out/tls.key
+                  chmod 644 /out/tls.crt /out/ca.crt
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backup-reader-cert-src
+                  mountPath: /src
+                  readOnly: true
+                - name: backup-reader-cert
+                  mountPath: /out
+
+          containers:
+            - name: backup
+              image: "${BACKUP_IMAGE}" # e.g. registry.internal/pfw/db-backup:1.0.0 — see prerequisite note above
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                # --- Postgres connection: cert auth, zero passwords ---
+                - name: PGHOST
+                  value: pfw-postgres-ro.pfw-data.svc.cluster.local # CNPG's auto-created read-only/replica Service — keeps load off the primary
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: pfw
+                - name: PGUSER
+                  value: backup_reader
+                - name: PGSSLMODE
+                  value: verify-full
+                - name: PGSSLCERT
+                  value: /certs/tls.crt
+                - name: PGSSLKEY
+                  value: /certs/tls.key
+                - name: PGSSLROOTCERT
+                  value: /certs/ca.crt
+                # --- Encryption recipient (public key, not secret) ---
+                - name: AGE_RECIPIENT_FILE
+                  value: /age/age-recipient.txt
+                # --- Destination object storage ---
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: pfw-db-backup-s3-credentials
+                      key: S3_ENDPOINT
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: pfw-db-backup-s3-credentials
+                      key: S3_BUCKET
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: pfw-db-backup-s3-credentials
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: pfw-db-backup-s3-credentials
+                      key: AWS_SECRET_ACCESS_KEY
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  stamp="$(date -u +%Y-%m-%dT%H%M%SZ)"
+                  key="pfw/$(date -u +%Y/%m/%d)/pfw-${stamp}.dump.age"
+
+                  pg_dump \
+                      --format=custom \
+                      --no-owner \
+                      --no-privileges \
+                      --dbname="$PGDATABASE" \
+                    | age --recipients-file "$AGE_RECIPIENT_FILE" \
+                    | aws s3 cp - "s3://${S3_BUCKET}/${key}" \
+                        --endpoint-url "$S3_ENDPOINT"
+                  # No --expected-size: the AWS CLI streams stdin as an
+                  # adaptive multipart upload without needing the total
+                  # size up front. If a single dump ever approaches ~50GB
+                  # (default part-count ceiling), pass a real
+                  # --expected-size so part sizing doesn't run out of
+                  # parts partway through.
+
+                  echo "Backup streamed to s3://${S3_BUCKET}/${key}"
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              volumeMounts:
+                - name: backup-reader-cert
+                  mountPath: /certs
+                  readOnly: true
+                - name: age-recipient
+                  mountPath: /age
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+
+          volumes:
+            - name: backup-reader-cert-src
+              secret:
+                secretName: pfw-postgres-backup-reader-tls # produced by ./postgres-cluster.yaml's cert-manager Certificate
+            - name: backup-reader-cert
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Mi
+            - name: age-recipient
+              configMap:
+                name: pfw-db-backup-age-recipient
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
