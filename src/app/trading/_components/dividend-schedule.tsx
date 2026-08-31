@@ -1,3 +1,6 @@
+"use client";
+
+import { useCurrencyDisplayMode } from "../../../lib/hooks/use-currency-display-mode";
 import { formatNativeAmount } from "../../../lib/currency";
 import { addAgorot, formatAgorot } from "../../../lib/money";
 import type { UpcomingPayout } from "../../../lib/portfolio-analytics";
@@ -16,7 +19,12 @@ function daysUntil(date: Date, asOf: Date): number {
  * rate, both of which can still move before the pay date, so presenting
  * it as a settled figure would overstate what's actually known.
  */
+/** Same primary/secondary swap `<CurrencyAmount>` applies elsewhere, kept
+ * inline here rather than via that shared component because this row's
+ * secondary line carries an extra per-share × quantity breakdown
+ * `<CurrencyAmount>`'s generic two-figure shape doesn't have room for. */
 export function DividendSchedule({ payouts }: { payouts: UpcomingPayout[] }) {
+  const mode = useCurrencyDisplayMode();
   const asOf = new Date();
   const projectedTotal = addAgorot(...payouts.map((payout) => payout.projectedAgorot));
 
@@ -25,6 +33,12 @@ export function DividendSchedule({ payouts }: { payouts: UpcomingPayout[] }) {
       <ul className="flex flex-col gap-3">
         {payouts.map((payout) => {
           const days = daysUntil(payout.payDate, asOf);
+          const ilsText = formatAgorot(payout.projectedAgorot);
+          const nativeBreakdownText = `${formatNativeAmount(payout.amountPerShareNative, payout.currency)}/sh × ${payout.quantity} = ${formatNativeAmount(payout.projectedNativeAmount, payout.currency)}`;
+          const [primaryText, secondaryText] =
+            mode === "native"
+              ? [formatNativeAmount(payout.projectedNativeAmount, payout.currency), ilsText]
+              : [ilsText, nativeBreakdownText];
           return (
             <li
               key={`${payout.symbol}-${payout.exDate.toISOString()}`}
@@ -38,11 +52,8 @@ export function DividendSchedule({ payouts }: { payouts: UpcomingPayout[] }) {
                 </p>
               </div>
               <div className="text-right">
-                <p className="font-tabular-figures text-sm text-fg">{formatAgorot(payout.projectedAgorot)}</p>
-                <p className="font-tabular-figures text-xs text-muted">
-                  {formatNativeAmount(payout.amountPerShareNative, payout.currency)}/sh × {payout.quantity} ={" "}
-                  {formatNativeAmount(payout.projectedNativeAmount, payout.currency)}
-                </p>
+                <p className="font-tabular-figures text-sm text-fg">{primaryText}</p>
+                <p className="font-tabular-figures text-xs text-muted">{secondaryText}</p>
               </div>
             </li>
           );
@@ -50,8 +61,9 @@ export function DividendSchedule({ payouts }: { payouts: UpcomingPayout[] }) {
       </ul>
 
       <p className="font-tabular-figures text-xs text-muted">
-        Projected total {formatAgorot(projectedTotal)} — based on current holdings and today&apos;s
-        exchange rate; both can change before the pay date.
+        Projected total {formatAgorot(projectedTotal)} — based on current holdings and today&apos;s exchange rate;
+        both can change before the pay date. Always shown in ₪ regardless of the toggle above, since payouts can
+        span more than one native currency and only ₪ is a common unit to sum them in.
       </p>
     </div>
   );

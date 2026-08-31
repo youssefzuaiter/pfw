@@ -6,10 +6,13 @@ import { HouseholdAdminPanel } from "../../components/household/household-admin-
 import { HouseholdNav } from "../../components/household/household-nav";
 import { ShareResourceControl } from "../../components/household/share-resource-control";
 import { computeMonthProgress, computeProrationStatus, type ProrationStatus } from "../../lib/budget-proration";
+import { nativeAmount } from "../../lib/currency";
+import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { agorot, formatAgorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { listBudgets } from "../../server/dal/budgets";
 import { listCategories } from "../../server/dal/categories";
+import { getLatestRateTable } from "../../server/dal/exchange-rates";
 import {
   getSharedGroupData,
   listGroupInvites,
@@ -65,13 +68,31 @@ export default async function BudgetsPage({
       : undefined;
 
   if (activeMembership) {
-    const [sharedData, members, invites] = await Promise.all([
+    const [sharedData, members, invites, rateTable] = await Promise.all([
       getSharedGroupData(user.id, activeMembership.group.id),
       listGroupMembers(user.id, activeMembership.group.id),
       activeMembership.membership.role === "OWNER"
         ? listGroupInvites(user.id, activeMembership.group.id)
         : Promise.resolve([]),
+      getLatestRateTable(),
     ]);
+
+    // The Currency UI Toggle (Punch List Phase 3, item 2) needs BOTH
+    // figures available client-side to switch between them — computed
+    // here, at the latest synced rate, the same live-conversion
+    // treatment every other foreign-currency balance in this app gets
+    // (never stored, per law #5 — a live balance's ₪ equivalent moves
+    // with the rate, so persisting one would go stale immediately).
+    const bankAccountsWithIls = sharedData.bankAccounts.map((account) => ({
+      ...account,
+      agorotValue: Number(
+        convertNativeAmountToAgorot(
+          nativeAmount(Number(account.nativeBalance)),
+          account.currency,
+          rateTable[account.currency],
+        ),
+      ),
+    }));
 
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
@@ -83,7 +104,7 @@ export default async function BudgetsPage({
         <HouseholdSharedView
           myUserId={user.id}
           budgets={sharedData.budgets}
-          bankAccounts={sharedData.bankAccounts}
+          bankAccounts={bankAccountsWithIls}
           categories={sharedData.categories}
         />
 

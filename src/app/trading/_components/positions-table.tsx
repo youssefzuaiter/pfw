@@ -1,5 +1,5 @@
 import { Badge, type BadgeVariant } from "../../../components/badge/badge";
-import { formatNativeAmount } from "../../../lib/currency";
+import { CurrencyAmount } from "../../../components/currency/currency-amount";
 import { formatAgorot } from "../../../lib/money";
 import type { AssetClass } from "../../../lib/portfolio-analytics";
 import type { PortfolioRow } from "../../../server/portfolio/build-portfolio-data";
@@ -68,10 +68,7 @@ export function PositionsTable({ rows }: { rows: PortfolioRow[] }) {
               <td className="py-3 pr-3 font-tabular-figures text-fg">{row.quantity}</td>
               <td className="py-3 pr-3 text-right font-tabular-figures text-fg">{formatAgorot(row.costBasis)}</td>
               <td className="py-3 pr-3 text-right">
-                <p className="font-tabular-figures text-fg">{formatAgorot(row.marketValue)}</p>
-                <p className="font-tabular-figures text-xs text-muted">
-                  {formatNativeAmount(row.nativeMarketValue, row.currency)}
-                </p>
+                <CurrencyAmount agorotValue={row.marketValue} nativeValue={row.nativeMarketValue} currency={row.currency} />
               </td>
               <td className="py-3 pr-3 text-right">
                 <p className={`font-tabular-figures ${toneClass(row.unrealizedGain)}`}>

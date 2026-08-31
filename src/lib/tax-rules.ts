@@ -177,10 +177,20 @@ export type TaxCalculationResult = {
   longTermGainAgorot: Agorot;
   flatGainAgorot: Agorot;
   totalGainAgorot: Agorot;
+  /**
+   * Dividend income for the same period, informational for every
+   * jurisdiction (always equal to whatever was passed into
+   * `computeCapitalGainsTax`) but only actually FOLDED INTO the taxable
+   * base for `DE` — see that branch's own comment for why. US/INTL
+   * report it back unchanged for context but never tax it here; this
+   * simulator's US/INTL models are capital-gains-only, per their own
+   * existing scope (AGENTS.md §3r).
+   */
+  dividendIncomeAgorot: Agorot;
   allowanceAppliedAgorot: Agorot;
   taxableGainAgorot: Agorot;
   taxOwedAgorot: Agorot;
-  /** `taxOwed / totalGain`, `null` when there's no positive gain to divide by. */
+  /** `taxOwed / totalGain` (or, for DE, `taxOwed / (totalGain + dividendIncome)` — its actual taxable base), `null` when there's no positive amount to divide by. */
   effectiveRate: number | null;
   notes: string[];
 };
@@ -192,18 +202,38 @@ export type TaxCalculationResult = {
  * carryforward to future tax years is a real feature of every modeled
  * jurisdiction's law but isn't simulated here, flagged in `notes` rather
  * than silently assumed away.
+ *
+ * `dividendIncomeAgorot` (default 0) is the same-period dividend income
+ * already received (`sumDividendIncome`, portfolio-analytics.ts) — only
+ * Germany's Abgeltungssteuer model folds it into the taxed base here; see
+ * that branch's own comment.
  */
-export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGainsByTerm): TaxCalculationResult {
+export function computeCapitalGainsTax(
+  profile: TaxProfileInput,
+  gains: NetGainsByTerm,
+  dividendIncomeAgorot: Agorot = agorot(0),
+): TaxCalculationResult {
   const totalGainAgorot = agorot(gains.shortTermGainAgorot + gains.longTermGainAgorot + gains.flatGainAgorot);
   const notes: string[] = [];
 
-  if (totalGainAgorot <= 0) {
+  // For DE, "no tax owed" must be keyed on the COMBINED Kapitalerträge
+  // base (capital gains + dividends), not capital gains alone — a
+  // position can be a net capital LOSS this year while still owing tax
+  // on real dividend income received, which the old totalGainAgorot-only
+  // check would have silently zeroed out. US/INTL are unaffected: their
+  // combined base always equals totalGainAgorot, since dividends aren't
+  // folded into their taxable base at all in this simulator.
+  const combinedTaxableBaseAgorot =
+    profile.jurisdiction === "DE" ? agorot(totalGainAgorot + dividendIncomeAgorot) : totalGainAgorot;
+
+  if (combinedTaxableBaseAgorot <= 0) {
     return {
       jurisdiction: profile.jurisdiction,
       shortTermGainAgorot: gains.shortTermGainAgorot,
       longTermGainAgorot: gains.longTermGainAgorot,
       flatGainAgorot: gains.flatGainAgorot,
       totalGainAgorot,
+      dividendIncomeAgorot,
       allowanceAppliedAgorot: agorot(0),
       taxableGainAgorot: agorot(0),
       taxOwedAgorot: agorot(0),
@@ -248,12 +278,19 @@ export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGains
       "Federal tax only (state/local capital-gains tax is not modeled); single-filer brackets assumed.",
     );
 
+    if (dividendIncomeAgorot > 0) {
+      notes.push(
+        "Dividend income is reported for context only — this simulator's US model taxes capital gains alone; dividends would ordinarily be taxed as ordinary/qualified income separately, not modeled here.",
+      );
+    }
+
     return {
       jurisdiction: "US",
       shortTermGainAgorot: gains.shortTermGainAgorot,
       longTermGainAgorot: gains.longTermGainAgorot,
       flatGainAgorot: agorot(0),
       totalGainAgorot,
+      dividendIncomeAgorot,
       allowanceAppliedAgorot: agorot(0),
       taxableGainAgorot,
       taxOwedAgorot,
@@ -263,8 +300,14 @@ export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGains
   }
 
   if (profile.jurisdiction === "DE") {
-    const allowanceApplied = agorot(Math.min(totalGainAgorot, Math.max(0, profile.annualAllowanceAgorot)));
-    const taxableGainAgorot = subtractAgorot(totalGainAgorot, allowanceApplied);
+    // Kapitalerträge (Abgeltungssteuer's taxable base) legally covers
+    // BOTH capital gains and investment income like dividends together,
+    // sharing one 25% flat rate, one Sparer-Pauschbetrag allowance, and
+    // the same solidarity/church-tax add-ons — not two separate
+    // calculations. `combinedTaxableBaseAgorot` (computed above, already
+    // proven > 0 by this point) is that shared base.
+    const allowanceApplied = agorot(Math.min(combinedTaxableBaseAgorot, Math.max(0, profile.annualAllowanceAgorot)));
+    const taxableGainAgorot = subtractAgorot(combinedTaxableBaseAgorot, allowanceApplied);
     const baseTax = taxableGainAgorot * DE_FLAT_RATE;
     const solidaritySurcharge = baseTax * DE_SOLIDARITY_SURCHARGE_RATE;
     const churchTax = baseTax * Math.max(0, profile.churchTaxRate);
@@ -272,6 +315,11 @@ export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGains
 
     notes.push(
       "Flat Abgeltungssteuer applies regardless of holding period (the post-2009 Neubestand rule); shares acquired before 2009 (Altbestand) are not modeled.",
+    );
+    notes.push(
+      dividendIncomeAgorot > 0
+        ? "Includes dividend income in the Kapitalerträge taxable base, taxed together with capital gains at the same flat rate and shared allowance (Kapitalertragsteuer)."
+        : "No dividend income this period — Kapitalerträge here is capital gains only.",
     );
     notes.push(
       profile.churchTaxRate > 0
@@ -285,10 +333,11 @@ export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGains
       longTermGainAgorot: agorot(0),
       flatGainAgorot: gains.flatGainAgorot,
       totalGainAgorot,
+      dividendIncomeAgorot,
       allowanceAppliedAgorot: allowanceApplied,
       taxableGainAgorot,
       taxOwedAgorot,
-      effectiveRate: totalGainAgorot > 0 ? taxOwedAgorot / totalGainAgorot : null,
+      effectiveRate: combinedTaxableBaseAgorot > 0 ? taxOwedAgorot / combinedTaxableBaseAgorot : null,
       notes,
     };
   }
@@ -301,6 +350,9 @@ export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGains
   notes.push(
     "Generic flat-rate model for a jurisdiction not explicitly modeled — tune the rate/allowance for your country; holding period is not considered here.",
   );
+  if (dividendIncomeAgorot > 0) {
+    notes.push("Dividend income is reported for context only — not included in this generic model's taxable base.");
+  }
 
   return {
     jurisdiction: "INTL",
@@ -308,6 +360,7 @@ export function computeCapitalGainsTax(profile: TaxProfileInput, gains: NetGains
     longTermGainAgorot: agorot(0),
     flatGainAgorot: gains.flatGainAgorot,
     totalGainAgorot,
+    dividendIncomeAgorot,
     allowanceAppliedAgorot: allowanceApplied,
     taxableGainAgorot,
     taxOwedAgorot,

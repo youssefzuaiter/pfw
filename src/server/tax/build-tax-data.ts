@@ -3,6 +3,7 @@ import { cache } from "react";
 import { agorot, subtractAgorot, type Agorot } from "../../lib/money";
 import { nativeAmount, type CurrencyCode } from "../../lib/currency";
 import { getMockInstrument, getMockPriceAgorot, isKnownMockSymbol } from "../../lib/mock-market-data";
+import { sumDividendIncome } from "../../lib/portfolio-analytics";
 import {
   replayTaxLots,
   holdingPeriodDays,
@@ -28,6 +29,7 @@ import {
   type HarvestPotentialSummary,
 } from "../../lib/tax-loss-harvesting";
 import { getLatestRateTable } from "../dal/exchange-rates";
+import { listPaidDividends } from "../dal/dividends";
 import { listPortfolioHoldings, listTrades } from "../dal/portfolio";
 
 export type OpenLotRow = OpenTaxLot & {
@@ -46,9 +48,18 @@ export type TaxSimulationData = {
   method: CostBasisMethod;
   jurisdiction: TaxJurisdiction;
   profile: TaxProfileInput;
-  /** Tax on gains already realized (sold) within the current calendar year, under the chosen method/jurisdiction. */
+  /**
+   * Dividend income actually received (PAID) within the current calendar
+   * year — the same figure folded into `realizedThisYear`/
+   * `ifLiquidatedToday`'s Kapitalerträge base for `jurisdiction === "DE"`
+   * (`tax-rules.ts`'s `computeCapitalGainsTax`); reported here
+   * unconditionally regardless of jurisdiction so the UI can show it for
+   * context even under US/INTL, where it's informational only.
+   */
+  dividendIncomeThisYearAgorot: Agorot;
+  /** Tax on gains already realized (sold) within the current calendar year, under the chosen method/jurisdiction — for DE, also includes dividendIncomeThisYearAgorot in the taxable base. */
   realizedThisYear: TaxCalculationResult;
-  /** `realizedThisYear` plus every open lot hypothetically sold today at the mock feed's current price. */
+  /** `realizedThisYear` plus every open lot hypothetically sold today at the mock feed's current price. Uses the SAME dividendIncomeThisYearAgorot as realizedThisYear — a hypothetical liquidation doesn't change dividends already received. */
   ifLiquidatedToday: TaxCalculationResult;
   /** The marginal tax cost of liquidating everything right now, beyond what's already realized. */
   additionalTaxIfLiquidatedAgorot: Agorot;
@@ -94,10 +105,11 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
     flatRatePercent,
   };
 
-  const [holdings, trades, rateTable] = await Promise.all([
+  const [holdings, trades, rateTable, paidDividends] = await Promise.all([
     listPortfolioHoldings(userId),
     listTrades(userId),
     getLatestRateTable(asOf),
+    listPaidDividends(userId),
   ]);
 
   const currencyBySymbol = new Map<string, CurrencyCode>(holdings.map((h) => [h.symbol, h.currency]));
@@ -110,6 +122,7 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
   }
 
   const taxYearStart = new Date(Date.UTC(asOf.getUTCFullYear(), 0, 1));
+  const dividendIncomeThisYearAgorot = sumDividendIncome(paidDividends, taxYearStart, asOf);
   const currentPriceBySymbol = new Map<string, Agorot>();
   const recentBuyDatesBySymbol = new Map<string, Date[]>();
   const washSaleWindowStart = new Date(asOf.getTime() - WASH_SALE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -170,8 +183,12 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
     }
   }
 
-  const realizedThisYear = computeCapitalGainsTax(profile, netGainsByTerm(realizedThisYearGains));
-  const ifLiquidatedToday = computeCapitalGainsTax(profile, netGainsByTerm(hypotheticalLiquidationGains));
+  const realizedThisYear = computeCapitalGainsTax(profile, netGainsByTerm(realizedThisYearGains), dividendIncomeThisYearAgorot);
+  const ifLiquidatedToday = computeCapitalGainsTax(
+    profile,
+    netGainsByTerm(hypotheticalLiquidationGains),
+    dividendIncomeThisYearAgorot,
+  );
   const additionalTaxIfLiquidatedAgorot = subtractAgorot(ifLiquidatedToday.taxOwedAgorot, realizedThisYear.taxOwedAgorot);
 
   // Harvesting's blended marginal-rate estimate: tax attributable to
@@ -198,6 +215,7 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
     method,
     jurisdiction,
     profile,
+    dividendIncomeThisYearAgorot,
     realizedThisYear,
     ifLiquidatedToday,
     additionalTaxIfLiquidatedAgorot,
@@ -217,6 +235,7 @@ function serializeTaxResult(result: TaxCalculationResult) {
     longTermGain: serializeAgorot(result.longTermGainAgorot),
     flatGain: serializeAgorot(result.flatGainAgorot),
     totalGain: serializeAgorot(result.totalGainAgorot),
+    dividendIncome: serializeAgorot(result.dividendIncomeAgorot),
     allowanceApplied: serializeAgorot(result.allowanceAppliedAgorot),
     taxableGain: serializeAgorot(result.taxableGainAgorot),
     taxOwed: serializeAgorot(result.taxOwedAgorot),
@@ -245,6 +264,7 @@ export function serializeTaxSimulation(data: TaxSimulationData) {
       annualAllowance: serializeAgorot(data.profile.annualAllowanceAgorot),
       flatRatePercent: data.profile.flatRatePercent,
     },
+    dividendIncomeThisYear: serializeAgorot(data.dividendIncomeThisYearAgorot),
     realizedThisYear: serializeTaxResult(data.realizedThisYear),
     ifLiquidatedToday: serializeTaxResult(data.ifLiquidatedToday),
     additionalTaxIfLiquidated: serializeAgorot(data.additionalTaxIfLiquidatedAgorot),

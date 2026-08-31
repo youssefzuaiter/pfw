@@ -43,7 +43,15 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Adv
       // A genuinely fractional-ETH gas amount, carried all the way to the 18th decimal digit.
       const wei = etherStringToWei("0.123456789012345678");
       const result = await createCryptoWallet(userA.id, {
-        address: "0x1AD7C10DE6A97AD325EF1BFF74F5B47A448885C7",
+        // All-lowercase, not the fixture's original all-uppercase form —
+        // §3w's amendment (EIP-55 checksum validation, Punch List Phase 3
+        // item 3) verified live that `viem`'s strict `isAddress` accepts
+        // all-lowercase (no checksum info to violate) but genuinely
+        // REJECTS an all-uppercase address unless it happens to equal its
+        // own true (mixed-case) checksum, which this one never did — this
+        // test's own subject (wei precision) has nothing to do with
+        // address casing, so lowercase is the simplest correct fixture.
+        address: "0x1ad7c10de6a97ad325ef1bff74f5b47a448885c7",
         label: "Precision Test Wallet",
         cumulativeGasFeesWei: wei,
       });
@@ -110,8 +118,14 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Adv
 
   describe("createCryptoWallet / listCryptoWallets / deleteCryptoWallet", () => {
     it("creates a wallet with a normalized (lowercased) address", async () => {
+      // The REAL EIP-55 checksum casing for this address (verified via
+      // `toChecksumEvmAddress`, not hand-typed) — an all-uppercase input
+      // (this fixture's form before §3w's amendment added checksum
+      // validation) is now correctly REJECTED rather than accepted, so a
+      // genuinely valid mixed-case address is what actually exercises
+      // "accept a validly-checksummed address, then normalize it."
       const result = await createCryptoWallet(userA.id, {
-        address: "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
+        address: "0xabCDEF1234567890ABcDEF1234567890aBCDeF12",
         label: "Mixed Case Wallet",
       });
       expect(result.ok).toBe(true);

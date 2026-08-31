@@ -3,12 +3,21 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { isValidEvmAddress } from "../../../lib/crypto/evm-address";
 
 /**
  * Adds a public EVM wallet address to track (AGENTS.md §3w). No private
  * key or seed phrase field exists anywhere in this form — this app
  * tracks public addresses only, read-only, the same Tier 0 "never store
  * a credential" law that already governs bank data (AGENTS.md §2.1).
+ *
+ * EIP-55 checksum validation (§3w amendment, Punch List Phase 3 item 3):
+ * `isValidEvmAddress` is checked here BEFORE ever hitting the network —
+ * a mistyped/miscapitalized address is flagged immediately, not only
+ * after a round trip to the server (which still re-validates the same
+ * way, since a client-side check is a UX convenience, never the actual
+ * trust boundary — the same "untrusted input crossing a trust boundary"
+ * treatment every other client-validated field in this app gets).
  */
 export function AddWalletForm() {
   const router = useRouter();
@@ -20,6 +29,17 @@ export function AddWalletForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    const trimmedAddress = address.trim();
+    if (!isValidEvmAddress(trimmedAddress)) {
+      setError(
+        /^0x[0-9a-fA-F]{40}$/.test(trimmedAddress)
+          ? "That address doesn't match its own EIP-55 checksum — double-check the capitalization for a typo."
+          : "Not a valid EVM address — expected 0x followed by 40 hex characters.",
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {

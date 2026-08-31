@@ -34,6 +34,7 @@ function buildCsv(data: TaxSimulationResponse): string {
   lines.push(`Multi-Jurisdiction Capital Gains Tax Summary — ${data.jurisdiction} / ${data.method}, as of ${data.asOf.slice(0, 10)}`);
   lines.push("");
   lines.push("Summary,Amount (agorot)");
+  lines.push(`Dividend income this year,${data.dividendIncomeThisYear.agorot}`);
   lines.push(`Realized this year — tax owed,${data.realizedThisYear.taxOwed.agorot}`);
   lines.push(`If liquidated today — tax owed,${data.ifLiquidatedToday.taxOwed.agorot}`);
   lines.push(`Additional tax if liquidated today,${data.additionalTaxIfLiquidated.agorot}`);
@@ -190,6 +191,15 @@ export function TaxSimulator({ initialData }: { initialData: TaxSimulationRespon
           <Stat
             label="Effective rate (realized)"
             value={data.realizedThisYear.effectiveRate === null ? "—" : `${(data.realizedThisYear.effectiveRate * 100).toFixed(1)}%`}
+          />
+          <Stat
+            label="Dividend income (this year)"
+            value={formatAgorot(agorot(data.dividendIncomeThisYear.agorot))}
+            hint={
+              jurisdiction === "DE"
+                ? "Included in the Kapitalerträge taxable base above"
+                : "Informational only — not included in this jurisdiction's taxable base"
+            }
           />
         </div>
         {isLoading && (

@@ -192,6 +192,67 @@ describe("computeCapitalGainsTax() — Germany", () => {
       computeCapitalGainsTax(deProfile(), longOnly).taxOwedAgorot,
     );
   });
+
+  describe("Kapitalerträge: dividend income folded into the taxable base", () => {
+    it("defaults to zero dividend income and behaves exactly as before when omitted", () => {
+      const gains = { shortTermGainAgorot: agorot(0), longTermGainAgorot: agorot(0), flatGainAgorot: agorot(1_000_000) };
+      const withoutArg = computeCapitalGainsTax(deProfile(), gains);
+      const withExplicitZero = computeCapitalGainsTax(deProfile(), gains, agorot(0));
+      expect(withoutArg).toEqual(withExplicitZero);
+      expect(withoutArg.dividendIncomeAgorot).toBe(0);
+    });
+
+    it("taxes dividend income and capital gains together under the SAME 25% flat rate + solidarity surcharge + shared allowance", () => {
+      const gains = { shortTermGainAgorot: agorot(0), longTermGainAgorot: agorot(0), flatGainAgorot: agorot(600_000) };
+      const dividendIncome = agorot(400_000);
+      const result = computeCapitalGainsTax(deProfile(), gains, dividendIncome);
+      // Combined base 600,000 + 400,000 = 1,000,000; allowance 400,000 -> taxable 600,000;
+      // 25% = 150,000; +5.5% soli = 8,250 -> identical total to the pure-capital-gains
+      // 1,000,000 case above, proving gains and dividends are genuinely pooled, not
+      // taxed as two separate 400,000-allowance buckets.
+      expect(result.dividendIncomeAgorot).toBe(400_000);
+      expect(result.allowanceAppliedAgorot).toBe(400_000);
+      expect(result.taxableGainAgorot).toBe(600_000);
+      expect(result.taxOwedAgorot).toBe(158_250);
+      expect(result.notes.join(" ")).toMatch(/Kapitalerträge taxable base/i);
+    });
+
+    it("owes tax on dividend income even when capital gains alone are a net loss", () => {
+      const netLossGains = { shortTermGainAgorot: agorot(0), longTermGainAgorot: agorot(0), flatGainAgorot: agorot(-500_000) };
+      const dividendIncome = agorot(1_000_000);
+      const result = computeCapitalGainsTax(deProfile({ annualAllowanceAgorot: agorot(0) }), netLossGains, dividendIncome);
+      // Combined base: -500,000 + 1,000,000 = 500,000 (positive) -> taxed, NOT the old
+      // "totalGainAgorot <= 0 => no tax owed" short-circuit this task fixed.
+      expect(result.taxableGainAgorot).toBe(500_000);
+      expect(result.taxOwedAgorot).toBe(agorot(Math.round(500_000 * 0.25 * 1.055)));
+      expect(result.taxOwedAgorot).toBeGreaterThan(0);
+    });
+
+    it("still owes zero tax when capital-gains losses exceed dividend income combined", () => {
+      const netLossGains = { shortTermGainAgorot: agorot(0), longTermGainAgorot: agorot(0), flatGainAgorot: agorot(-1_000_000) };
+      const dividendIncome = agorot(200_000);
+      const result = computeCapitalGainsTax(deProfile(), netLossGains, dividendIncome);
+      expect(result.taxOwedAgorot).toBe(0);
+      expect(result.effectiveRate).toBeNull();
+    });
+
+    it("US and INTL models report dividend income back for context but never tax it", () => {
+      const gains = { shortTermGainAgorot: agorot(0), longTermGainAgorot: agorot(1_000_000), flatGainAgorot: agorot(0) };
+      const dividendIncome = agorot(300_000);
+
+      const usWithDividends = computeCapitalGainsTax(usProfile(), gains, dividendIncome);
+      const usWithoutDividends = computeCapitalGainsTax(usProfile(), gains);
+      expect(usWithDividends.dividendIncomeAgorot).toBe(300_000);
+      expect(usWithDividends.taxOwedAgorot).toBe(usWithoutDividends.taxOwedAgorot);
+      expect(usWithDividends.notes.join(" ")).toMatch(/reported for context only/i);
+
+      const flatGains = { shortTermGainAgorot: agorot(0), longTermGainAgorot: agorot(0), flatGainAgorot: agorot(1_000_000) };
+      const intlWithDividends = computeCapitalGainsTax(intlProfile({ flatRatePercent: 0.2 }), flatGains, dividendIncome);
+      const intlWithoutDividends = computeCapitalGainsTax(intlProfile({ flatRatePercent: 0.2 }), flatGains);
+      expect(intlWithDividends.dividendIncomeAgorot).toBe(300_000);
+      expect(intlWithDividends.taxOwedAgorot).toBe(intlWithoutDividends.taxOwedAgorot);
+    });
+  });
 });
 
 describe("computeCapitalGainsTax() — international generic", () => {

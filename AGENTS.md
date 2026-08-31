@@ -4102,6 +4102,234 @@ inherits it).
   own per-email limit — a real login-brute-force throttle would be a
   reasonable next hardening pass, not built speculatively here.
 
+## 3gg. Punch List Phase 3: German Kapitalerträge, Currency Toggle, EIP-55, SECURITY-REPORT.md (ad hoc)
+
+Explicit user request closing four gaps a companion Punch List artifact
+had flagged: German dividend income missing from the tax simulator's
+taxable base (§3r), no UI toggle for the native-vs-₪ figures §3k/§3l
+already compute, no EIP-55 checksum validation on wallet addresses
+(§3w), and Phase 8's `docs/SECURITY-REPORT.md` deliverable never having
+been produced.
+
+- **German tax simulator: dividends folded into Kapitalerträge**
+  (`src/lib/tax-rules.ts`) — `computeCapitalGainsTax` gained a third,
+  optional `dividendIncomeAgorot` parameter (default 0, so every
+  existing call site is source-compatible). For `DE` only, capital gains
+  and dividend income are now taxed TOGETHER under the one 25%
+  Abgeltungssteuer rate, one shared Sparer-Pauschbetrag allowance, and
+  the same solidarity-surcharge/church-tax add-ons — matching real
+  German law's actual Kapitalerträge treatment, not two separate
+  25%-rate calculations. `TaxCalculationResult` gained a
+  `dividendIncomeAgorot` field, reported for every jurisdiction (US/INTL
+  echo it back unchanged, purely informational, with a note explaining
+  it isn't taxed there) so the field has one consistent meaning across
+  all three jurisdictions rather than being DE-only and undefined
+  elsewhere.
+  - **A real bug this fix had to close, not just add a parameter for**:
+    the pre-existing `totalGainAgorot <= 0 -> no tax owed` short-circuit
+    would have silently zeroed out tax on real dividend income whenever
+    capital gains alone were a net loss for the year — a real German
+    taxpayer owes Kapitalertragsteuer on dividends received regardless
+    of an unrelated stock-sale loss the same year (within this
+    simulator's own documented level of simplification). Fixed by
+    keying that short-circuit on a DE-specific `combinedTaxableBaseAgorot`
+    (capital gains + dividends) rather than capital gains alone,
+    computed once and reused by both the early-return and the real DE
+    branch — US/INTL are structurally unaffected, since their combined
+    base always equals `totalGainAgorot` (dividends are never added to
+    it for them).
+  - **`src/server/tax/build-tax-data.ts`**: pulls real `PAID` dividends
+    (`listPaidDividends`, `dal/dividends.ts`) and sums them for the
+    simulated tax year via `sumDividendIncome` (already existed,
+    `portfolio-analytics.ts`, §3l) — the SAME figure is passed into both
+    `realizedThisYear` and `ifLiquidatedToday`'s tax calculations (a
+    hypothetical liquidation doesn't change dividends already received,
+    and using the same figure in both keeps `additionalTaxIfLiquidatedAgorot`'s
+    existing subtraction semantics correct — the dividend term cancels
+    out of that delta exactly as intended). New
+    `dividendIncomeThisYearAgorot` field on `TaxSimulationData`,
+    serialized at the top level of the API/page response
+    (`serializeTaxSimulation`) alongside the per-jurisdiction figure
+    inside each `TaxCalculationResult`.
+  - **UI** (`tax-simulator.tsx`): a new "Dividend income (this year)"
+    stat card, hint text switching between "Included in the
+    Kapitalerträge taxable base above" (DE) and "Informational only —
+    not included in this jurisdiction's taxable base" (US/INTL); added
+    to the CSV export summary too.
+  - **Tested**: 5 new unit tests (`tax-rules.test.ts`) covering the
+    default-zero-is-a-no-op case, gains+dividends genuinely pooled under
+    one allowance (not two separate 400,000-allowance buckets — proven
+    by matching the tax owed on a combined 1,000,000 exactly against the
+    pre-existing pure-capital-gains 1,000,000 case), tax owed on
+    dividends alone with a net capital LOSS (the bug above, pinned),
+    zero tax when losses exceed dividends combined, and US/INTL echoing
+    dividend income back without taxing it. A new integration suite
+    (`tests/integration/tax-simulation-dividends.test.ts`, 4 cases)
+    proves the real DAL wiring — a real `Trade`+`Dividend` pair seeded
+    via the admin client, `buildTaxSimulation` called for real against a
+    real Postgres — including a real, correctly-rounded DE tax figure
+    with zero realized capital gains that year, the US jurisdiction
+    reporting the identical dividend figure untaxed, and a
+    date-window-boundary case (a dividend paid outside the simulated tax
+    year is correctly excluded).
+
+- **Currency UI Toggle** (`src/lib/hooks/use-currency-display-mode.ts`,
+  `src/components/currency/`): a single, app-wide preference for whether
+  a foreign-currency figure shows its native amount or its ₪ equivalent
+  as the PRIMARY line, applied consistently everywhere via one shared
+  `<CurrencyAmount>` display primitive and one `<CurrencyToggle>`
+  control.
+  - **Deliberately NOT a Zustand `persist` store**, despite Zustand
+    already being an installed, used dependency (`zk-vault-store.ts`) —
+    a `persist` store rehydrates from `localStorage` AFTER mount, which
+    would reproduce the exact hydration-mismatch class of bug this app's
+    `ThemeToggle` already solved correctly (§3c) by using
+    `useSyncExternalStore` with a server snapshot that's always the safe
+    default. `use-currency-display-mode.ts` copies that EXACT pattern —
+    same same-tab-`EventTarget`-pub/sub shape (`localStorage`'s own
+    `storage` event only fires in OTHER tabs, never the one that called
+    `setItem`), same `getServerSnapshot` returning the pre-toggle default
+    (`"ils"`, ₪ primary — what every screen already showed before this
+    toggle existed, so a not-yet-hydrated client renders identically to
+    what was always there) — rather than importing a second, differently-
+    shaped state-persistence mechanism for what is functionally the same
+    kind of problem `ThemeToggle` already solved.
+  - **Where it's wired in** — every real "foreign-currency account
+    screen" a full-codebase grep for `formatNativeAmount`/`nativeBalance`
+    usage actually found (three locations, not assumed): (1)
+    `household-shared-view.tsx`'s "Shared accounts" list (`/budgets?
+    view=household`) — this one previously showed ONLY the native
+    amount, no ₪ figure at all, so `budgets/page.tsx` now also fetches
+    `getLatestRateTable()` and computes each shared account's live ₪
+    equivalent server-side (never stored, law #5) before handing both
+    figures down; (2) `/trading/portfolio`'s `PositionsTable` (market
+    value); (3) `/trading/portfolio`'s `DividendSchedule` (per-payout and
+    projected-total figures) — kept as its own hand-written toggle-aware
+    render rather than reusing `<CurrencyAmount>` directly, since its
+    secondary line carries an extra per-share-×-quantity breakdown
+    `<CurrencyAmount>`'s generic two-figure shape has no room for; its
+    "Projected total" summary line stays ALWAYS ₪ regardless of the
+    toggle, on purpose — payouts can span more than one native currency,
+    and only ₪ is a common unit to sum a multi-currency total in (a real
+    bug caught and fixed in-session before it ever shipped: an early
+    draft tried to show "the first payout's native amount" as a
+    substitute total, which is simply wrong for a multi-currency list,
+    not a meaningful figure at all).
+  - **`wallet-balance-row.tsx` (crypto wallets, §3w) deliberately
+    untouched** — it already shows native ETH + ₪ simultaneously, always,
+    by design (a genuinely different currency *kind*, not a second fiat
+    currency a user would want to "switch away from"), consistent with
+    §3w's own stated convention; this toggle's scope is the §3k/§3l fiat/
+    equity native-vs-₪ pairs specifically.
+  - **Tested**: 15 new tests — `use-currency-display-mode.test.tsx` (6
+    cases: default, garbage-value fallback, read-back, toggle, explicit
+    set, and same-tab pub/sub across two independently-mounted hook
+    instances — proving one `<CurrencyToggle>` click updates every
+    `<CurrencyAmount>` on the page, not just the one component clicked),
+    `currency-toggle.test.tsx` (4 cases), `currency-amount.test.tsx` (5
+    cases, including the ILS-currency single-figure no-toggle case and
+    custom class-name passthrough). Note the hook's test file is
+    `.test.tsx` (not `.test.ts`) specifically because it touches
+    `window.localStorage` and needs the jsdom "component" Vitest
+    project, not the Node "unit" one — confirmed by the first version
+    (as `.test.ts`) silently never running under `--project component`
+    at all, caught before considering the work done.
+
+- **EIP-55 checksum validation** (`src/lib/crypto/evm-address.ts`, §3w
+  amendment) — closes that section's own stated KNOWN LIMITATION. Uses
+  `viem`'s `isAddress`/`getAddress`/`checksumAddress` (already an
+  installed dependency, added for §3y's RPC-multiplexing work) rather
+  than a new `keccak256`/`eip55` package — no new dependency needed.
+  `isValidEvmAddress` now requires a mixed-case address to match its
+  true Keccak-256 checksum casing; an all-lowercase address is still
+  accepted (no checksum information to violate, per EIP-55). New
+  `toChecksumEvmAddress` computes the canonical mixed-case form for a
+  future "did you mean 0xAbC...?" UI, not currently surfaced.
+  - **A real, verified-by-direct-execution finding, not assumed from the
+    spec text**: `viem`'s strict `isAddress` accepts an all-LOWERCASE
+    address unconditionally but genuinely REJECTS an all-UPPERCASE one
+    (it only special-cases all-lowercase in its own source; an
+    all-uppercase string falls through to a real checksum comparison,
+    which it essentially never satisfies, since a true checksum is
+    always genuinely mixed-case) — contrary to a common paraphrase of
+    EIP-55 ("all-lower AND all-upper both skip the checksum"). Confirmed
+    by running it directly against real addresses before writing a
+    single test against it, not inferred from viem's docs or source
+    comments. Documented plainly in `evm-address.ts`'s own header rather
+    than silently coded around.
+  - **`AddWalletForm`** now validates client-side, before the network
+    round-trip, giving an immediate "double-check the capitalization"
+    message for a wrong-checksum address vs. a generic format error for
+    a shape-invalid one — the server (`createCryptoWallet` via the
+    unchanged `normalizeEvmAddress` chokepoint) still re-validates
+    identically, since a client-side check is UX only, never the actual
+    trust boundary.
+  - **Two pre-existing test fixtures broke, correctly, not from a new
+    bug**: `tests/integration/crypto-wallets.test.ts` had two
+    all-uppercase address fixtures the OLD lenient (format-only)
+    validator accepted — one (a wei-precision test, unrelated to casing)
+    fixed by lowercasing; the other (a test literally named "creates a
+    wallet with a normalized (lowercased) address") fixed by replacing
+    it with the address's REAL EIP-55 checksum casing (computed via
+    `toChecksumEvmAddress`, not hand-typed — this app's own history
+    already has one incident of a hand-typed hex fixture silently being
+    the wrong length, §3w, which is exactly the failure mode
+    computing it programmatically avoids). `evm-address.test.ts` was
+    substantially rewritten around a real, verified checksum fixture
+    instead of the old file's hand-typed "well-formed mixed-case"
+    string, which turned out to have never actually carried a valid
+    checksum in the first place — caught by its own test failing
+    against the new, correct implementation, the same kind of
+    fixture-not-implementation bug §3w's own crypto-wallet address
+    fixtures hit before.
+  - **Verified the client bundle impact directly, not assumed from
+    "viem is tree-shakeable"**: grepped the compiled `.next/static/`
+    output after a real production build and confirmed RPC/transport
+    strings (`createPublicClient`, transport constructors) are ABSENT
+    from the client bundle while the checksum/Keccak logic IS present,
+    in exactly one ~21KB (~7KB gzipped) chunk — tree-shaking genuinely
+    pulled in only the address utilities, not viem's RPC surface.
+
+- **`SECURITY-REPORT.md`** (new, repo root) — the Phase 8 deliverable
+  `docs/SECURITY.md` had explicitly flagged as "not produced yet" since
+  Phase 7. A dated, point-in-time snapshot (not a living checklist like
+  `docs/SECURITY-CHECKLIST.md`), covering authentication (§3ff),
+  authorization/RLS (§2/§3a), the three separate cryptographic schemes
+  (§4.1 server-held field encryption, §4.2 zero-knowledge client vaults,
+  §4.3 Web Worker key isolation, §4.4 EIP-55), application-layer controls
+  (CSP/CSRF/rate-limiting/injection/XSS), the AI advisor/copilot security
+  model, data minimization, the automated CI security pipeline (Gitleaks/
+  Semgrep/guard tests, including the rejected Web-Serial/Arduino
+  migration-gate design from §3aa as a worked example of a control that
+  was proposed and correctly turned down), a plainly-stated "Known risk
+  boundaries and accepted risk" section (no MFA, no password reset, JWT
+  sessions can't be server-side revoked mid-lifetime, the `npm audit`
+  exceptions, no independent third-party audit has ever been run), and a
+  verification-methodology section naming exactly how each claim in the
+  report was actually checked.
+  - **Explicitly flags, rather than silently leaving undiscovered**, that
+    `docs/SECURITY.md` and `docs/SECURITY-CHECKLIST.md` have NOT been
+    refreshed since real authentication (§3ff) landed — several of
+    `SECURITY-CHECKLIST.md`'s rows (Argon2id, session management) still
+    read `⬜ deferred`, which is now stale. `SECURITY-REPORT.md` reflects
+    reality as of this pass; bringing the other two documents' per-
+    control status markers back in sync is named as a recommended
+    follow-up, not done in this pass (out of the task's own stated
+    scope, which named creating this one new file).
+- **Verified, not just written**: `npm run check` clean (1045/1048,
+  3 skip for the unrelated embedding sidecar — up from 1013 before this
+  pass, the difference being every new test enumerated above). Full
+  `npm run build` and `verify:client-bundle-secrets` both clean. Gitleaks
+  (pinned `v8.30.1`) and Semgrep (pinned `1.174.0`, the same rulesets
+  §3z wired into CI) both re-run locally against the complete changed
+  tree — zero new findings from anything in this pass; the handful of
+  pre-existing findings both scanners already reported (§3z/§3aa) are
+  unchanged and, per Gitleaks, entirely confined to the gitignored
+  `.next/` build-output directory (confirmed via `git check-ignore`, not
+  assumed). Live `curl` smoke-checks against the running dev server
+  confirmed the three touched pages and the tax-simulation API route all
+  compile and respond with the expected auth-gated status codes.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

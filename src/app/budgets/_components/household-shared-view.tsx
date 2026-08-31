@@ -1,6 +1,8 @@
 import { formatAgorot, agorot } from "../../../lib/money";
-import { formatNativeAmount, nativeAmount, type CurrencyCode } from "../../../lib/currency";
+import { nativeAmount, type CurrencyCode } from "../../../lib/currency";
 import { Badge } from "../../../components/badge/badge";
+import { CurrencyAmount } from "../../../components/currency/currency-amount";
+import { CurrencyToggle } from "../../../components/currency/currency-toggle";
 
 type SharedBudgetRow = {
   id: string;
@@ -15,6 +17,8 @@ type SharedBankAccountRow = {
   nickname: string | null;
   currency: CurrencyCode;
   nativeBalance: bigint;
+  /** Live ₪ equivalent of `nativeBalance` at the latest synced exchange rate — computed server-side (page.tsx), never persisted (law #5). */
+  agorotValue: number;
   user: { id: string; displayName: string };
 };
 
@@ -69,7 +73,10 @@ export function HouseholdSharedView({
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Shared accounts</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-muted">Shared accounts</h2>
+          {bankAccounts.some((a) => a.currency !== "ILS") && <CurrencyToggle />}
+        </div>
         {bankAccounts.length === 0 ? (
           <p className="text-sm text-muted">No accounts shared into this household yet.</p>
         ) : (
@@ -80,9 +87,15 @@ export function HouseholdSharedView({
                   <p className="text-sm text-fg">{account.nickname ?? account.institutionName}</p>
                   <p className="text-xs text-muted">Shared by {ownerLabel(account.user)}</p>
                 </div>
-                <p className="font-tabular-figures text-sm text-fg">
-                  {formatNativeAmount(nativeAmount(Number(account.nativeBalance)), account.currency)}
-                </p>
+                <div className="text-right">
+                  <CurrencyAmount
+                    agorotValue={agorot(Math.round(account.agorotValue))}
+                    nativeValue={nativeAmount(Number(account.nativeBalance))}
+                    currency={account.currency}
+                    primaryClassName="font-tabular-figures text-sm text-fg"
+                    secondaryClassName="font-tabular-figures text-xs text-muted"
+                  />
+                </div>
               </li>
             ))}
           </ul>

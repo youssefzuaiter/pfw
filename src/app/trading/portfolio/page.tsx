@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Badge } from "../../../components/badge/badge";
+import { CurrencyToggle } from "../../../components/currency/currency-toggle";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { buildPortfolioData } from "../../../server/portfolio/build-portfolio-data";
 import { AllocationBar } from "../_components/allocation-bar";
@@ -33,7 +34,10 @@ export default async function PortfolioPage() {
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Positions</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-muted">Positions</h2>
+          <CurrencyToggle />
+        </div>
         {data.rows.length === 0 ? (
           <p className="text-sm text-muted">
             No open positions.{" "}
@@ -69,8 +73,9 @@ export default async function PortfolioPage() {
       </section>
 
       <p className="text-xs text-muted">
-        Prices come from the simulated market feed. Positions are held in their native currency and converted
-        to shekels at the latest synced exchange rate; both figures are shown side by side.
+        Prices come from the simulated market feed. Positions are held in their native currency and converted to
+        shekels at the latest synced exchange rate — both figures are always shown; use the toggle above to switch
+        which one displays first.
       </p>
     </div>
   );
