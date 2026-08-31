@@ -1,0 +1,18 @@
+{
+  "inputSize": 3,
+  "hiddenSize": 32,
+  "opsetVersion": 18,
+  "inputNames": [
+    "input",
+    "h_in",
+    "c_in"
+  ],
+  "outputNames": [
+    "mean",
+    "log_var",
+    "h_out",
+    "c_out"
+  ],
+  "trainedOn": "synthetic data only (see this script) \u2014 not this app's real seeded data, not real financial time series",
+  "seed": 20260904
+}

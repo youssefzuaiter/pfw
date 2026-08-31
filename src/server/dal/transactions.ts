@@ -403,6 +403,50 @@ export async function getMonthlyIncomeExpenseHistory(
     .map(([monthKey, { income, expense }]) => ({ monthKey, incomeAgorot: income, expenseAgorot: expense }));
 }
 
+export type DailyNetCashFlow = {
+  /** UTC calendar date, ISO `YYYY-MM-DD`. */
+  dateKey: string;
+  /** Signed net (income − expense) for that day, in agorot. */
+  netAgorot: bigint;
+};
+
+/**
+ * A DENSE daily series — every calendar day in `[from, to)` gets a row,
+ * `netAgorot: 0n` for a day with no transactions at all, not a gap in
+ * the array (AGENTS.md §3dd). This is the one real difference from
+ * `getMonthlyIncomeExpenseHistory` above (which only ever emits a
+ * bucket for a month that actually had activity) — the forecaster
+ * Worker's LSTM warmup needs a genuinely continuous day-by-day sequence
+ * to walk through; a silently-skipped day would shift every later
+ * day's position by one, corrupting the day-of-week feature the model
+ * was trained to condition on.
+ */
+export async function getDailyNetCashFlow(userId: string, from: Date, to: Date): Promise<DailyNetCashFlow[]> {
+  const rows = await withUserScope(userId, (tx) =>
+    tx.notableTransaction.findMany({
+      where: { userId, occurredAt: { gte: from, lt: to } },
+      select: { occurredAt: true, amount: true },
+    }),
+  );
+
+  const byDay = new Map<string, bigint>();
+  for (const row of rows) {
+    const dateKey = row.occurredAt.toISOString().slice(0, 10);
+    byDay.set(dateKey, (byDay.get(dateKey) ?? 0n) + row.amount);
+  }
+
+  const days: DailyNetCashFlow[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate()));
+  while (cursor < end) {
+    const dateKey = cursor.toISOString().slice(0, 10);
+    days.push({ dateKey, netAgorot: byDay.get(dateKey) ?? 0n });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return days;
+}
+
 export type MerchantOccurrenceRow = {
   merchantKey: string;
   /** The original-cased merchant/description string, for display — merchantKey is normalized (trimmed, lowercased) and isn't fit to show a user. */

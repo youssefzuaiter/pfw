@@ -3669,6 +3669,217 @@ forgotten.
   simplification over continuously syncing 384-dimension search state
   into a shareable URL.
 
+## 3dd. Stochastic Cash-Flow Forecasting via PyTorch/ONNX/Web Worker (ad hoc)
+
+Explicit user request, framed as "Phase 3." Flagged one part before
+building anything, the same "build what's real, don't ship what's
+misleading" discipline §3aa (the Arduino/migration-gate request) and
+§3bb (the fabricated-scope search request) already established this
+session: a literally "dummy" (randomly-initialized, never-trained)
+neural network feeding a p5/median/p95 confidence-band chart on the
+dashboard would show statistically meaningless numbers with the visual
+authority of a real forecast — worse than not shipping the feature,
+and inconsistent with why `src/lib/monte-carlo.ts` (§3n) was built as a
+genuine stochastic simulation rather than a fake-looking one. Presented
+the choice; the user chose to actually train the model for real AND to
+verify the training/export pipeline by actually running it in this
+session, not leave it unverified.
+
+- **`scripts/train-forecaster.py`** (new): defines and TRAINS a small
+  autoregressive probabilistic RNN — DeepAR-shaped, not a 30-day-unroll
+  model. A single `nn.LSTMCell` (hidden size 32) plus a 2-unit linear
+  head predicting next-day `(mean, log_var)` of a Gaussian over the
+  NEXT day's cash-flow delta, conditioned on `[previous delta, sin(dow),
+  cos(dow)]`. Trained via Gaussian NLL, teacher-forced, on 2,000
+  synthetic 120-day series (each with its own random stochastic-drift
+  trend, a random per-series weekly seasonal profile, and Gaussian
+  noise — deliberately not derived from this app's own real seed-data
+  generator, which is JS/mulberry32-driven; an independent NumPy
+  implementation producing a similarly-*shaped* signal). Real training
+  loss genuinely converged (mean NLL/step: 0.32 → 0.075 over 30 epochs)
+  — confirmed by watching it happen, not assumed.
+  - **Why a single-step cell, not an unrolled 30-day graph**: ONNX
+    graphs are static compute graphs, ill-suited to hosting a random
+    sampling operation. Exporting only the recurrent cell lets the SAME
+    tiny graph serve two different phases, both driven from
+    `forecaster-worker-handlers.ts`: teacher-forced warmup over a real
+    user's actual last 90 days (building a hidden state that reflects
+    THEIR pattern), then an autoregressive Monte Carlo rollout for 30
+    days — batched across many independent sampled paths in one
+    `session.run()` call per day, each path sampling its own next delta
+    via `sampleNormal` (reused from `monte-carlo.ts`, not a second
+    hand-rolled Box-Muller) and feeding it back in as the next step's
+    input. Empirical percentiles across paths, computed in JS, are what
+    produce p5/p50/p95 — the same "many stochastic paths, then take
+    percentiles" approach `monte-carlo.ts` already uses, not a
+    closed-form propagation of 30 days of compounding Gaussians.
+  - **Per-series normalization, not a baked-in scale**: every synthetic
+    training series is z-scored by its OWN mean/std before training
+    (real households' cash flow spans wildly different absolute
+    scales), and `forecaster-worker-handlers.ts` does the identical
+    normalize-by-the-user's-own-recent-statistics step at inference
+    time — the model's weights only ever need to learn the general
+    SHAPE of drift + weekly seasonality, never a specific currency
+    scale.
+- **Actually run, not left unverified**: a throwaway `python3 -m venv
+  .venv` (project root, matching the literal setup the user asked for),
+  CPU-only `torch`, `onnx`, `onnxruntime`, `numpy` installed, script run
+  for real, `public/models/cashflow-forecaster.onnx` produced for real,
+  then the `.venv` deleted immediately after (`rm -rf .venv`, confirmed
+  gone, confirmed it never touched `git status`) — this app has no
+  permanent Python ML toolchain, matching `sidecar/`'s own "own a
+  small, separate Python environment only where genuinely needed"
+  precedent rather than adding a project-wide Python dependency for a
+  script that only needs to run once (or again, if this model is ever
+  retrained).
+  - **Three real export bugs hit and fixed while actually running
+    this, not discovered by reading torch's docs**: (1) `torch.onnx.export`
+    on the installed torch 2.13 needed the `onnxscript` package, not
+    bundled by default — installed. (2) Forcing `opset_version=17`
+    silently downgraded a `Split` node into an invalid
+    graph (`num_outputs` is an opset-18-only attribute) —
+    `onnx.checker.check_model` caught it immediately; fixed by exporting
+    at opset 18 (what the exporter targets natively) instead of fighting
+    a lossy downgrade. (3) The legacy `dynamic_axes` argument produced a
+    model that computed correct values but declared a STATIC batch=1
+    shape on every output (a real, if PyTorch-onnxruntime-forgiving,
+    metadata bug — reproduced live via ~900 `VerifyOutputSizes` warnings
+    when actually run at batch=4) — fixed by switching to the newer
+    `dynamic_shapes` argument (`torch.export.Dim`), which the exporter's
+    own warning had already pointed at; re-verified via
+    `onnx.load(...).graph.{input,output}` that every tensor now
+    genuinely declares a `'batch'` dynamic dimension, not just "works
+    anyway." (4) The exporter defaulted to splitting weights into a
+    separate `.onnx.data` external-data file — sensible for a model
+    near ONNX's 2GB inline limit, irrelevant at 36KB; re-saving with
+    `save_as_external_data=False` folds it back into one self-contained
+    `.onnx` file, which is what the Worker actually fetches (one
+    `fetch()`, no second file to keep in sync) — folded into the script
+    itself, not applied as a one-off manual patch, so a fresh run stays
+    correct on its own.
+  - **Real numerical verification, not just "the checker didn't
+    complain"**: `verify_onnx()` runs the same 120-step warmup through
+    BOTH the source PyTorch model and the exported ONNX graph (batch=4,
+    exercising the dynamic axis, on data the model never trained on) and
+    asserts the outputs match — confirmed live: max abs diff `1.43e-06`,
+    float32-precision-equivalent. `public/models/cashflow-forecaster.meta.json`
+    ships alongside it (architecture constants + an honest `"trainedOn":
+    "synthetic data only... not real financial time series"` note).
+- **`onnxruntime-web` added as an explicit direct dependency** (pinned
+  to the exact version already resolved transitively via
+  `@huggingface/transformers`, confirmed via `npm install` producing a
+  1-line `package-lock.json` diff — no version change, no new download).
+  Reuses the SAME self-hosted `.asyncify` WASM runtime pair under
+  `public/onnx-runtime/` that `local-embedder-worker-handlers.ts`
+  already vendors (§3u/§3y) — a second WASM payload was never needed.
+  Confirmed onnxruntime-web's own default variant selection (per its
+  type declarations) would have picked the PLAIN, non-asyncify filename
+  absent an explicit override — set explicitly by exact filename, the
+  same reasoning §3y's WASM-variant bug already established for the
+  embedding Worker, applied here before it could repeat.
+- **`src/workers/forecaster.worker.ts` / `forecaster-worker-handlers.ts`
+  / `forecaster-client.ts`** (new, `src/workers/` — a new top-level
+  location, distinct from `src/lib/workers/`'s generic RPC protocol +
+  crypto workers and `src/lib/embeddings/`'s embedding worker, as the
+  user's own file path named it): reuses the existing
+  `serveRpc`/`createRpcClient` protocol (§3x) rather than a third copy.
+  **Lifecycle is deliberately different from the embedding Worker's
+  "construct lazily, stay warm, terminate explicitly on demand"
+  pattern**: this one instantiates, runs its one `forecast` RPC call,
+  and terminates every single time (`forecaster-client.ts`'s `finally`
+  block, covering the error path too) — the right shape for a
+  once-per-dashboard-load computation, not a repeated interactive one,
+  and the most literal reading of the task's own "properly instantiated
+  and terminated to prevent memory leaks" ask.
+- **`getDailyNetCashFlow`** (new, `src/server/dal/transactions.ts`): a
+  DENSE daily series (`netAgorot: 0n` for a day with no transactions,
+  never a gap) — the one real difference from the existing
+  `getMonthlyIncomeExpenseHistory` (§3n), which only emits a bucket for
+  a month that had activity. A silently-skipped day would shift every
+  later day's position, corrupting the day-of-week feature the model
+  was trained to condition on. `build-runway-forecast-data.ts`
+  (`cache()`-wrapped like every other `build-*-data.ts` aggregator)
+  pairs this with `computeLiveNetWorth`'s `liquidity.liquidAgorot` (the
+  LIQUID balance specifically, §3v — never full net worth, which
+  includes illiquid assets/debts that don't move day-to-day) as the
+  rollout's starting anchor. Deliberately runs no forecast itself —
+  unlike `build-monte-carlo-data.ts`, the actual inference only ever
+  happens client-side, so this function's whole job is fetching and
+  shaping real data.
+- **`RunwayForecastChart`** (new, `src/app/dashboard/_components/`):
+  wired into `/dashboard` right after the existing deterministic 60-day
+  `CashFlowChart` (§3b) — a deliberate juxtaposition, not a replacement:
+  the deterministic engine stays the trustworthy baseline; this is
+  explicitly labeled (a `Badge`, and a caption note) as an experimental,
+  synthetic-data-trained probabilistic view, "a range to plan around,
+  not a prediction to bank on." Recharts `AreaChart` with the standard
+  two-stacked-`Area` band idiom (a transparent base area at p5, a
+  visible area for the p95−p5 delta stacked on top) for the shaded cone,
+  plus a `Line` for the median — every `Area`/`Line` sets
+  `isAnimationActive={false}`, this app's standing rule. Hit the same
+  `react-hooks/set-state-in-effect` trap this session already hit twice
+  (§3cc's `TransactionsExplorer`, the Monte Carlo widget's own
+  established shape) — fixed the same way: the whole async sequence
+  wrapped in a deferred IIFE inside the effect, no synchronous `setState`
+  in the effect body itself.
+- **`sampleNormal` exported from `src/lib/monte-carlo.ts`** (previously
+  module-private) specifically so this feature reuses the SAME
+  well-tested Box-Muller implementation rather than a second hand-rolled
+  copy of a probabilistic sampling primitive — the kind of thing worth
+  reusing, not re-deriving.
+- **Verified, not just written**: `npm run check` clean with the DB
+  genuinely live (979/982 passing, 3 skip for the unrelated embedding
+  sidecar) — 10 new unit tests for `forecaster-worker-handlers.ts`
+  (mocking `onnxruntime-web` entirely, same reasoning `local-embedder.test.ts`
+  already documents for why a unit test can't meaningfully assert on a
+  real model's forecast quality): exact warmup/rollout call counts and
+  batch shapes, the session created exactly once and reused throughout,
+  the exact self-hosted WASM paths configured, a zero-mean deterministic
+  case holding the balance perfectly flat, a per-path-varying-mean case
+  proving percentiles reflect REAL cross-path spread (hand-verified
+  sorted-index math, including a genuine `-0` rounding edge case pinned
+  rather than glossed over), mismatched-length and empty-history
+  rejection, and `numPaths` clamping at both ends. 3 new integration
+  tests for `getDailyNetCashFlow` against real Postgres (dense zero-fill
+  across a 10-day window with two real transactions, same-day summing,
+  cross-user IDOR isolation) — note `notableTransaction.createMany`
+  can't be used even via the admin client (§3j/§3q's documented
+  encrypted-fields-extension constraint), so the same-day-summing test
+  uses two `.create()` calls. A new client-only import guard
+  (`tests/guards/forecaster-client-only.test.ts`) matching the
+  established pattern for every other browser-only module. Live
+  `curl` against the real running dev server: `/dashboard` 200, the
+  `.onnx` file serves at exactly the byte size the training script
+  reported (35,922 bytes) with the CSP's `worker-src 'self' blob:` and
+  `script-src ... 'wasm-unsafe-eval'` directives already in place (no
+  new CSP change needed — §3q/§3u's existing directives already cover
+  what this feature needs), and the existing self-hosted `.asyncify`
+  WASM pair still serves correctly.
+- **Not verified in this pass, flagged rather than glossed over**: no
+  real browser was driven end-to-end to watch the Worker actually load
+  the WASM runtime, run real inference, and render the chart — this
+  session had no interactive browser tool available for it. What WAS
+  verified: the pure JS orchestration logic (warmup/rollout/percentile
+  math) against a mocked ONNX session, the exported model's own
+  correctness (PyTorch vs. ONNX numerical equivalence, run for real),
+  and that every static asset the real browser flow depends on serves
+  correctly with the right CSP posture. The actual "does a real browser
+  successfully run WASM inference inside this Worker and render a
+  sensible chart" question is the natural next thing to check by hand
+  before relying on this feature, the same honesty §3o's local-Ollama
+  copilot gives its own untested-live-model gap.
+- **Known limitations, left as such rather than silently expanded
+  scope**: trained on synthetic data only, stated plainly in the
+  model's own metadata file and the dashboard UI's own caption — not a
+  claim of real forecasting accuracy, a demonstration of the
+  architecture and pipeline. No backfill/retraining pipeline (the
+  `.onnx` file is a committed build artifact, not regenerated
+  automatically — re-run `scripts/train-forecaster.py` by hand,
+  matching `scripts/train-forecaster.py`'s own "run in a throwaway
+  venv" precedent, if the model ever needs retraining). No ANN/vector
+  infra involved here at all — unrelated to §3cc's pgvector work,
+  despite both landing in nearby sessions.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

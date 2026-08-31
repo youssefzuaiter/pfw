@@ -168,7 +168,8 @@ function sampleStandardNormal(randomFn: () => number): number {
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 
-function sampleNormal(mean: number, stdDev: number, randomFn: () => number): number {
+/** Exported for reuse by src/workers/forecaster-worker-handlers.ts (AGENTS.md §3dd) — the same well-tested Box-Muller primitive, not a second hand-rolled copy. */
+export function sampleNormal(mean: number, stdDev: number, randomFn: () => number): number {
   return mean + stdDev * sampleStandardNormal(randomFn);
 }
 

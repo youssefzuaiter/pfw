@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { buildLiquidityRunwayData } from "../../server/analytics/build-liquidity-runway-data";
+import { buildRunwayForecastData } from "../../server/analytics/build-runway-forecast-data";
 import { buildDashboardData } from "../../server/dashboard/build-dashboard-data";
 import { getVaultStatus } from "../../server/dal/dead-mans-switch";
 import { getSharedGroupData, listMyGroups } from "../../server/dal/shared-groups";
@@ -12,6 +13,7 @@ import { HouseholdSummary } from "./_components/household-summary";
 import { IncomeExpenseChart } from "./_components/income-expense-chart";
 import { LiquidityRunwayCard } from "./_components/liquidity-runway-card";
 import { NetWorthHero } from "./_components/net-worth-hero";
+import { RunwayForecastChart } from "./_components/runway-forecast-chart";
 
 // This screen is entirely live, per-user financial data — never a
 // candidate for static prerendering or cross-request caching (see
@@ -21,11 +23,12 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const [data, myGroups, vaultStatus, liquidityRunway] = await Promise.all([
+  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast] = await Promise.all([
     buildDashboardData(user.id),
     listMyGroups(user.id),
     getVaultStatus(user.id),
     buildLiquidityRunwayData(user.id),
+    buildRunwayForecastData(user.id),
   ]);
 
   const households = await Promise.all(
@@ -82,6 +85,11 @@ export default async function DashboardPage() {
           minimum={data.cashFlowForecast.minimum}
         />
       </section>
+
+      <RunwayForecastChart
+        startingLiquidAgorot={runwayForecast.startingLiquidAgorot}
+        dailyHistory={runwayForecast.dailyHistory}
+      />
 
       <div className="grid gap-6 md:grid-cols-2">
         <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="category-spend-heading">
