@@ -1,0 +1,15 @@
+# Gitleaks fingerprint allowlist — see docs/SECURITY-CHECKLIST.md's
+# "Secret rotation & storage guidelines" section for this repo's real
+# secret-handling rules. Every entry below must be a documented,
+# non-sensitive, already-triaged false positive — never a shortcut to
+# silence a real finding.
+#
+# .github/workflows/ci.yml's ENCRYPTION_KEY is a hardcoded, throwaway
+# value that only ever backs an ephemeral per-job Postgres database,
+# destroyed when the job ends — never used against real data, never
+# reused anywhere else (see that file's own header comment, and
+# AGENTS.md's ENCRYPTION_KEY rotation note for why a real one is
+# different). If ci.yml's ENCRYPTION_KEY line ever moves, this
+# fingerprint will stop matching and Gitleaks will correctly re-flag it
+# until this file is updated to match.
+.github/workflows/ci.yml:generic-api-key:23

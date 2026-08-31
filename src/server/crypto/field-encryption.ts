@@ -17,6 +17,7 @@ import { getEncryptionKey } from "../env";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH_BYTES = 12; // 96-bit IV is the GCM-recommended size.
+const AUTH_TAG_LENGTH_BYTES = 16; // 128-bit tag — matches getAuthTag()'s own default, made explicit below.
 const FORMAT_VERSION = "v1";
 
 function getKey(): Buffer {
@@ -50,7 +51,15 @@ export function decryptField(stored: string): string {
   const [, ivB64, authTagB64, ciphertextB64] = parts;
 
   const key = getKey();
-  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivB64, "base64"));
+  // authTagLength is explicit, not left to Node's default: without it,
+  // setAuthTag() below would accept any GCM-valid tag length (4-16
+  // bytes), which is exactly the truncated-tag forgery Semgrep's
+  // gcm-no-tag-length rule flags — pinning it to the 16 bytes this
+  // module has always produced (encryptField's getAuthTag() call above)
+  // closes that off with no format/behavior change for real ciphertext.
+  const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivB64, "base64"), {
+    authTagLength: AUTH_TAG_LENGTH_BYTES,
+  });
   decipher.setAuthTag(Buffer.from(authTagB64, "base64"));
 
   const plaintext = Buffer.concat([

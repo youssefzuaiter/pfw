@@ -3166,6 +3166,81 @@ Hardened three fragility points: the EVM RPC client now cycles across multiple p
   - Hugging Face's model-weight redirect (the large `.onnx` file specifically) resolves through their newer "Xet" storage backend to `us.aws.cdn.hf.co` — a `hf.co` host, not a `huggingface.co` one, so `*.huggingface.co` alone never covered it. `connect-src` gained four more entries (`*.hf.co`, `*.aws.cdn.hf.co`, `*.gcp.cdn.hf.co`, `*.xethub.hf.co` — see proxy.ts's own comment for why a single-label CSP wildcard can't cover a two-label host like `us.aws.cdn.hf.co` in one entry). Not observed to actually be blocked in this session's Chromium testing (0 CSP console violations even before the fix), but CSP3's per-redirect-hop connect-src enforcement is a documented spec requirement stricter browsers may honor more literally — closing the gap now rather than waiting for a report from a browser this session can't test against.
 - **Verified live, not just by test**: `npm run check` clean (946/949, 3 pre-existing skips). `npm run build` clean. Real RPC fallback pipeline test against genuinely live endpoints (`.scratch-check/live-fallback-check.ts`, run and discarded): confirmed PublicNode succeeds directly; confirmed a broken primary falls through, in order, to real LlamaNodes (independently found to be down right now — a live, unplanned demonstration of exactly the failure this feature protects against) then real Cloudflare (independently confirmed to still return its documented JSON-RPC error for `eth_getBalance`), correctly exhausting the chain and throwing; confirmed a broken primary WITH one genuinely working fallback succeeds via that fallback. `npm run sync:crypto-prices`/`npm run sync:rates` both run for real against live CoinGecko/Frankfurter, unaffected by the circuit-breaker changes on the success path. Real browser walkthrough (Playwright against `next build && next start`) of the recategorization flow: first attempt correctly degrades to no embedding (cold Worker/model-load exceeds the 3s timeout), model file genuinely downloads via the Xet CDN, second attempt (warm pipeline) produces a real 384-dimension embedding vector, zero CSP violations throughout. `embedBatch`/`terminateEmbedderWorker`'s specific terminate-then-respawn orchestration was NOT exercised live (no UI currently calls `embedBatch`) — verified instead by code review against the identical lazy-construction pattern already proven live for the crypto workers' clients (§3x), stated here plainly rather than overclaimed.
 
+## 3z. Repository Hygiene & CI Security Guardrails (ad hoc)
+
+Explicit user request: commit the still-untracked `backup_reader` role
+migration from §3-k8s's Barman/backup work, and harden the existing CI
+workflow (`cf1510b`, predates this entry — Phase 8's "still outstanding"
+note above was stale and has been corrected) with Gitleaks and Semgrep.
+
+- **`prisma/migrations/20260902100000_backup_reader_role/` committed** —
+  it had been sitting untracked since the Kubernetes manifests work
+  referenced it; no content changes, just closing the loop so the
+  migration those manifests depend on actually exists in history.
+- **`.github/workflows/ci.yml` gained two new independent jobs**,
+  `gitleaks` and `semgrep`, alongside the existing `test` job (typecheck/
+  lint/full Vitest suite against a real ephemeral Postgres service) —
+  kept separate rather than folded into one job so a failure in either
+  scanner is immediately attributable in the Actions UI, and so a slow
+  Semgrep run never blocks the faster Gitleaks one.
+  - **Gitleaks**: installed from a specific GitHub release
+    (`v8.30.1`, linux_x64), checksum-verified against that release's own
+    published `_checksums.txt` before install — not the `gitleaks-action`
+    wrapper, which gates non-public repos behind a paid
+    `GITLEAKS_LICENSE` secret this repo doesn't provision; the underlying
+    OSS CLI itself is free regardless of repo visibility. Scans the
+    checked-out working tree (`--no-git`), not full git history — this
+    repo's history predates this workflow, and retroactively re-litigating
+    already-merged history wasn't this task's scope.
+  - **Semgrep**: runs inside the official `semgrep/semgrep:1.174.0`
+    container image (pinned tag, no `SEMGREP_APP_TOKEN`/AppSec Platform
+    login — `p/security-audit`, `p/typescript`, `p/react`, `p/secrets`,
+    `p/owasp-top-ten` are public Registry rulesets that need no token),
+    `--error` so a blocking finding actually fails the job.
+  - **`actions/checkout` and `actions/setup-node` pinned to full commit
+    SHAs** (`v4.4.0` for both, resolved via the GitHub API and verified
+    against the tag), not the mutable `@v4` ref the workflow used before
+    — Semgrep's own `github-actions-mutable-action-tag` rule flagged this
+    on its first real run against this repo, and fixing it was necessary
+    to make that job pass at all, not a speculative hardening.
+  - **`.gitleaksignore`** (new, repo root): exactly one entry, allowlisting
+    `ci.yml`'s own hardcoded `ENCRYPTION_KEY` by exact fingerprint — a
+    documented, intentional throwaway value that only ever backs each
+    job's ephemeral, destroyed-on-exit Postgres database (see that file's
+    header comment and `ci.yml`'s own). Verified this mechanism is real,
+    not decorative: editing `ci.yml`'s header comments during this same
+    pass shifted that line from 21 to 23, which correctly broke the old
+    fingerprint and made Gitleaks re-flag it until the ignore file was
+    updated to match — caught by re-running the scan locally before
+    committing, not assumed to still work.
+  - **Two real, pre-existing findings in application code, fixed, not
+    suppressed**: Semgrep's `gcm-no-tag-length` rule flagged both
+    `src/server/crypto/field-encryption.ts`'s `decryptField` and
+    `src/server/dead-mans-switch/vault-cipher-node.ts`'s
+    `decryptVaultValueNode` for calling Node's `createDecipheriv` without
+    an explicit `authTagLength` — without it, `setAuthTag()` accepts any
+    GCM-valid tag length (4-16 bytes) instead of only the 16-byte tag
+    these modules have always produced, which is exactly the truncated-
+    tag-forgery gap the rule exists to catch. Fixed by passing
+    `{ authTagLength: 16 }` explicitly in both — a pure hardening with no
+    format or behavior change for real ciphertext (both modules already
+    produced 16-byte tags; this only makes the requirement explicit
+    instead of implicit), confirmed by re-running both files' existing
+    tests (`field-encryption.test.ts`,
+    `tests/integration/dead-mans-switch-vault-cipher.test.ts`) after the
+    change — all still passing, same round-trip behavior.
+- **Every claim in this entry was verified locally before being pushed,
+  not assumed from reading the tool docs**: both scanners were run via
+  Docker against the actual checked-out repo content (mirroring exactly
+  what the GitHub Actions runner would see) before and after each fix —
+  Gitleaks went from 1 finding (the `ENCRYPTION_KEY` false positive) to 0
+  once `.gitleaksignore` was added, and Semgrep went from 4 findings (2
+  mutable-action-tag, 2 gcm-no-tag-length) to 0 once the SHA pins and the
+  `authTagLength` fixes landed. `npm run check` re-run clean (845/845
+  passing, 104 skip — the long-standing DB/embedding-sidecar-gated skip
+  convention, unchanged) after the crypto edits, confirming they didn't
+  regress anything.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
@@ -3440,12 +3515,14 @@ Hardened three fragility points: the EVM RPC client now cycles across multiple p
   hand). The entire multi-phase build (Phases 0-7, previously all
   uncommitted since the repo's only prior commit was the raw
   create-next-app scaffold) was staged and committed as one
-  comprehensive commit. **Still outstanding**: the spec's other two
-  Phase 8 items — a GitHub Actions CI workflow (typecheck/lint/Semgrep
-  SAST/Gitleaks/`npm audit`/integration tests against a throwaway
-  Postgres container) and a formal point-in-time `docs/SECURITY-REPORT.md`
-  — were not requested this session and have not been built; revisit if
-  wanted.
+  comprehensive commit. A GitHub Actions CI workflow (typecheck/lint/test
+  against a throwaway Postgres container) was added in a later session
+  (`cf1510b`) and hardened further with Gitleaks and Semgrep — see §3z.
+  **Still outstanding**: `npm audit` isn't wired into CI as its own gate
+  (each accepted-risk advisory is instead documented at the point it was
+  found — see §3g, §3u, §3x), and a formal point-in-time
+  `docs/SECURITY-REPORT.md` was not requested and has not been built;
+  revisit if wanted.
 
 ## 8. Key file map (as of Phase 4, complete)
 

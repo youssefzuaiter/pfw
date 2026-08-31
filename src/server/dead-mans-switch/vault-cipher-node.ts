@@ -50,7 +50,14 @@ export function decryptVaultValueNode(rawKeyBytes: Uint8Array, stored: string): 
   const ciphertext = ciphertextAndTag.subarray(0, ciphertextAndTag.length - AUTH_TAG_LENGTH_BYTES);
   const authTag = ciphertextAndTag.subarray(ciphertextAndTag.length - AUTH_TAG_LENGTH_BYTES);
 
-  const decipher = createDecipheriv(ALGORITHM, Buffer.from(rawKeyBytes), iv);
+  // authTagLength pinned explicitly for the same reason
+  // field-encryption.ts's decryptField now does — otherwise setAuthTag()
+  // below would accept any GCM-valid tag length instead of only the
+  // 16-byte tag this format has always used, which is what Semgrep's
+  // gcm-no-tag-length rule (truncated-tag forgery) flags.
+  const decipher = createDecipheriv(ALGORITHM, Buffer.from(rawKeyBytes), iv, {
+    authTagLength: AUTH_TAG_LENGTH_BYTES,
+  });
   decipher.setAuthTag(authTag);
 
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
