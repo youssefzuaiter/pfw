@@ -89,6 +89,7 @@ export default async function BudgetsPage({
 
         <HouseholdAdminPanel
           sharedGroupId={activeMembership.group.id}
+          groupName={activeMembership.group.name}
           myUserId={user.id}
           myRole={activeMembership.membership.role}
           members={members.map((m) => ({

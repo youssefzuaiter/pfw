@@ -61,3 +61,56 @@ export function dmsVaultEncrypt(plaintext: string): Promise<{ ciphertext: string
 export function dmsVaultDecrypt(ciphertext: string): Promise<{ plaintext: string }> {
   return getCall()("decrypt", { ciphertext });
 }
+
+/**
+ * Dynamic Beneficiaries (AGENTS.md §3t amendment, item 2) — re-splits
+ * the existing master key under a new total/threshold configuration
+ * after re-verifying `passphrase` against the vault's existing
+ * salt/iterations/canary. Every existing beneficiary's share becomes
+ * invalid the moment this succeeds (a re-split is a fresh polynomial),
+ * even for a beneficiary whose slot didn't otherwise change — the
+ * caller is expected to persist ALL returned shares against the new
+ * roster, not just the ones for added/removed beneficiaries.
+ */
+export function dmsVaultResplit(
+  passphrase: string,
+  saltBase64: string,
+  iterations: number,
+  canaryCiphertext: string,
+  totalShares: number,
+  thresholdShares: number,
+): Promise<{ valid: true; shares: DmsShare[] } | { valid: false }> {
+  return getCall()("resplit", { passphrase, saltBase64, iterations, canaryCiphertext, totalShares, thresholdShares });
+}
+
+/**
+ * Passphrase Rotation, Emergency Vault half (AGENTS.md §3t amendment,
+ * item 1) — verifies `oldPassphrase`, decrypts every `documents` entry
+ * with the old key, derives a fresh salt + key from `newPassphrase`,
+ * re-encrypts every document, and re-splits the new key — entirely
+ * inside the worker. The caller must persist the returned
+ * salt/canary/documents/shares atomically (see
+ * `rotateVaultPassphrase` in `src/server/dal/dead-mans-switch.ts`).
+ */
+export function dmsVaultRotate(params: {
+  oldPassphrase: string;
+  oldSaltBase64: string;
+  oldIterations: number;
+  oldCanaryCiphertext: string;
+  newPassphrase: string;
+  newIterations: number;
+  totalShares: number;
+  thresholdShares: number;
+  documents: { id: string; ciphertext: string }[];
+}): Promise<
+  | {
+      valid: true;
+      newSalt: string;
+      newCanaryCiphertext: string;
+      documents: { id: string; ciphertext: string }[];
+      shares: DmsShare[];
+    }
+  | { valid: false }
+> {
+  return getCall()("rotate", params);
+}

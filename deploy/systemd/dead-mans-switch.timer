@@ -1,0 +1,26 @@
+# Companion timer for ./dead-mans-switch.service — see that file's own
+# header comment for install steps. `OnCalendar` is the "configurable
+# daily interval" knob: the value below runs the check once a day at
+# 04:30 UTC (matching k8s/dead-mans-switch-cronjob.yaml's placeholder
+# schedule, chosen to land after a nightly DB backup completes) — override
+# it per environment with a drop-in instead of editing this file in
+# place, e.g.:
+#   mkdir -p /etc/systemd/system/dead-mans-switch.timer.d
+#   printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* 06:00:00\n' \
+#     > /etc/systemd/system/dead-mans-switch.timer.d/override.conf
+#   systemctl daemon-reload && systemctl restart dead-mans-switch.timer
+[Unit]
+Description=Daily schedule for the PFW Dead Man's Switch inactivity check
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+# If the machine was powered off / the timer missed its window (e.g. a
+# laptop-hosted deployment), run the missed check on next boot instead of
+# silently skipping a whole day — this batch job is cheap and idempotent
+# (inactivity-check.ts only ever moves a switch FORWARD), so catching up
+# late is always safe.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

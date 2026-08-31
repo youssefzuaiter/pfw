@@ -89,6 +89,88 @@ export async function updateMemberPermission(
   });
 }
 
+export type RenameGroupResult = { ok: true } | { ok: false; error: "not_owner" };
+
+/** Owner-only rename — SharedGroup's `update_scope` RLS policy already restricts an UPDATE that leaves `createdById` unchanged to the current owner, so this needs no special-cased RLS handling (unlike ownership transfer, below). */
+export async function renameSharedGroup(userId: string, sharedGroupId: string, name: string): Promise<RenameGroupResult> {
+  return withUserScope(userId, async (tx) => {
+    const group = await tx.sharedGroup.findFirst({ where: { id: sharedGroupId, createdById: userId } });
+    if (!group) return { ok: false, error: "not_owner" };
+
+    await tx.sharedGroup.update({ where: { id: sharedGroupId }, data: { name } });
+    return { ok: true };
+  });
+}
+
+export type DeleteGroupResult = { ok: true } | { ok: false; error: "not_owner" };
+
+/**
+ * Owner-only delete. No manual cleanup of `GroupMember`/`GroupInvite`
+ * rows or a shared resource's `sharedGroupId` is needed here — the
+ * schema already handles both: `GroupMember`/`GroupInvite.sharedGroupId`
+ * are `onDelete: Cascade` (they have no meaning without the group they
+ * belong to), and `Budget`/`BankAccount`/`Category.sharedGroupId` are
+ * `onDelete: SetNull` (a shared resource reverts to purely personal, not
+ * deleted — deleting a household must never delete anyone's underlying
+ * budget/account/category). See the migration's own FK definitions.
+ */
+export async function deleteSharedGroup(userId: string, sharedGroupId: string): Promise<DeleteGroupResult> {
+  return withUserScope(userId, async (tx) => {
+    const group = await tx.sharedGroup.findFirst({ where: { id: sharedGroupId, createdById: userId } });
+    if (!group) return { ok: false, error: "not_owner" };
+
+    await tx.sharedGroup.delete({ where: { id: sharedGroupId } });
+    return { ok: true };
+  });
+}
+
+export type TransferOwnershipResult =
+  | { ok: true }
+  | { ok: false; error: "not_owner" | "target_not_found" | "target_already_owner" };
+
+/**
+ * Transfers group ownership to an existing, non-owner member —
+ * migration `20260903090000_shared_group_ownership_transfer` widened
+ * `SharedGroup`'s `update_scope` RLS policy specifically to permit this
+ * (see that migration's own comment for why the ORIGINAL policy made a
+ * "createdById" change structurally impossible, not just unbuilt). This
+ * function's own pre-checks (owner-only, target must already be a member
+ * and not already the owner) are the primary control; the RLS widening
+ * is the defense-in-depth backstop, same split as everywhere else (§3a).
+ *
+ * All three writes — swap both members' `role`, then change
+ * `SharedGroup.createdById` — happen inside ONE `withUserScope`
+ * transaction, deliberately in that order: `GroupMember`'s own UPDATE
+ * policy is keyed off `SharedGroup.createdById` (the OLD owner, at the
+ * time each statement runs), so both role swaps must complete while the
+ * acting session is STILL the group's owner-of-record; only the final
+ * statement changes `createdById` itself.
+ */
+export async function transferGroupOwnership(
+  userId: string,
+  sharedGroupId: string,
+  newOwnerUserId: string,
+): Promise<TransferOwnershipResult> {
+  return withUserScope(userId, async (tx) => {
+    const group = await tx.sharedGroup.findFirst({ where: { id: sharedGroupId, createdById: userId } });
+    if (!group) return { ok: false, error: "not_owner" };
+
+    const targetMember = await tx.groupMember.findFirst({ where: { sharedGroupId, userId: newOwnerUserId } });
+    if (!targetMember) return { ok: false, error: "target_not_found" };
+    if (targetMember.role === "OWNER") return { ok: false, error: "target_already_owner" };
+
+    const currentOwnerMember = await tx.groupMember.findFirst({ where: { sharedGroupId, userId, role: "OWNER" } });
+    /* c8 ignore next -- invariant: `group` above was found via `createdById: userId`, whose own membership row is always created as OWNER (createSharedGroup) and never demoted except by this same function, in the same transaction, after this line runs */
+    if (!currentOwnerMember) return { ok: false, error: "not_owner" };
+
+    await tx.groupMember.update({ where: { id: currentOwnerMember.id }, data: { role: "MEMBER" } });
+    await tx.groupMember.update({ where: { id: targetMember.id }, data: { role: "OWNER", permission: "WRITE" } });
+    await tx.sharedGroup.update({ where: { id: sharedGroupId }, data: { createdById: newOwnerUserId } });
+
+    return { ok: true };
+  });
+}
+
 export type RemoveMemberResult = { ok: true } | { ok: false; error: "not_found" | "cannot_remove_owner" };
 
 /** Self-leave (`actingUserId === memberUserId`) or the group owner removing someone else — both satisfied by the migration's GroupMember DELETE policy. */

@@ -1,0 +1,152 @@
+# Scheduled deployment artifact for the Dead Man's Switch Activity
+# Monitor's batch half (AGENTS.md §3t / §3t amendment) — runs
+# `npm run check:dead-mans-switch` (src/server/dead-mans-switch/inactivity-check.ts's
+# `runInactivityCheck`) on a configurable daily interval, advancing
+# ACTIVE -> GRACE_PERIOD -> TRIGGERED for every user whose inactivity/
+# grace thresholds have elapsed. Until this (or the companion
+# systemd/launchd timer in ./dead-mans-switch.timer +
+# ./dead-mans-switch.service) is actually deployed and scheduled, no
+# switch in this app ever progresses past ACTIVE on its own — a manual
+# `npm run check:dead-mans-switch` run is the only thing that advances
+# the lifecycle today.
+#
+# Zero-trust / no-plaintext-credential design, same posture as
+# ./db/db-backup-cronjob.yaml:
+#   - DB auth: sourced ONLY from a Kubernetes Secret via secretKeyRef
+#     (`pfw-app-database-credentials`'s DATABASE_URL) — never a literal
+#     value in this file. Populate it through your real secret pipeline
+#     (External Secrets Operator, Vault CSI/agent-inject, sealed-secrets,
+#     etc.); the stringData below is a placeholder shape, not a real
+#     value, and must never be applied as-is.
+#   - This job DELIBERATELY uses the `pfw_app` role's connection string
+#     (`DATABASE_URL`, not `APP_DATABASE_URL`/`pfw_runtime`) — see
+#     inactivity-check.ts's own doc comment for why: it's one of this
+#     app's four narrow, documented admin-client (RLS-bypassing)
+#     exceptions, because a scheduled batch job has no single
+#     authenticated `userId` to scope an RLS transaction by at all — it
+#     has to scan every user's `DeadMansSwitch` row in one pass, which is
+#     precisely what RLS exists to prevent a normal request from doing.
+#     This makes the DB credential genuinely high-privilege; scope this
+#     Job's RBAC/network policy accordingly (no other workload should be
+#     able to read `pfw-app-database-credentials`).
+#
+# Image prerequisite: `${PFW_APP_IMAGE}` must be a prebuilt, internally
+# published image containing this repository's full source (or at least
+# `scripts/`, `src/server/`, `prisma/`, `node_modules` including
+# devDependencies for `tsx`) — deliberately NOT assembled at Job runtime
+# via `git clone`/`npm install`, same "no pulling arbitrary tooling from
+# the internet inside a locked-down namespace" reasoning
+# ./db/db-backup-cronjob.yaml's image prerequisite note already gives.
+# A minimal Dockerfile, reusing the app's own production build image:
+#
+#   FROM node:22-bookworm-slim AS app
+#   WORKDIR /app
+#   COPY . .
+#   RUN npm ci
+#   USER 1000:1000
+#
+# `schedule` below is a placeholder ("every day at 04:30 UTC", chosen to
+# land after ./db/db-backup-cronjob.yaml's 03:00 backup completes) — this
+# is the "configurable daily interval" the task asks for: override it per
+# environment with a Kustomize overlay/Helm value rather than editing
+# this file in place, e.g.:
+#
+#   kubectl patch cronjob pfw-dead-mans-switch-check -n pfw-app \
+#     --type merge -p '{"spec":{"schedule":"0 6 * * *"}}'
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pfw-app
+  labels:
+    # Matches ./db/postgres-cluster.yaml's "pfw-data" namespace labels —
+    # this is the first manifest in k8s/ for the application workload
+    # itself (as opposed to the database), so it defines its own
+    # namespace the same way rather than assuming one already exists.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pfw-app-database-credentials
+  namespace: pfw-app
+  annotations:
+    pfw.internal/managed-by: "REPLACE — populate via External Secrets Operator / Vault / sealed-secrets, never `kubectl apply` with real values checked into git"
+type: Opaque
+stringData:
+  DATABASE_URL: "REPLACE_ME" # the pfw_app (admin/migration) role's full postgres:// connection string
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pfw-dead-mans-switch-check
+  namespace: pfw-app
+  labels:
+    app.kubernetes.io/name: pfw-dead-mans-switch-check
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pfw-dead-mans-switch-check
+  namespace: pfw-app
+  labels:
+    app.kubernetes.io/name: pfw-dead-mans-switch-check
+spec:
+  schedule: "30 4 * * *" # daily at 04:30 UTC — override per environment, see header note
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid # two overlapping runs would race the same ACTIVE/GRACE_PERIOD rows; each run is already idempotent (inactivity-check.ts), but there's no reason to let them race
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pfw-dead-mans-switch-check
+        spec:
+          serviceAccountName: pfw-dead-mans-switch-check
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dead-mans-switch-check
+              image: "${PFW_APP_IMAGE}" # e.g. registry.internal/pfw/app:1.0.0 — see prerequisite note above
+              workingDir: /app
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: pfw-app-database-credentials
+                      key: DATABASE_URL
+                - name: NODE_ENV
+                  value: production
+              command: ["npm", "run", "check:dead-mans-switch"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi

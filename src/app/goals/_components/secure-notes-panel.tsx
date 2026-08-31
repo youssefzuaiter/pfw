@@ -6,7 +6,7 @@ import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
 import { PBKDF2_ITERATIONS, generateZkSalt } from "../../../lib/zk-crypto";
 import { useZkVaultStore } from "../../../lib/stores/zk-vault-store";
-import { zkVaultEncrypt, zkVaultSetup, zkVaultUnlock } from "../../../lib/workers/zk-vault-worker-client";
+import { zkVaultEncrypt, zkVaultRotate, zkVaultSetup, zkVaultUnlock } from "../../../lib/workers/zk-vault-worker-client";
 
 const MIN_PASSPHRASE_LENGTH = 10;
 
@@ -33,9 +33,12 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
   const unlock = useZkVaultStore((state) => state.unlock);
   const lock = useZkVaultStore((state) => state.lock);
 
-  const [mode, setMode] = useState<"idle" | "setup" | "unlock">("idle");
+  const [mode, setMode] = useState<"idle" | "setup" | "unlock" | "rotate">("idle");
   const [passphrase, setPassphrase] = useState("");
   const [confirmPassphrase, setConfirmPassphrase] = useState("");
+  const [currentPassphrase, setCurrentPassphrase] = useState("");
+  const [newPassphrase, setNewPassphrase] = useState("");
+  const [confirmNewPassphrase, setConfirmNewPassphrase] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -141,6 +144,75 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
     }
   }
 
+  async function handleRotateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+
+    if (newPassphrase.length < MIN_PASSPHRASE_LENGTH) {
+      setError(`New passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters`);
+      return;
+    }
+    if (newPassphrase !== confirmNewPassphrase) {
+      setError("New passphrases don't match");
+      return;
+    }
+    if (!salt || !iterations || !canaryCiphertext) return;
+
+    setIsBusy(true);
+    try {
+      const notesResponse = await fetch("/api/zk/notes");
+      if (!notesResponse.ok) {
+        throw new Error("Failed to fetch your notes for rotation");
+      }
+      const { notes } = (await notesResponse.json()) as { notes: { id: string; note: string }[] };
+
+      const newSalt = generateZkSalt();
+      const result = await zkVaultRotate({
+        oldPassphrase: currentPassphrase,
+        oldSaltBase64: salt,
+        oldIterations: iterations,
+        oldCanaryCiphertext: canaryCiphertext,
+        newPassphrase,
+        newSaltBase64: newSalt,
+        newIterations: PBKDF2_ITERATIONS,
+        notes,
+      });
+
+      if (!result.valid) {
+        setError("Current passphrase is incorrect");
+        return;
+      }
+
+      const response = await fetch("/api/zk/rotate-passphrase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newSalt,
+          newIterations: PBKDF2_ITERATIONS,
+          newCanaryCiphertext: result.newCanaryCiphertext,
+          reencryptedNotes: result.notes,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to rotate passphrase");
+      }
+
+      // The rotate call already activated the new key on this session's
+      // worker — no need to unlock() again, `useZkVaultStore` stays true.
+      setCurrentPassphrase("");
+      setNewPassphrase("");
+      setConfirmNewPassphrase("");
+      setStatusMessage(`Passphrase rotated — re-encrypted ${result.notes.length} note(s).`);
+      setMode("idle");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to rotate passphrase");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleMigrateClick() {
     if (!unlocked) return;
     setIsBusy(true);
@@ -170,8 +242,13 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
     setError(null);
   }
 
+  function handleOpenRotate() {
+    setError(null);
+    setMode("rotate");
+  }
+
   // Already unlocked this session.
-  if (unlocked) {
+  if (unlocked && mode !== "rotate") {
     return (
       <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm">
         <Badge variant="positive">Secure notes unlocked</Badge>
@@ -188,12 +265,86 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
         )}
         <button
           type="button"
+          onClick={handleOpenRotate}
+          className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Rotate passphrase
+        </button>
+        <button
+          type="button"
           onClick={handleLockClick}
           className="uv-btn-press ml-auto rounded-md border border-border px-2 py-1 text-xs font-medium text-muted hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Lock
         </button>
         {error && <p className="w-full text-xs text-negative">{error}</p>}
+      </section>
+    );
+  }
+
+  if (unlocked && mode === "rotate") {
+    return (
+      <section className="rounded-lg border border-border bg-surface p-3">
+        <form onSubmit={handleRotateSubmit} className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="zk-rotate-current" className="text-xs font-medium text-muted">
+              Current passphrase
+            </label>
+            <input
+              id="zk-rotate-current"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassphrase}
+              onChange={(event) => setCurrentPassphrase(event.target.value)}
+              className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="zk-rotate-new" className="text-xs font-medium text-muted">
+              New passphrase
+            </label>
+            <input
+              id="zk-rotate-new"
+              type="password"
+              autoComplete="new-password"
+              value={newPassphrase}
+              onChange={(event) => setNewPassphrase(event.target.value)}
+              className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="zk-rotate-confirm" className="text-xs font-medium text-muted">
+              Confirm new passphrase
+            </label>
+            <input
+              id="zk-rotate-confirm"
+              type="password"
+              autoComplete="new-password"
+              value={confirmNewPassphrase}
+              onChange={(event) => setConfirmNewPassphrase(event.target.value)}
+              className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isBusy || !currentPassphrase || !newPassphrase || !confirmNewPassphrase}
+            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            {isBusy && <Spinner />} Rotate
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Cancel
+          </button>
+          <p className="w-full text-xs text-muted">
+            Every existing secure note is decrypted with your current passphrase and re-encrypted with the new one,
+            entirely in your browser, before anything is sent to the server.
+          </p>
+          {error && <p className="w-full text-xs text-negative">{error}</p>}
+        </form>
       </section>
     );
   }

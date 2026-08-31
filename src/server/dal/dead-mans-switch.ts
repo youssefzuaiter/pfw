@@ -191,6 +191,181 @@ export async function deleteDocument(userId: string, documentId: string): Promis
   });
 }
 
+export type RotateVaultPassphraseInput = {
+  newSalt: string;
+  newIterations: number;
+  newCanaryCiphertext: string;
+  documents: { id: string; ciphertext: string }[];
+  /** Every beneficiary's NEW share for the (unchanged) total/threshold configuration — a rotation always re-splits the new key, since a fresh key needs a fresh polynomial regardless of the share count. Keyed by the EXISTING `Beneficiary.id` (labels/tokens are untouched — only the cryptographic material changes). */
+  beneficiaries: { id: string; shareIndex: number; shareHash: string }[];
+};
+
+export type RotateVaultPassphraseResult =
+  | { ok: true }
+  | { ok: false; error: "not_set_up" | "not_active" | "document_set_mismatch" | "beneficiary_set_mismatch" };
+
+/**
+ * Passphrase Rotation, Emergency Vault half (AGENTS.md §3t amendment,
+ * item 1). Atomically overwrites the vault's
+ * salt/iterations/canary/totalShares-count-derived state, every
+ * `EmergencyDocument.ciphertext`, and every `Beneficiary`'s
+ * shareIndex/shareHash — one real Postgres transaction (`withUserScope`)
+ * — plus clears any `RecoveryShareSubmission` rows, since a submission
+ * encodes a share under the OLD polynomial and would silently combine
+ * into garbage against the new one otherwise (the same defensive clear
+ * `cancelRecovery` already does on its own state transition).
+ *
+ * Only allowed while `status === "ACTIVE"` — rotating shares out from
+ * under an in-progress recovery (GRACE_PERIOD/TRIGGERED) would be
+ * actively dangerous (a beneficiary mid-submission holds a share for a
+ * polynomial that's about to stop existing) and confusing regardless;
+ * the owner should `cancelRecovery` first if one is somehow open.
+ *
+ * Re-verifies the CURRENT document-id set and beneficiary-id set inside
+ * the transaction against what the caller submitted — same
+ * "notes_changed_concurrently"-style fail-closed check
+ * `rotateZkVaultPassphrase` makes for goal notes, applied to two
+ * collections here instead of one, since a rotation must cover every
+ * document AND every beneficiary or none at all (a partial rotation
+ * would leave some documents undecryptable under the new key, or some
+ * beneficiaries holding shares of a secret they can no longer verify).
+ */
+export async function rotateVaultPassphrase(
+  userId: string,
+  input: RotateVaultPassphraseInput,
+): Promise<RotateVaultPassphraseResult> {
+  return withUserScope(userId, async (tx) => {
+    const vault = await tx.deadMansSwitch.findUnique({
+      where: { userId },
+      include: { documents: true, beneficiaries: true },
+    });
+    if (!vault) return { ok: false, error: "not_set_up" };
+    if (vault.status !== "ACTIVE") return { ok: false, error: "not_active" };
+
+    const currentDocumentIds = new Set(vault.documents.map((d) => d.id));
+    const submittedDocumentIds = new Set(input.documents.map((d) => d.id));
+    const documentsMatch =
+      currentDocumentIds.size === submittedDocumentIds.size &&
+      [...currentDocumentIds].every((id) => submittedDocumentIds.has(id));
+    if (!documentsMatch) return { ok: false, error: "document_set_mismatch" };
+
+    const currentBeneficiaryIds = new Set(vault.beneficiaries.map((b) => b.id));
+    const submittedBeneficiaryIds = new Set(input.beneficiaries.map((b) => b.id));
+    const beneficiariesMatch =
+      currentBeneficiaryIds.size === submittedBeneficiaryIds.size &&
+      [...currentBeneficiaryIds].every((id) => submittedBeneficiaryIds.has(id));
+    if (!beneficiariesMatch) return { ok: false, error: "beneficiary_set_mismatch" };
+
+    await tx.deadMansSwitch.update({
+      where: { id: vault.id },
+      data: { vaultSalt: input.newSalt, vaultKdfIterations: input.newIterations, vaultCanaryCiphertext: input.newCanaryCiphertext },
+    });
+
+    for (const document of input.documents) {
+      await tx.emergencyDocument.update({ where: { id: document.id }, data: { ciphertext: document.ciphertext } });
+    }
+
+    for (const beneficiary of input.beneficiaries) {
+      await tx.beneficiary.update({
+        where: { id: beneficiary.id },
+        data: { shareIndex: beneficiary.shareIndex, shareHash: beneficiary.shareHash },
+      });
+    }
+
+    // Any in-flight submission encodes a share of the polynomial that
+    // just stopped existing — see this function's own doc comment.
+    await tx.recoveryShareSubmission.deleteMany({ where: { deadMansSwitchId: vault.id } });
+
+    return { ok: true };
+  });
+}
+
+export type UpdateVaultBeneficiary = { label: string; shareIndex: number; shareHash: string; inviteTokenHash: string };
+
+export type UpdateVaultBeneficiariesInput = {
+  totalShares: number;
+  thresholdShares: number;
+  /**
+   * The complete NEW beneficiary roster, for EVERY beneficiary —
+   * continuing or newly added. There is no "update in place, preserving
+   * the id" path: re-splitting the same master key under a new total/
+   * threshold configuration produces an entirely new polynomial (see
+   * `resplit`'s worker-side doc comment,
+   * `src/lib/workers/dead-mans-switch-crypto-worker-handlers.ts`), which
+   * means every beneficiary's share value AND recovery link go stale at
+   * once, including a beneficiary whose slot was otherwise unchanged —
+   * `vault-setup-wizard.tsx`'s own setup flow already generates a fresh
+   * `inviteTokenHash` client-side per beneficiary for exactly this
+   * reason, and this function asks the same of every caller here, not
+   * just the genuinely-new entries.
+   */
+  beneficiaries: UpdateVaultBeneficiary[];
+};
+
+export type UpdateVaultBeneficiariesResult =
+  | { ok: true }
+  | { ok: false; error: "not_set_up" | "not_active" | "beneficiary_count_mismatch" };
+
+/**
+ * Dynamic Beneficiaries (AGENTS.md §3t amendment, item 2). Deletes every
+ * EXISTING `Beneficiary` row for this vault and creates the entire new
+ * roster fresh, inside one transaction — deliberately delete-then-insert
+ * rather than a sequence of per-row updates: `@@unique([deadMansSwitchId,
+ * shareIndex])` is a plain Postgres unique INDEX (not a DEFERRABLE
+ * constraint), so reassigning share indices among EXISTING rows one
+ * statement at a time can transiently collide mid-transaction whenever
+ * two rows' old/new indices cross (e.g. row A's new index 5 momentarily
+ * equals row B's still-old index 5) — delete-then-insert-into-an-empty-set
+ * has no such transient state to collide in. `Beneficiary.id` is
+ * therefore NOT stable across this operation for any beneficiary,
+ * continuing or new — see `UpdateVaultBeneficiariesInput`'s own doc
+ * comment for why that's also the cryptographically correct behavior,
+ * not just an implementation convenience.
+ *
+ * Documents are NOT touched: the master key itself is unchanged by a
+ * resplit, only how it's divided among beneficiaries. Only allowed while
+ * `status === "ACTIVE"`, same reasoning as `rotateVaultPassphrase`.
+ * Clears any `RecoveryShareSubmission` rows for the same reason too
+ * (each references a `beneficiaryId` that's about to stop existing
+ * regardless, so `onDelete: Cascade` on that FK would clear them anyway —
+ * this is done explicitly first for clarity, not relied on implicitly).
+ */
+export async function updateVaultBeneficiaries(
+  userId: string,
+  input: UpdateVaultBeneficiariesInput,
+): Promise<UpdateVaultBeneficiariesResult> {
+  if (input.beneficiaries.length !== input.totalShares) {
+    return { ok: false, error: "beneficiary_count_mismatch" };
+  }
+
+  return withUserScope(userId, async (tx) => {
+    const vault = await tx.deadMansSwitch.findUnique({ where: { userId } });
+    if (!vault) return { ok: false, error: "not_set_up" };
+    if (vault.status !== "ACTIVE") return { ok: false, error: "not_active" };
+
+    await tx.recoveryShareSubmission.deleteMany({ where: { deadMansSwitchId: vault.id } });
+    await tx.beneficiary.deleteMany({ where: { deadMansSwitchId: vault.id } });
+
+    await tx.deadMansSwitch.update({
+      where: { id: vault.id },
+      data: { totalShares: input.totalShares, thresholdShares: input.thresholdShares },
+    });
+
+    await tx.beneficiary.createMany({
+      data: input.beneficiaries.map((beneficiary) => ({
+        userId,
+        deadMansSwitchId: vault.id,
+        label: beneficiary.label,
+        shareIndex: beneficiary.shareIndex,
+        shareHash: beneficiary.shareHash,
+        inviteTokenHash: beneficiary.inviteTokenHash,
+      })),
+    });
+
+    return { ok: true };
+  });
+}
+
 export type CancelRecoveryResult = { ok: true } | { ok: false; error: "not_set_up" | "not_triggered" };
 
 /**

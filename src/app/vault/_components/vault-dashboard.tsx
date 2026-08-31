@@ -4,11 +4,36 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type MouseEvent } from "react";
 import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
-import { dmsVaultDecrypt, dmsVaultEncrypt, dmsVaultLock, dmsVaultUnlock } from "../../../lib/workers/dead-mans-switch-worker-client";
+import { DMS_PBKDF2_ITERATIONS } from "../../../lib/dead-mans-switch-crypto";
+import {
+  dmsVaultDecrypt,
+  dmsVaultEncrypt,
+  dmsVaultLock,
+  dmsVaultResplit,
+  dmsVaultRotate,
+  dmsVaultUnlock,
+} from "../../../lib/workers/dead-mans-switch-worker-client";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function daysBetween(from: Date, to: Date): number {
   return Math.max(0, Math.ceil((to.getTime() - from.getTime()) / MS_PER_DAY));
+}
+
+// Same local, self-contained helpers vault-setup-wizard.tsx already
+// defines for the same reason (an independent bearer token, unrelated to
+// the vault key, has no reason to route through the crypto worker).
+function randomTokenBase64Url(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /** Mirrors src/server/dal/dead-mans-switch.ts's VaultStatus shape, defined locally rather than imported — same "a Client Component defines its own prop type instead of importing one from a server-only file" convention src/app/goals/_components/secure-notes-panel.tsx already follows. */
@@ -42,6 +67,22 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
   const [addDocError, setAddDocError] = useState<string | null>(null);
 
   const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const [managementMode, setManagementMode] = useState<"none" | "rotate" | "beneficiaries">("none");
+
+  const [rotateOldPassphrase, setRotateOldPassphrase] = useState("");
+  const [rotateNewPassphrase, setRotateNewPassphrase] = useState("");
+  const [rotateConfirmPassphrase, setRotateConfirmPassphrase] = useState("");
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  const [rotateDistribution, setRotateDistribution] = useState<{ label: string; share: string }[] | null>(null);
+
+  const [beneficiaryLabels, setBeneficiaryLabels] = useState<string[]>(() => status.beneficiaries.map((b) => b.label));
+  const [beneficiaryThreshold, setBeneficiaryThreshold] = useState(status.thresholdShares ?? 2);
+  const [resplitPassphrase, setResplitPassphrase] = useState("");
+  const [resplitError, setResplitError] = useState<string | null>(null);
+  const [resplitDistribution, setResplitDistribution] = useState<
+    { label: string; recoveryUrl: string; share: string }[] | null
+  >(null);
 
   async function handleUnlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -149,6 +190,227 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
     }
   }
 
+  function openRotate() {
+    setRotateError(null);
+    setManagementMode("rotate");
+  }
+
+  function openBeneficiaryManagement() {
+    setResplitError(null);
+    setBeneficiaryLabels(status.beneficiaries.map((b) => b.label));
+    setBeneficiaryThreshold(status.thresholdShares ?? 2);
+    setManagementMode("beneficiaries");
+  }
+
+  function closeManagement() {
+    setManagementMode("none");
+    setRotateError(null);
+    setResplitError(null);
+  }
+
+  /**
+   * Passphrase Rotation, Emergency Vault half (AGENTS.md §3t amendment,
+   * item 1). Beneficiary labels/invite links are UNCHANGED by a
+   * rotation — only the cryptographic material does — so `result.shares`
+   * (in `splitSecret`'s deterministic array order) is zipped positionally
+   * against `status.beneficiaries` (already ordered by shareIndex ASC,
+   * the same order the original setup assigned shares in): each existing
+   * beneficiary just needs their NEW share value to replace the old one,
+   * paired with the recovery link they already have from setup.
+   */
+  async function handleRotateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRotateError(null);
+
+    if (rotateNewPassphrase.length < 12) {
+      setRotateError("New passphrase must be at least 12 characters.");
+      return;
+    }
+    if (rotateNewPassphrase !== rotateConfirmPassphrase) {
+      setRotateError("New passphrases don't match.");
+      return;
+    }
+    if (!status.salt || !status.iterations || !status.canaryCiphertext || !status.totalShares || !status.thresholdShares) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const result = await dmsVaultRotate({
+        oldPassphrase: rotateOldPassphrase,
+        oldSaltBase64: status.salt,
+        oldIterations: status.iterations,
+        oldCanaryCiphertext: status.canaryCiphertext,
+        newPassphrase: rotateNewPassphrase,
+        newIterations: DMS_PBKDF2_ITERATIONS,
+        totalShares: status.totalShares,
+        thresholdShares: status.thresholdShares,
+        documents: status.documents.map((d) => ({ id: d.id, ciphertext: d.ciphertext })),
+      });
+
+      if (!result.valid) {
+        setRotateError("Current passphrase is incorrect");
+        return;
+      }
+
+      const response = await fetch("/api/dead-mans-switch/rotate-passphrase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newSalt: result.newSalt,
+          newIterations: DMS_PBKDF2_ITERATIONS,
+          newCanaryCiphertext: result.newCanaryCiphertext,
+          documents: result.documents,
+          beneficiaries: status.beneficiaries.map((b, i) => ({
+            id: b.id,
+            shareIndex: result.shares[i].index,
+            shareHash: result.shares[i].shareHash,
+          })),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to rotate passphrase");
+      }
+
+      setRotateDistribution(status.beneficiaries.map((b, i) => ({ label: b.label, share: result.shares[i].encodedShare })));
+      setRotateOldPassphrase("");
+      setRotateNewPassphrase("");
+      setRotateConfirmPassphrase("");
+      setUnlocked(false);
+      setDecrypted({});
+    } catch (err) {
+      setRotateError(err instanceof Error ? err.message : "Failed to rotate passphrase");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function handleRotateDone() {
+    setRotateDistribution(null);
+    setManagementMode("none");
+    router.refresh();
+  }
+
+  function updateBeneficiaryLabel(index: number, label: string) {
+    setBeneficiaryLabels((prev) => prev.map((l, i) => (i === index ? label : l)));
+  }
+
+  function addBeneficiaryLabel() {
+    setBeneficiaryLabels((prev) => [...prev, ""]);
+  }
+
+  function removeBeneficiaryLabel(index: number) {
+    setBeneficiaryLabels((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      setBeneficiaryThreshold((t) => Math.min(t, Math.max(2, next.length)));
+      return next;
+    });
+  }
+
+  function handleRemoveBeneficiaryLabelClick(event: MouseEvent<HTMLButtonElement>) {
+    removeBeneficiaryLabel(Number(event.currentTarget.dataset.index));
+  }
+
+  /**
+   * Dynamic Beneficiaries (AGENTS.md §3t amendment, item 2). Every entry
+   * in the new roster — continuing or newly added — gets a genuinely
+   * fresh invite token here, generated the exact same way
+   * `vault-setup-wizard.tsx`'s own setup flow does: a resplit produces an
+   * entirely new polynomial, so even a continuing beneficiary's OLD link
+   * is void the moment this succeeds — see `updateVaultBeneficiaries`'s
+   * DAL doc comment for why there is no "preserve the old link" path.
+   */
+  async function handleBeneficiariesSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setResplitError(null);
+
+    const labels = beneficiaryLabels.map((l) => l.trim());
+    if (labels.length < 2) {
+      setResplitError("Add at least 2 beneficiaries.");
+      return;
+    }
+    if (labels.some((l) => l.length === 0)) {
+      setResplitError("Every beneficiary needs a label.");
+      return;
+    }
+    if (beneficiaryThreshold < 2 || beneficiaryThreshold > labels.length) {
+      setResplitError(`Threshold must be between 2 and ${labels.length}.`);
+      return;
+    }
+    if (!status.salt || !status.iterations || !status.canaryCiphertext) return;
+
+    setIsBusy(true);
+    try {
+      const result = await dmsVaultResplit(
+        resplitPassphrase,
+        status.salt,
+        status.iterations,
+        status.canaryCiphertext,
+        labels.length,
+        beneficiaryThreshold,
+      );
+
+      if (!result.valid) {
+        setResplitError("Current passphrase is incorrect");
+        return;
+      }
+
+      const beneficiaryPayload = await Promise.all(
+        result.shares.map(async (share, i) => {
+          const rawToken = randomTokenBase64Url();
+          const inviteTokenHash = await sha256Hex(new TextEncoder().encode(rawToken));
+          return {
+            label: labels[i],
+            shareIndex: share.index,
+            shareHash: share.shareHash,
+            inviteTokenHash,
+            rawToken,
+            encodedShare: share.encodedShare,
+          };
+        }),
+      );
+
+      const response = await fetch("/api/dead-mans-switch/beneficiaries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          totalShares: labels.length,
+          thresholdShares: beneficiaryThreshold,
+          beneficiaries: beneficiaryPayload.map((b) => ({
+            label: b.label,
+            shareIndex: b.shareIndex,
+            shareHash: b.shareHash,
+            inviteTokenHash: b.inviteTokenHash,
+          })),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to update beneficiaries");
+      }
+
+      setResplitDistribution(
+        beneficiaryPayload.map((b) => ({
+          label: b.label,
+          recoveryUrl: `${window.location.origin}/vault/recover/${b.rawToken}`,
+          share: b.encodedShare,
+        })),
+      );
+      setResplitPassphrase("");
+    } catch (err) {
+      setResplitError(err instanceof Error ? err.message : "Failed to update beneficiaries");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function handleResplitDone() {
+    setResplitDistribution(null);
+    setManagementMode("none");
+    router.refresh();
+  }
+
   const now = new Date();
 
   return (
@@ -204,10 +466,224 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-xs text-muted">
-          Beneficiaries can&apos;t be added or removed after setup — doing so would require re-splitting the key and
-          redistributing every share from scratch.
-        </p>
+
+        {status.status !== "ACTIVE" ? (
+          <p className="mt-2 text-xs text-muted">
+            Passphrase rotation and beneficiary changes are only available while the vault is Active — cancel any
+            in-progress recovery first.
+          </p>
+        ) : managementMode === "none" ? (
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+            <button
+              type="button"
+              onClick={openRotate}
+              className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Rotate passphrase
+            </button>
+            <button
+              type="button"
+              onClick={openBeneficiaryManagement}
+              className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Add / remove beneficiaries
+            </button>
+          </div>
+        ) : managementMode === "rotate" ? (
+          rotateDistribution ? (
+            <div className="mt-3 flex flex-col gap-3 border-t border-negative border-t-2 pt-3">
+              <p className="text-sm font-medium text-fg">New shares — distribute these now, they replace the old ones</p>
+              <p className="text-xs text-muted">
+                Each beneficiary&apos;s recovery link is unchanged — only give them their new share below to replace
+                their old one. The old shares no longer work.
+              </p>
+              <ul className="flex flex-col gap-2">
+                {rotateDistribution.map((packet) => (
+                  <li key={packet.label} className="rounded-md border border-border bg-bg p-2">
+                    <p className="text-sm font-medium text-fg">{packet.label}</p>
+                    <p className="mt-1 break-all font-tabular-figures text-xs text-muted">New share: {packet.share}</p>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={handleRotateDone}
+                className="uv-btn-press self-start rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                I&apos;ve distributed these — done
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleRotateSubmit} className="mt-3 flex flex-wrap items-end gap-2 border-t border-border pt-3">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="dms-rotate-old" className="text-xs font-medium text-muted">
+                  Current passphrase
+                </label>
+                <input
+                  id="dms-rotate-old"
+                  type="password"
+                  autoComplete="current-password"
+                  value={rotateOldPassphrase}
+                  onChange={(event) => setRotateOldPassphrase(event.target.value)}
+                  className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="dms-rotate-new" className="text-xs font-medium text-muted">
+                  New passphrase
+                </label>
+                <input
+                  id="dms-rotate-new"
+                  type="password"
+                  autoComplete="new-password"
+                  value={rotateNewPassphrase}
+                  onChange={(event) => setRotateNewPassphrase(event.target.value)}
+                  className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="dms-rotate-confirm" className="text-xs font-medium text-muted">
+                  Confirm new passphrase
+                </label>
+                <input
+                  id="dms-rotate-confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  value={rotateConfirmPassphrase}
+                  onChange={(event) => setRotateConfirmPassphrase(event.target.value)}
+                  className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isBusy || !rotateOldPassphrase || !rotateNewPassphrase || !rotateConfirmPassphrase}
+                className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                {isBusy && <Spinner />} Rotate
+              </button>
+              <button
+                type="button"
+                onClick={closeManagement}
+                className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+              <p className="w-full text-xs text-muted">
+                Every document is decrypted with your current passphrase and re-encrypted with the new one, and every
+                beneficiary&apos;s share is regenerated — entirely in your browser.
+              </p>
+              {rotateError && <p className="w-full text-xs text-negative">{rotateError}</p>}
+            </form>
+          )
+        ) : resplitDistribution ? (
+          <div className="mt-3 flex flex-col gap-3 border-t border-negative border-t-2 pt-3">
+            <p className="text-sm font-medium text-fg">
+              Distribute these now — every beneficiary&apos;s link and share are brand new
+            </p>
+            <p className="text-xs text-muted">
+              This replaces the ENTIRE roster, including anyone who was already a beneficiary — their old link and
+              share no longer work, even if their label is unchanged.
+            </p>
+            <ul className="flex flex-col gap-2">
+              {resplitDistribution.map((packet) => (
+                <li key={packet.label} className="rounded-md border border-border bg-bg p-2">
+                  <p className="text-sm font-medium text-fg">{packet.label}</p>
+                  <p className="mt-1 break-all font-tabular-figures text-xs text-muted">Link: {packet.recoveryUrl}</p>
+                  <p className="mt-1 break-all font-tabular-figures text-xs text-muted">Share: {packet.share}</p>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={handleResplitDone}
+              className="uv-btn-press self-start rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              I&apos;ve distributed these — done
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleBeneficiariesSubmit} className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-xs font-medium text-muted">Beneficiaries</legend>
+              {beneficiaryLabels.map((label, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder={`Beneficiary ${index + 1}`}
+                    value={label}
+                    onChange={(event) => updateBeneficiaryLabel(index, event.target.value)}
+                    className="flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                  {beneficiaryLabels.length > 2 && (
+                    <button
+                      type="button"
+                      data-index={index}
+                      onClick={handleRemoveBeneficiaryLabelClick}
+                      className="rounded-md px-2 py-1 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addBeneficiaryLabel}
+                className="uv-btn-press self-start rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                + Add beneficiary
+              </button>
+            </fieldset>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="dms-resplit-threshold" className="text-xs font-medium text-muted">
+                  Shares required to unlock
+                </label>
+                <input
+                  id="dms-resplit-threshold"
+                  type="number"
+                  min={2}
+                  max={beneficiaryLabels.length}
+                  value={beneficiaryThreshold}
+                  onChange={(event) => setBeneficiaryThreshold(Number(event.target.value))}
+                  className="w-24 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="dms-resplit-passphrase" className="text-xs font-medium text-muted">
+                  Current passphrase
+                </label>
+                <input
+                  id="dms-resplit-passphrase"
+                  type="password"
+                  autoComplete="current-password"
+                  value={resplitPassphrase}
+                  onChange={(event) => setResplitPassphrase(event.target.value)}
+                  className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isBusy || !resplitPassphrase}
+                className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                {isBusy && <Spinner />} Re-split &amp; save
+              </button>
+              <button
+                type="button"
+                onClick={closeManagement}
+                className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+            </div>
+            <p className="text-xs text-muted">
+              This re-splits your master key across the new roster above — every beneficiary, including anyone
+              unchanged, gets a brand new link and share to replace their old one.
+            </p>
+            {resplitError && <p className="text-xs text-negative">{resplitError}</p>}
+          </form>
+        )}
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">

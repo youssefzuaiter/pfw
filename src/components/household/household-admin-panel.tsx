@@ -30,12 +30,14 @@ export type HouseholdInviteRow = {
  */
 export function HouseholdAdminPanel({
   sharedGroupId,
+  groupName,
   myUserId,
   myRole,
   members,
   pendingInvites,
 }: {
   sharedGroupId: string;
+  groupName: string;
   myUserId: string;
   myRole: "OWNER" | "MEMBER";
   members: HouseholdMemberRow[];
@@ -47,6 +49,86 @@ export function HouseholdAdminPanel({
   const [issuedLink, setIssuedLink] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [nameDraft, setNameDraft] = useState(groupName);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [transferTargetUserId, setTransferTargetUserId] = useState("");
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+
+  async function handleRenameSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === groupName) return;
+
+    setIsRenaming(true);
+    setLifecycleError(null);
+    try {
+      const response = await fetch(`/api/groups/${sharedGroupId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to rename household");
+      }
+      router.refresh();
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : "Failed to rename household");
+    } finally {
+      setIsRenaming(false);
+    }
+  }
+
+  async function handleTransferConfirm() {
+    if (!transferTargetUserId) return;
+
+    setIsTransferring(true);
+    setLifecycleError(null);
+    try {
+      const response = await fetch(`/api/groups/${sharedGroupId}/transfer-ownership`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newOwnerUserId: transferTargetUserId }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to transfer ownership");
+      }
+      setTransferConfirmOpen(false);
+      setTransferTargetUserId("");
+      router.refresh();
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : "Failed to transfer ownership");
+    } finally {
+      setIsTransferring(false);
+    }
+  }
+
+  async function handleDeleteConfirm() {
+    setIsDeleting(true);
+    setLifecycleError(null);
+    try {
+      const response = await fetch(`/api/groups/${sharedGroupId}`, { method: "DELETE" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to delete household");
+      }
+      // The group no longer exists — refreshing this same URL (which
+      // still names the now-deleted group/view) would just 404 the
+      // Server Component's data fetch, so navigate back to the plain
+      // personal-ledger view instead of refreshing in place.
+      router.push("/budgets");
+      router.refresh();
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : "Failed to delete household");
+      setIsDeleting(false);
+    }
+  }
 
   async function handleInviteSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,7 +206,7 @@ export function HouseholdAdminPanel({
   // functions on a button element — an inline arrow prop there would
   // trip tests/guards/focus-visible.test.ts's regex-based heuristic (the
   // literal `>` inside the arrow syntax truncates its attribute capture
-  // before `className`), same trap documented in AGENTS.md §3c/§3d.
+  // before `className`), same trap documented in AGENTS.md §3c/§3d/§3t.
   function handleRemoveOrLeaveClick(event: MouseEvent<HTMLButtonElement>) {
     const memberUserId = event.currentTarget.dataset.memberUserId;
     if (memberUserId) handleRemoveOrLeave(memberUserId);
@@ -133,6 +215,24 @@ export function HouseholdAdminPanel({
   function handleRevokeClick(event: MouseEvent<HTMLButtonElement>) {
     const inviteId = event.currentTarget.dataset.inviteId;
     if (inviteId) handleRevoke(inviteId);
+  }
+
+  // Same trap, same fix, for the new lifecycle-management buttons below —
+  // no inline arrows on any button element, every toggle is a named no-arg handler.
+  function openTransferConfirm() {
+    setTransferConfirmOpen(true);
+  }
+
+  function closeTransferConfirm() {
+    setTransferConfirmOpen(false);
+  }
+
+  function openDeleteConfirm() {
+    setDeleteConfirmOpen(true);
+  }
+
+  function closeDeleteConfirm() {
+    setDeleteConfirmOpen(false);
   }
 
   if (myRole !== "OWNER") {
@@ -170,8 +270,130 @@ export function HouseholdAdminPanel({
     );
   }
 
+  const transferCandidates = members.filter((member) => member.role !== "OWNER");
+
   return (
     <div className="flex flex-col gap-4">
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Household settings</h2>
+
+        <form onSubmit={handleRenameSubmit} className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="household-name" className="text-xs font-medium text-muted">
+              Household name
+            </label>
+            <input
+              id="household-name"
+              type="text"
+              value={nameDraft}
+              onChange={(event) => setNameDraft(event.target.value)}
+              className="min-w-[200px] rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isRenaming || !nameDraft.trim() || nameDraft.trim() === groupName}
+            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            {isRenaming && <Spinner />}
+            Rename
+          </button>
+        </form>
+
+        {transferCandidates.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-border pt-3">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="transfer-target" className="text-xs font-medium text-muted">
+                Transfer ownership to
+              </label>
+              <select
+                id="transfer-target"
+                value={transferTargetUserId}
+                onChange={(event) => {
+                  setTransferTargetUserId(event.target.value);
+                  setTransferConfirmOpen(false);
+                }}
+                className="min-w-[200px] rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <option value="">Select a member…</option>
+                {transferCandidates.map((member) => (
+                  <option key={member.userId} value={member.userId}>
+                    {member.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {!transferConfirmOpen ? (
+              <button
+                type="button"
+                disabled={!transferTargetUserId}
+                onClick={openTransferConfirm}
+                className="uv-btn-press rounded-md border border-signature px-4 py-2 text-sm font-medium text-signature transition-colors hover:bg-signature/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                Transfer ownership
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted">You will become a regular member. Confirm?</span>
+                <button
+                  type="button"
+                  disabled={isTransferring}
+                  onClick={handleTransferConfirm}
+                  className="uv-btn-press flex items-center gap-1.5 rounded-md border border-signature bg-signature px-3 py-1.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                >
+                  {isTransferring && <Spinner />}
+                  Confirm transfer
+                </button>
+                <button
+                  type="button"
+                  onClick={closeTransferConfirm}
+                  className="uv-btn-press rounded-md border border-border px-3 py-1.5 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-3">
+          {!deleteConfirmOpen ? (
+            <button
+              type="button"
+              onClick={openDeleteConfirm}
+              className="uv-btn-press rounded-md border border-negative px-4 py-2 text-sm font-medium text-negative transition-colors hover:bg-negative/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Delete household
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">
+                This deletes the household for everyone. Shared budgets/accounts/categories revert to personal — nothing is
+                deleted. Confirm?
+              </span>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteConfirm}
+                className="uv-btn-press flex items-center gap-1.5 rounded-md border border-negative bg-negative px-3 py-1.5 text-xs font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                {isDeleting && <Spinner />}
+                Confirm delete
+              </button>
+              <button
+                type="button"
+                onClick={closeDeleteConfirm}
+                className="uv-btn-press rounded-md border border-border px-3 py-1.5 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+
+        {lifecycleError && <p className="mt-2 text-xs text-negative">{lifecycleError}</p>}
+      </section>
+
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Members</h2>
         <ul className="flex flex-col gap-2">

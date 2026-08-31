@@ -7,11 +7,14 @@ import {
   acceptGroupInvite,
   createGroupInvite,
   createSharedGroup,
+  deleteSharedGroup,
   getMyMembership,
   getSharedGroupData,
   listMyGroups,
   removeMember,
+  renameSharedGroup,
   setResourceSharing,
+  transferGroupOwnership,
   updateMemberPermission,
 } from "../../src/server/dal/shared-groups";
 
@@ -350,6 +353,85 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
         // instead, which must still fail closed rather than throw.
         const result = await removeMember(memberWrite.id, groupId, stranger.id);
         expect(result).toEqual({ ok: false, error: "not_found" });
+      });
+    });
+
+    // At this point: owner = OWNER/WRITE, memberWrite = MEMBER/WRITE,
+    // memberRead already left. `ownerBankAccountId.sharedGroupId === groupId`
+    // (shared earlier, above) — used below to prove DELETE un-shares it.
+    describe("household lifecycle: rename / transfer ownership / delete (AGENTS.md §3s amendment)", () => {
+      it("a non-owner cannot rename the group", async () => {
+        const result = await renameSharedGroup(memberWrite.id, groupId, "Hijacked Name");
+        expect(result).toEqual({ ok: false, error: "not_owner" });
+      });
+
+      it("the owner can rename the group", async () => {
+        const result = await renameSharedGroup(owner.id, groupId, "The Renamed Household");
+        expect(result).toEqual({ ok: true });
+
+        const stored = await admin.sharedGroup.findUniqueOrThrow({ where: { id: groupId } });
+        expect(stored.name).toBe("The Renamed Household");
+      });
+
+      it("transferring ownership to someone who isn't a member fails as target_not_found", async () => {
+        const result = await transferGroupOwnership(owner.id, groupId, stranger.id);
+        expect(result).toEqual({ ok: false, error: "target_not_found" });
+      });
+
+      it("transferring ownership to the current owner fails as target_already_owner", async () => {
+        const result = await transferGroupOwnership(owner.id, groupId, owner.id);
+        expect(result).toEqual({ ok: false, error: "target_already_owner" });
+      });
+
+      it("a non-owner cannot transfer ownership at all", async () => {
+        const result = await transferGroupOwnership(memberWrite.id, groupId, memberWrite.id);
+        expect(result).toEqual({ ok: false, error: "not_owner" });
+      });
+
+      it("the owner can transfer ownership to an existing non-owner member", async () => {
+        const result = await transferGroupOwnership(owner.id, groupId, memberWrite.id);
+        expect(result).toEqual({ ok: true });
+
+        const stored = await admin.sharedGroup.findUniqueOrThrow({ where: { id: groupId } });
+        expect(stored.createdById).toBe(memberWrite.id);
+
+        const newOwnerMembership = await getMyMembership(memberWrite.id, groupId);
+        expect(newOwnerMembership).toMatchObject({ role: "OWNER", permission: "WRITE" });
+
+        const formerOwnerMembership = await getMyMembership(owner.id, groupId);
+        expect(formerOwnerMembership).toMatchObject({ role: "MEMBER" });
+      });
+
+      it("the former owner can no longer rename the group after transfer", async () => {
+        const result = await renameSharedGroup(owner.id, groupId, "Should Not Apply");
+        expect(result).toEqual({ ok: false, error: "not_owner" });
+      });
+
+      it("the new owner can rename the group after transfer", async () => {
+        const result = await renameSharedGroup(memberWrite.id, groupId, "Owned By New Owner");
+        expect(result).toEqual({ ok: true });
+      });
+
+      it("the former owner (now a plain member) cannot delete the group", async () => {
+        const result = await deleteSharedGroup(owner.id, groupId);
+        expect(result).toEqual({ ok: false, error: "not_owner" });
+      });
+
+      it("the new owner can delete the group — members cascade, shared resources un-share, nothing else is touched", async () => {
+        const result = await deleteSharedGroup(memberWrite.id, groupId);
+        expect(result).toEqual({ ok: true });
+
+        expect(await admin.sharedGroup.findUnique({ where: { id: groupId } })).toBeNull();
+        expect(await admin.groupMember.findMany({ where: { sharedGroupId: groupId } })).toHaveLength(0);
+
+        // Budget/BankAccount/Category revert to purely personal
+        // (onDelete: SetNull) — never deleted, per the DAL doc comment.
+        const bankAccount = await admin.bankAccount.findUniqueOrThrow({ where: { id: ownerBankAccountId } });
+        expect(bankAccount.sharedGroupId).toBeNull();
+
+        // The underlying transaction and its owner's account are
+        // completely untouched by a household-group deletion.
+        await expect(getTransactionById(owner.id, ownerTransactionId)).resolves.toMatchObject({ id: ownerTransactionId });
       });
     });
   },

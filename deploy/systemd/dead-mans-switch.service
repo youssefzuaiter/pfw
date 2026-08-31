@@ -1,0 +1,50 @@
+# systemd/launchd alternative to ../../k8s/dead-mans-switch-cronjob.yaml
+# for a non-Kubernetes deployment of PFW (AGENTS.md §3t amendment) — runs
+# the same `npm run check:dead-mans-switch` batch job
+# (src/server/dead-mans-switch/inactivity-check.ts's `runInactivityCheck`)
+# as a systemd oneshot unit, triggered by the companion
+# dead-mans-switch.timer rather than systemd's own [Install]/enable path
+# (a oneshot with no [Install] section is intentional — it's never meant
+# to be started directly by `systemctl start` outside the timer, only by
+# the timer unit that depends on it by name).
+#
+# Install (as root):
+#   cp dead-mans-switch.service dead-mans-switch.timer /etc/systemd/system/
+#   # Edit /etc/systemd/system/dead-mans-switch.service:
+#   #   - WorkingDirectory to the real deployed app path
+#   #   - User/Group to a real non-root service account
+#   #   - EnvironmentFile to a real 0600 secrets file (see below)
+#   systemctl daemon-reload
+#   systemctl enable --now dead-mans-switch.timer
+#
+# DATABASE_URL (the pfw_app / admin role's connection string — see
+# ../../k8s/dead-mans-switch-cronjob.yaml's header note for why THIS
+# specific role, not APP_DATABASE_URL/pfw_runtime, is required here) is
+# read from EnvironmentFile below, never written inline in this unit
+# file — same "no plaintext credential committed to a manifest" posture
+# as every Kubernetes Secret in this repo's k8s/ manifests. Create that
+# file out-of-band, e.g.:
+#   install -m 600 -o pfw -g pfw /dev/null /etc/pfw/dead-mans-switch.env
+#   echo 'DATABASE_URL=postgresql://pfw_app:...@host:5432/pfw' > /etc/pfw/dead-mans-switch.env
+[Unit]
+Description=PFW Dead Man's Switch inactivity check (npm run check:dead-mans-switch)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pfw
+Group=pfw
+WorkingDirectory=/opt/pfw/current
+EnvironmentFile=/etc/pfw/dead-mans-switch.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run check:dead-mans-switch
+
+# Defense-in-depth process sandboxing — this unit only needs outbound
+# network (to Postgres) and its own working directory; deny everything
+# else a compromised Node process could otherwise reach.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/pfw/current

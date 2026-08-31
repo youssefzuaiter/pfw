@@ -54,6 +54,40 @@ export const SetupDocumentSchema = z.object({
   ciphertext: VaultCiphertextSchema,
 });
 
+const DocumentIdSchema = z.string().min(1).max(64);
+const BeneficiaryIdSchema = z.string().min(1).max(64);
+
+export const RotateVaultPassphraseBodySchema = z
+  .object({
+    newSalt: VaultSaltSchema,
+    newIterations: VaultIterationsSchema,
+    newCanaryCiphertext: VaultCiphertextSchema,
+    documents: z.array(z.object({ id: DocumentIdSchema, ciphertext: VaultCiphertextSchema })).max(50),
+    beneficiaries: z
+      .array(z.object({ id: BeneficiaryIdSchema, shareIndex: z.number().int().min(1).max(255), shareHash: Sha256HexSchema }))
+      .min(2)
+      .max(255),
+  })
+  .refine((body) => new Set(body.beneficiaries.map((b) => b.id)).size === body.beneficiaries.length, {
+    message: "beneficiaries must not repeat an id",
+    path: ["beneficiaries"],
+  });
+
+export const UpdateVaultBeneficiariesBodySchema = z
+  .object({
+    totalShares: z.number().int().min(2).max(255),
+    thresholdShares: z.number().int().min(2).max(255),
+    beneficiaries: z.array(SetupBeneficiarySchema).min(2).max(255),
+  })
+  .refine((body) => body.thresholdShares <= body.totalShares, {
+    message: "thresholdShares must not exceed totalShares",
+    path: ["thresholdShares"],
+  })
+  .refine((body) => body.beneficiaries.length === body.totalShares, {
+    message: "beneficiaries.length must equal totalShares",
+    path: ["beneficiaries"],
+  });
+
 export const SetupVaultBodySchema = z
   .object({
     salt: VaultSaltSchema,

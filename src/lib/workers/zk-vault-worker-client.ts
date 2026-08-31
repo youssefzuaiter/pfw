@@ -55,3 +55,24 @@ export function zkVaultEncrypt(plaintext: string): Promise<{ ciphertext: string 
 export function zkVaultDecrypt(ciphertext: string): Promise<{ plaintext: string }> {
   return getCall()("decrypt", { ciphertext });
 }
+
+/**
+ * Passphrase Rotation (AGENTS.md §3m amendment) — verifies
+ * `oldPassphrase`, decrypts every `notes` entry with the old key,
+ * derives a new key from `newPassphrase`/`newSaltBase64`, re-encrypts
+ * every note, and activates the new key — entirely inside the worker.
+ * The caller must persist the returned salt/canary/notes atomically
+ * (see `rotateZkVaultPassphrase` in `src/server/dal/zk-vault.ts`).
+ */
+export function zkVaultRotate(params: {
+  oldPassphrase: string;
+  oldSaltBase64: string;
+  oldIterations: number;
+  oldCanaryCiphertext: string;
+  newPassphrase: string;
+  newSaltBase64: string;
+  newIterations: number;
+  notes: { id: string; note: string }[];
+}): Promise<{ valid: true; newCanaryCiphertext: string; notes: { id: string; note: string }[] } | { valid: false }> {
+  return getCall()("rotate", params);
+}

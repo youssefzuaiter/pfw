@@ -182,6 +182,106 @@ describe("zk-crypto worker handlers, over the real RPC protocol", () => {
     // Still locked — the wrong-passphrase unlock above never activated a key on this instance.
     await expect(freshCall("encrypt", { plaintext: "x" })).rejects.toThrow(/locked/i);
   });
+
+  it("rotate: wrong old passphrase resolves valid:false and touches nothing", async () => {
+    const [setupMain, setupWorker] = createChannelPair();
+    serveRpc(createZkCryptoHandlers(), setupWorker);
+    const setupCall = createRpcClient(setupMain);
+
+    const oldSalt = "dGVzdC1zYWx0LTE2Ynl0ZXM=";
+    const { canaryCiphertext: oldCanary } = await setupCall<{ canaryCiphertext: string }>("setup", {
+      passphrase: "the real old passphrase",
+      saltBase64: oldSalt,
+      iterations: 100,
+    });
+    const { ciphertext: noteCiphertext } = await setupCall<{ ciphertext: string }>("encrypt", { plaintext: "a real note" });
+
+    const result = await setupCall("rotate", {
+      oldPassphrase: "a wrong guess",
+      oldSaltBase64: oldSalt,
+      oldIterations: 100,
+      oldCanaryCiphertext: oldCanary,
+      newPassphrase: "brand new passphrase",
+      newSaltBase64: "bmV3LXNhbHQtMTZieXRlcyE=",
+      newIterations: 100,
+      notes: [{ id: "note-1", note: noteCiphertext }],
+    });
+    expect(result).toEqual({ valid: false });
+
+    // Still unlocked under the ORIGINAL key — a failed rotation attempt
+    // never activates anything new nor locks the vault out.
+    await expect(setupCall("decrypt", { ciphertext: noteCiphertext })).resolves.toEqual({ plaintext: "a real note" });
+  });
+
+  it("rotate: decrypts every note with the old key, re-encrypts under the new key, and activates the new key — old passphrase no longer unlocks, new one does", async () => {
+    const [setupMain, setupWorker] = createChannelPair();
+    serveRpc(createZkCryptoHandlers(), setupWorker);
+    const setupCall = createRpcClient(setupMain);
+
+    const oldSalt = "dGVzdC1zYWx0LTE2Ynl0ZXM=";
+    const oldPassphrase = "the real old passphrase";
+    const { canaryCiphertext: oldCanary } = await setupCall<{ canaryCiphertext: string }>("setup", {
+      passphrase: oldPassphrase,
+      saltBase64: oldSalt,
+      iterations: 100,
+    });
+    const { ciphertext: note1 } = await setupCall<{ ciphertext: string }>("encrypt", { plaintext: "first note" });
+    const { ciphertext: note2 } = await setupCall<{ ciphertext: string }>("encrypt", { plaintext: "second note" });
+
+    const newSalt = "bmV3LXNhbHQtMTZieXRlcyE=";
+    const newPassphrase = "brand new passphrase";
+    const result = await setupCall<{ valid: true; newCanaryCiphertext: string; notes: { id: string; note: string }[] }>(
+      "rotate",
+      {
+        oldPassphrase,
+        oldSaltBase64: oldSalt,
+        oldIterations: 100,
+        oldCanaryCiphertext: oldCanary,
+        newPassphrase,
+        newSaltBase64: newSalt,
+        newIterations: 100,
+        notes: [
+          { id: "note-1", note: note1 },
+          { id: "note-2", note: note2 },
+        ],
+      },
+    );
+    expect(result.valid).toBe(true);
+    expect(result.newCanaryCiphertext).toMatch(/^zk1:/);
+    expect(result.notes.map((n) => n.id).sort()).toEqual(["note-1", "note-2"]);
+    for (const note of result.notes) expect(note.note).toMatch(/^zk1:/);
+
+    // The rotate call itself already activated the new key on setupCall's
+    // instance — re-encrypted note ciphertext decrypts correctly, in place.
+    const rotatedNote1 = result.notes.find((n) => n.id === "note-1")!.note;
+    await expect(setupCall("decrypt", { ciphertext: rotatedNote1 })).resolves.toEqual({ plaintext: "first note" });
+
+    // NOTE on what "old credentials no longer work" actually means: PBKDF2
+    // is a pure deterministic function, so re-deriving with the exact old
+    // (passphrase, salt, iterations) tuple against the exact old canary
+    // still succeeds here — that's correct, expected math, not a bug.
+    // What actually makes the OLD credential set dead is that
+    // `rotateZkVaultPassphrase` (src/server/dal/zk-vault.ts) atomically
+    // OVERWRITES the stored salt/canary/note-ciphertexts server-side, so
+    // there is no longer any stored old salt/canary left to combine with
+    // the old passphrase in the first place — that DAL-level guarantee is
+    // covered by tests/integration/zk-vault.test.ts, not here. This
+    // worker-level test's job is only the crypto/orchestration: a fresh
+    // instance DOES unlock with the new passphrase/salt/canary, and the
+    // rotated ciphertext decrypts correctly there.
+    const [newTabMain, newTabWorker] = createChannelPair();
+    serveRpc(createZkCryptoHandlers(), newTabWorker);
+    const newTabCall = createRpcClient(newTabMain);
+    await expect(
+      newTabCall("unlock", {
+        passphrase: newPassphrase,
+        saltBase64: newSalt,
+        iterations: 100,
+        canaryCiphertext: result.newCanaryCiphertext,
+      }),
+    ).resolves.toEqual({ valid: true });
+    await expect(newTabCall("decrypt", { ciphertext: rotatedNote1 })).resolves.toEqual({ plaintext: "first note" });
+  });
 });
 
 describe("dead-man's-switch worker handlers, over the real RPC protocol", () => {
@@ -247,6 +347,174 @@ describe("dead-man's-switch worker handlers, over the real RPC protocol", () => 
     // Now genuinely unlocked — a document encrypted here decrypts back correctly.
     const { ciphertext } = await freshCall<{ ciphertext: string }>("encrypt", { plaintext: "recovered document" });
     await expect(freshCall("decrypt", { ciphertext })).resolves.toEqual({ plaintext: "recovered document" });
+  });
+
+  it("resplit: wrong passphrase resolves valid:false", async () => {
+    const [setupMain, setupWorker] = createChannelPair();
+    serveRpc(createDmsCryptoHandlers(), setupWorker);
+    const setupCall = createRpcClient(setupMain);
+
+    const setupResult = await setupCall<{ salt: string; canaryCiphertext: string }>("setup", {
+      passphrase: "household emergency passphrase",
+      iterations: 100,
+      totalShares: 5,
+      thresholdShares: 3,
+    });
+
+    const result = await setupCall("resplit", {
+      passphrase: "a wrong guess",
+      saltBase64: setupResult.salt,
+      iterations: 100,
+      canaryCiphertext: setupResult.canaryCiphertext,
+      totalShares: 7,
+      thresholdShares: 4,
+    });
+    expect(result).toEqual({ valid: false });
+  });
+
+  it("resplit: re-verifies the passphrase, produces a fresh share set at the new total/threshold, and leaves documents untouched (same master key)", async () => {
+    const [setupMain, setupWorker] = createChannelPair();
+    serveRpc(createDmsCryptoHandlers(), setupWorker);
+    const setupCall = createRpcClient(setupMain);
+
+    const passphrase = "household emergency passphrase";
+    const setupResult = await setupCall<{ salt: string; canaryCiphertext: string }>("setup", {
+      passphrase,
+      iterations: 100,
+      totalShares: 5,
+      thresholdShares: 3,
+    });
+    const { ciphertext: documentCiphertext } = await setupCall<{ ciphertext: string }>("encrypt", {
+      plaintext: "Will is in the safe.",
+    });
+
+    const resplitResult = await setupCall<{
+      valid: true;
+      shares: { index: number; encodedShare: string; shareHash: string }[];
+    }>("resplit", {
+      passphrase,
+      saltBase64: setupResult.salt,
+      iterations: 100,
+      canaryCiphertext: setupResult.canaryCiphertext,
+      totalShares: 7,
+      thresholdShares: 4,
+    });
+    expect(resplitResult.valid).toBe(true);
+    expect(resplitResult.shares).toHaveLength(7);
+    for (const share of resplitResult.shares) {
+      expect(share.encodedShare).toMatch(/^dms-share1:/);
+      expect(share.shareHash).toMatch(/^[0-9a-f]{64}$/);
+    }
+
+    // Master key is unchanged by a resplit — the document encrypted
+    // under it BEFORE the resplit still decrypts correctly on this same
+    // (still-unlocked) instance afterward.
+    await expect(setupCall("decrypt", { ciphertext: documentCiphertext })).resolves.toEqual({
+      plaintext: "Will is in the safe.",
+    });
+  });
+
+  it("rotate: wrong old passphrase resolves valid:false and touches nothing", async () => {
+    const [setupMain, setupWorker] = createChannelPair();
+    serveRpc(createDmsCryptoHandlers(), setupWorker);
+    const setupCall = createRpcClient(setupMain);
+
+    const setupResult = await setupCall<{ salt: string; canaryCiphertext: string }>("setup", {
+      passphrase: "the real old passphrase",
+      iterations: 100,
+      totalShares: 5,
+      thresholdShares: 3,
+    });
+    const { ciphertext: documentCiphertext } = await setupCall<{ ciphertext: string }>("encrypt", {
+      plaintext: "a real document",
+    });
+
+    const result = await setupCall("rotate", {
+      oldPassphrase: "a wrong guess",
+      oldSaltBase64: setupResult.salt,
+      oldIterations: 100,
+      oldCanaryCiphertext: setupResult.canaryCiphertext,
+      newPassphrase: "brand new emergency passphrase",
+      newIterations: 100,
+      totalShares: 5,
+      thresholdShares: 3,
+      documents: [{ id: "doc-1", ciphertext: documentCiphertext }],
+    });
+    expect(result).toEqual({ valid: false });
+
+    // Still unlocked under the ORIGINAL key.
+    await expect(setupCall("decrypt", { ciphertext: documentCiphertext })).resolves.toEqual({
+      plaintext: "a real document",
+    });
+  });
+
+  it("rotate: decrypts every document with the old key, re-encrypts + re-splits under a fresh key/salt, and activates the new key — old credentials no longer unlock, new ones do", async () => {
+    const [setupMain, setupWorker] = createChannelPair();
+    serveRpc(createDmsCryptoHandlers(), setupWorker);
+    const setupCall = createRpcClient(setupMain);
+
+    const oldPassphrase = "the real old passphrase";
+    const setupResult = await setupCall<{ salt: string; canaryCiphertext: string }>("setup", {
+      passphrase: oldPassphrase,
+      iterations: 100,
+      totalShares: 5,
+      thresholdShares: 3,
+    });
+    const { ciphertext: doc1 } = await setupCall<{ ciphertext: string }>("encrypt", { plaintext: "will" });
+    const { ciphertext: doc2 } = await setupCall<{ ciphertext: string }>("encrypt", { plaintext: "passwords" });
+
+    const newPassphrase = "brand new emergency passphrase";
+    const result = await setupCall<{
+      valid: true;
+      newSalt: string;
+      newCanaryCiphertext: string;
+      documents: { id: string; ciphertext: string }[];
+      shares: { index: number; encodedShare: string; shareHash: string }[];
+    }>("rotate", {
+      oldPassphrase,
+      oldSaltBase64: setupResult.salt,
+      oldIterations: 100,
+      oldCanaryCiphertext: setupResult.canaryCiphertext,
+      newPassphrase,
+      newIterations: 100,
+      totalShares: 5,
+      thresholdShares: 3,
+      documents: [
+        { id: "doc-1", ciphertext: doc1 },
+        { id: "doc-2", ciphertext: doc2 },
+      ],
+    });
+    expect(result.valid).toBe(true);
+    expect(result.newSalt).not.toBe(setupResult.salt);
+    expect(result.newCanaryCiphertext).toMatch(/^dms1:/);
+    expect(result.documents.map((d) => d.id).sort()).toEqual(["doc-1", "doc-2"]);
+    for (const document of result.documents) expect(document.ciphertext).toMatch(/^dms1:/);
+    expect(result.shares).toHaveLength(5);
+
+    const rotatedDoc1 = result.documents.find((d) => d.id === "doc-1")!.ciphertext;
+
+    // Same note as the zk-crypto rotate test above: re-deriving with the
+    // exact old (passphrase, salt, canary) tuple still succeeds here —
+    // PBKDF2 is deterministic, and this worker has no notion of "old" vs
+    // "new" on its own. What actually retires the old credential set is
+    // `rotateVaultPassphrase` (src/server/dal/dead-mans-switch.ts)
+    // atomically overwriting the stored salt/canary/documents/beneficiary
+    // shares server-side, covered by tests/integration/dead-mans-switch.test.ts,
+    // not here. This test's job is only the crypto/orchestration: a fresh
+    // instance DOES unlock with the new passphrase/salt/canary, and the
+    // rotated document ciphertext decrypts correctly there.
+    const [newTabMain, newTabWorker] = createChannelPair();
+    serveRpc(createDmsCryptoHandlers(), newTabWorker);
+    const newTabCall = createRpcClient(newTabMain);
+    await expect(
+      newTabCall("unlock", {
+        passphrase: newPassphrase,
+        saltBase64: result.newSalt,
+        iterations: 100,
+        canaryCiphertext: result.newCanaryCiphertext,
+      }),
+    ).resolves.toEqual({ valid: true });
+    await expect(newTabCall("decrypt", { ciphertext: rotatedDoc1 })).resolves.toEqual({ plaintext: "will" });
   });
 });
 

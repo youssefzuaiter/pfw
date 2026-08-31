@@ -62,6 +62,100 @@ export async function setupZkVault(userId: string, input: SetupZkVaultInput): Pr
   });
 }
 
+export type ZkNoteCiphertext = { id: string; note: string };
+
+/**
+ * Every `GoalContribution.note` already in the CURRENT "zk1:..." format
+ * — opaque ciphertext blobs only, the server never decrypts any of them
+ * here. This is the read half of Passphrase Rotation (AGENTS.md §3m
+ * amendment): the client fetches these, decrypts each one client-side
+ * with the OLD key (inside the Web Worker, `zkVaultRotate` /
+ * `createZkCryptoHandlers`'s `rotate` handler), re-encrypts under the
+ * NEW key, and sends the result back to `rotateZkVaultPassphrase` below.
+ * Deliberately excludes any note still in the OLD server-side "v1:..."
+ * format — that's `findLegacyNoteContributions`'s own, separate,
+ * one-time migration path, unaffected by rotating an ALREADY-zero-
+ * knowledge vault's passphrase.
+ */
+export async function listZkNoteCiphertexts(userId: string): Promise<ZkNoteCiphertext[]> {
+  const rows = await withUserScope(userId, (tx) =>
+    tx.goalContribution.findMany({
+      where: { userId, note: { not: null } },
+      select: { id: true, note: true },
+    }),
+  );
+
+  return rows
+    .filter((row): row is typeof row & { note: string } => row.note !== null && row.note.startsWith("zk1:"))
+    .map((row) => ({ id: row.id, note: row.note }));
+}
+
+export type RotateZkVaultPassphraseInput = {
+  newSalt: string;
+  newIterations: number;
+  newCanaryCiphertext: string;
+  /** Every currently-"zk1:"-formatted note, re-encrypted under the new key — must be an EXACT match (same id set) against `listZkNoteCiphertexts`'s current result, checked again inside this function's own transaction. */
+  reencryptedNotes: ZkNoteCiphertext[];
+};
+
+export type RotateZkVaultPassphraseResult =
+  | { ok: true }
+  | { ok: false; error: "not_set_up" | "notes_changed_concurrently" };
+
+/**
+ * Passphrase Rotation (AGENTS.md §3m amendment): atomically overwrites
+ * `User.zkSalt`/`zkKdfIterations`/`zkCanaryCiphertext` AND every
+ * `GoalContribution.note` this rotation covers, in the SAME
+ * `withUserScope` transaction (a single real Postgres transaction — see
+ * `with-user-scope.ts`) — this is the "persist the updated ciphertext
+ * and salt in a single atomic transaction" requirement: a rotation that
+ * updated the salt but only SOME notes (a crash mid-write, a network
+ * drop) would otherwise leave the un-migrated notes permanently
+ * undecryptable, since the old salt is gone the moment this commits.
+ *
+ * Re-fetches the current "zk1:" note id set INSIDE the transaction and
+ * requires it to EXACTLY match `input.reencryptedNotes`'s id set before
+ * writing anything — a note added/edited between the client's read
+ * (`listZkNoteCiphertexts`) and this write (e.g. a second browser tab)
+ * would otherwise either get silently dropped (permanently orphaned
+ * under the vanishing old salt) or have a stale re-encryption overwrite
+ * a newer edit. Failing closed here (rather than writing a partial/
+ * stale result) is the correct behavior — the caller should re-fetch and
+ * retry the whole rotation from scratch.
+ */
+export async function rotateZkVaultPassphrase(
+  userId: string,
+  input: RotateZkVaultPassphraseInput,
+): Promise<RotateZkVaultPassphraseResult> {
+  return withUserScope(userId, async (tx) => {
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { zkSalt: true } });
+    if (user?.zkSalt == null) return { ok: false, error: "not_set_up" };
+
+    const currentRows = await tx.goalContribution.findMany({
+      where: { userId, note: { not: null } },
+      select: { id: true, note: true },
+    });
+    const currentZkNoteIds = new Set(
+      currentRows.filter((row) => row.note !== null && row.note.startsWith("zk1:")).map((row) => row.id),
+    );
+    const submittedIds = new Set(input.reencryptedNotes.map((note) => note.id));
+    const idsMatch =
+      currentZkNoteIds.size === submittedIds.size && [...currentZkNoteIds].every((id) => submittedIds.has(id));
+    if (!idsMatch) return { ok: false, error: "notes_changed_concurrently" };
+
+    await tx.user.update({
+      where: { id: userId },
+      data: { zkSalt: input.newSalt, zkKdfIterations: input.newIterations, zkCanaryCiphertext: input.newCanaryCiphertext },
+    });
+
+    for (const note of input.reencryptedNotes) {
+      await tx.goalContribution.update({ where: { id: note.id }, data: { note: note.note } });
+    }
+
+    return { ok: true };
+  });
+}
+
 export type LegacyNoteContribution = { id: string; goalId: string; plaintext: string };
 
 /**

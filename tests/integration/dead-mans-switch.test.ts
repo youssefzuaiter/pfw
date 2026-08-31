@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DMS_CANARY_PLAINTEXT,
   DMS_PBKDF2_ITERATIONS,
+  decryptVaultValue,
   deriveVaultKeyBytes,
   encryptVaultValue,
   generateVaultSalt,
@@ -9,9 +10,45 @@ import {
 } from "../../src/lib/dead-mans-switch-crypto";
 import { encodeShare, splitSecret, type Share } from "../../src/lib/shamir-secret-sharing";
 import { createAdminClient } from "../../src/server/db/admin-client";
-import { cancelRecovery, getVaultStatus, setupVault } from "../../src/server/dal/dead-mans-switch";
+import {
+  cancelRecovery,
+  getVaultStatus,
+  rotateVaultPassphrase,
+  setupVault,
+  updateVaultBeneficiaries,
+} from "../../src/server/dal/dead-mans-switch";
 import { runInactivityCheck } from "../../src/server/dead-mans-switch/inactivity-check";
 import { getRecoveryPortalStatus, submitRecoveryShare } from "../../src/server/dead-mans-switch/recovery-service";
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function randomTestToken(): string {
+  return `test-token-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function buildShareDrafts(rawKey: Uint8Array, labels: string[], threshold: number) {
+  const shares = splitSecret(rawKey, labels.length, threshold);
+  return Promise.all(
+    shares.map(async (share: Share, i) => {
+      const rawToken = randomTestToken();
+      const inviteTokenHash = await sha256Hex(new TextEncoder().encode(rawToken));
+      const shareHash = await sha256Hex(share.value);
+      return {
+        label: labels[i],
+        shareIndex: share.index,
+        shareHash,
+        inviteTokenHash,
+        rawToken,
+        encodedShare: encodeShare(share),
+      };
+    }),
+  );
+}
 
 /**
  * Integration coverage for the Cryptographic Dead Man's Switch
@@ -283,5 +320,323 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Cry
     } finally {
       await admin.user.deleteMany({ where: { id: owner5.id } });
     }
+  });
+
+  describe("Dynamic Beneficiaries: updateVaultBeneficiaries (AGENTS.md §3t amendment, item 2)", () => {
+    it("rejects when the vault was never set up", async () => {
+      const strangerOwner = await admin.user.create({
+        data: { email: `dms-resplit-stranger-${Date.now()}@pfw.local`, displayName: "Resplit Stranger" },
+      });
+      try {
+        const result = await updateVaultBeneficiaries(strangerOwner.id, {
+          totalShares: 3,
+          thresholdShares: 2,
+          beneficiaries: [
+            { label: "A", shareIndex: 1, shareHash: "a".repeat(64), inviteTokenHash: "b".repeat(64) },
+            { label: "B", shareIndex: 2, shareHash: "c".repeat(64), inviteTokenHash: "d".repeat(64) },
+            { label: "C", shareIndex: 3, shareHash: "e".repeat(64), inviteTokenHash: "f".repeat(64) },
+          ],
+        });
+        expect(result).toEqual({ ok: false, error: "not_set_up" });
+      } finally {
+        await admin.user.deleteMany({ where: { id: strangerOwner.id } });
+      }
+    });
+
+    it("rejects a beneficiaries.length/totalShares mismatch before touching the database", async () => {
+      const resplitOwner = await admin.user.create({
+        data: { email: `dms-resplit-mismatch-${Date.now()}@pfw.local`, displayName: "Resplit Mismatch Owner" },
+      });
+      try {
+        const { setupInput } = await (async () => {
+          const salt = generateVaultSalt();
+          const rawKey = await deriveVaultKeyBytes("resplit mismatch test passphrase", salt, DMS_PBKDF2_ITERATIONS);
+          const key = await importVaultAesKey(rawKey);
+          const canaryCiphertext = await encryptVaultValue(key, DMS_CANARY_PLAINTEXT);
+          const drafts = await buildShareDrafts(rawKey, ["A", "B", "C"], 2);
+          return {
+            setupInput: {
+              salt,
+              iterations: DMS_PBKDF2_ITERATIONS,
+              canaryCiphertext,
+              totalShares: 3,
+              thresholdShares: 2,
+              inactivityThresholdDays: 90,
+              gracePeriodDays: 14,
+              beneficiaries: drafts.map((d) => ({
+                label: d.label,
+                shareIndex: d.shareIndex,
+                shareHash: d.shareHash,
+                inviteTokenHash: d.inviteTokenHash,
+              })),
+              documents: [],
+            },
+          };
+        })();
+        await setupVault(resplitOwner.id, setupInput);
+
+        const result = await updateVaultBeneficiaries(resplitOwner.id, {
+          totalShares: 4,
+          thresholdShares: 2,
+          beneficiaries: [{ label: "Only one", shareIndex: 1, shareHash: "a".repeat(64), inviteTokenHash: "b".repeat(64) }],
+        });
+        expect(result).toEqual({ ok: false, error: "beneficiary_count_mismatch" });
+      } finally {
+        await admin.user.deleteMany({ where: { id: resplitOwner.id } });
+      }
+    });
+
+    it("rejects resplitting while a recovery is in progress (not ACTIVE)", async () => {
+      const resplitOwner = await admin.user.create({
+        data: { email: `dms-resplit-not-active-${Date.now()}@pfw.local`, displayName: "Resplit Not Active Owner" },
+      });
+      try {
+        const salt = generateVaultSalt();
+        const rawKey = await deriveVaultKeyBytes("not active resplit passphrase", salt, DMS_PBKDF2_ITERATIONS);
+        const key = await importVaultAesKey(rawKey);
+        const canaryCiphertext = await encryptVaultValue(key, DMS_CANARY_PLAINTEXT);
+        const drafts = await buildShareDrafts(rawKey, ["A", "B"], 2);
+        await setupVault(resplitOwner.id, {
+          salt,
+          iterations: DMS_PBKDF2_ITERATIONS,
+          canaryCiphertext,
+          totalShares: 2,
+          thresholdShares: 2,
+          inactivityThresholdDays: 90,
+          gracePeriodDays: 14,
+          beneficiaries: drafts.map((d) => ({ label: d.label, shareIndex: d.shareIndex, shareHash: d.shareHash, inviteTokenHash: d.inviteTokenHash })),
+          documents: [],
+        });
+
+        const vaultRow = await admin.deadMansSwitch.findUniqueOrThrow({ where: { userId: resplitOwner.id } });
+        await admin.deadMansSwitch.update({ where: { id: vaultRow.id }, data: { status: "TRIGGERED", triggeredAt: new Date() } });
+
+        const result = await updateVaultBeneficiaries(resplitOwner.id, {
+          totalShares: 3,
+          thresholdShares: 2,
+          beneficiaries: [
+            { label: "A", shareIndex: 1, shareHash: "a".repeat(64), inviteTokenHash: "b".repeat(64) },
+            { label: "B", shareIndex: 2, shareHash: "c".repeat(64), inviteTokenHash: "d".repeat(64) },
+            { label: "C", shareIndex: 3, shareHash: "e".repeat(64), inviteTokenHash: "f".repeat(64) },
+          ],
+        });
+        expect(result).toEqual({ ok: false, error: "not_active" });
+      } finally {
+        await admin.user.deleteMany({ where: { id: resplitOwner.id } });
+      }
+    });
+
+    it("re-splits the SAME master key at a new total/threshold: old shares stop combining to a working recovery, new shares recover the original document correctly", async () => {
+      const resplitOwner = await admin.user.create({
+        data: { email: `dms-resplit-full-${Date.now()}@pfw.local`, displayName: "Resplit Full Owner" },
+      });
+      try {
+        const passphrase = "a genuinely long resplit test passphrase";
+        const salt = generateVaultSalt();
+        const rawKey = await deriveVaultKeyBytes(passphrase, salt, DMS_PBKDF2_ITERATIONS);
+        const key = await importVaultAesKey(rawKey);
+        const canaryCiphertext = await encryptVaultValue(key, DMS_CANARY_PLAINTEXT);
+        const documentCiphertext = await encryptVaultValue(key, "the will is in the safe");
+
+        const oldDrafts = await buildShareDrafts(rawKey, ["Spouse", "Sibling", "Friend"], 2);
+
+        await setupVault(resplitOwner.id, {
+          salt,
+          iterations: DMS_PBKDF2_ITERATIONS,
+          canaryCiphertext,
+          totalShares: 3,
+          thresholdShares: 2,
+          inactivityThresholdDays: 90,
+          gracePeriodDays: 14,
+          beneficiaries: oldDrafts.map((d) => ({ label: d.label, shareIndex: d.shareIndex, shareHash: d.shareHash, inviteTokenHash: d.inviteTokenHash })),
+          documents: [{ title: "Will location", ciphertext: documentCiphertext }],
+        });
+
+        // Re-derive the SAME raw key bytes (the owner re-entering their
+        // still-current passphrase, exactly what the worker's `resplit`
+        // handler does) and split into a DIFFERENT roster: 4 people, threshold 3.
+        const rawKeyAgain = await deriveVaultKeyBytes(passphrase, salt, DMS_PBKDF2_ITERATIONS);
+        const newDrafts = await buildShareDrafts(rawKeyAgain, ["Spouse", "Sibling", "Friend", "Lawyer"], 3);
+
+        const resplitResult = await updateVaultBeneficiaries(resplitOwner.id, {
+          totalShares: 4,
+          thresholdShares: 3,
+          beneficiaries: newDrafts.map((d) => ({
+            label: d.label,
+            shareIndex: d.shareIndex,
+            shareHash: d.shareHash,
+            inviteTokenHash: d.inviteTokenHash,
+          })),
+        });
+        expect(resplitResult).toEqual({ ok: true });
+
+        const statusAfterResplit = await getVaultStatus(resplitOwner.id);
+        expect(statusAfterResplit.totalShares).toBe(4);
+        expect(statusAfterResplit.thresholdShares).toBe(3);
+        expect(statusAfterResplit.beneficiaries).toHaveLength(4);
+        // Documents are untouched by a resplit — same ciphertext, same id.
+        expect(statusAfterResplit.documents).toEqual([
+          expect.objectContaining({ title: "Will location", ciphertext: documentCiphertext }),
+        ]);
+
+        // Trigger the vault and prove the OLD threshold-2 share pair no
+        // longer reconstructs anything usable: the old shares are shares
+        // of a DIFFERENT (now-abandoned) polynomial than what the vault's
+        // stored canary/documents are encrypted under post-resplit, so
+        // even hash-matching them against their OWN (stale) beneficiary
+        // rows is impossible — those rows don't exist anymore at all
+        // (see updateVaultBeneficiaries's own doc comment: delete-then-
+        // recreate, so the old tokens/hashes are gone, not just stale).
+        const vaultRow = await admin.deadMansSwitch.findUniqueOrThrow({ where: { userId: resplitOwner.id } });
+        await admin.deadMansSwitch.update({ where: { id: vaultRow.id }, data: { status: "TRIGGERED", triggeredAt: new Date() } });
+
+        await expect(submitRecoveryShare(oldDrafts[0].rawToken, oldDrafts[0].encodedShare)).resolves.toEqual({
+          status: "invalid_token",
+        });
+
+        // The NEW shares recover the vault correctly, at the NEW
+        // threshold (3), with the original document plaintext intact.
+        const first = await submitRecoveryShare(newDrafts[0].rawToken, newDrafts[0].encodedShare);
+        expect(first).toEqual({ status: "accepted_pending", submittedCount: 1, thresholdShares: 3 });
+        const second = await submitRecoveryShare(newDrafts[1].rawToken, newDrafts[1].encodedShare);
+        expect(second).toEqual({ status: "accepted_pending", submittedCount: 2, thresholdShares: 3 });
+        const third = await submitRecoveryShare(newDrafts[2].rawToken, newDrafts[2].encodedShare);
+        expect(third.status).toBe("recovered");
+        if (third.status === "recovered") {
+          expect(third.documents).toEqual([
+            { id: statusAfterResplit.documents[0].id, title: "Will location", plaintext: "the will is in the safe" },
+          ]);
+        }
+      } finally {
+        await admin.user.deleteMany({ where: { id: resplitOwner.id } });
+      }
+    });
+  });
+
+  describe("Passphrase Rotation, Emergency Vault half: rotateVaultPassphrase (AGENTS.md §3t amendment, item 1)", () => {
+    it("rejects document_set_mismatch when the submitted document id set doesn't match current state", async () => {
+      const rotateOwner = await admin.user.create({
+        data: { email: `dms-rotate-doc-mismatch-${Date.now()}@pfw.local`, displayName: "Rotate Doc Mismatch Owner" },
+      });
+      try {
+        const passphrase = "rotate doc mismatch test passphrase";
+        const salt = generateVaultSalt();
+        const rawKey = await deriveVaultKeyBytes(passphrase, salt, DMS_PBKDF2_ITERATIONS);
+        const key = await importVaultAesKey(rawKey);
+        const canaryCiphertext = await encryptVaultValue(key, DMS_CANARY_PLAINTEXT);
+        const drafts = await buildShareDrafts(rawKey, ["A", "B"], 2);
+
+        await setupVault(rotateOwner.id, {
+          salt,
+          iterations: DMS_PBKDF2_ITERATIONS,
+          canaryCiphertext,
+          totalShares: 2,
+          thresholdShares: 2,
+          inactivityThresholdDays: 90,
+          gracePeriodDays: 14,
+          beneficiaries: drafts.map((d) => ({ label: d.label, shareIndex: d.shareIndex, shareHash: d.shareHash, inviteTokenHash: d.inviteTokenHash })),
+          documents: [{ title: "Real doc", ciphertext: await encryptVaultValue(key, "content") }],
+        });
+
+        const status = await getVaultStatus(rotateOwner.id);
+        const newSalt = generateVaultSalt();
+
+        const result = await rotateVaultPassphrase(rotateOwner.id, {
+          newSalt,
+          newIterations: DMS_PBKDF2_ITERATIONS,
+          newCanaryCiphertext: "dms1:bm90:cmVhbA==",
+          documents: [{ id: "not-a-real-document-id", ciphertext: "dms1:eA==:eA==" }],
+          beneficiaries: status.beneficiaries.map((b) => ({ id: b.id, shareIndex: b.shareIndex, shareHash: "a".repeat(64) })),
+        });
+        expect(result).toEqual({ ok: false, error: "document_set_mismatch" });
+      } finally {
+        await admin.user.deleteMany({ where: { id: rotateOwner.id } });
+      }
+    });
+
+    it("rotates the passphrase: decrypts+re-encrypts every document under a fresh key, re-splits fresh shares, and recovery with the NEW shares yields the ORIGINAL plaintext", async () => {
+      const rotateOwner = await admin.user.create({
+        data: { email: `dms-rotate-full-${Date.now()}@pfw.local`, displayName: "Rotate Full Owner" },
+      });
+      try {
+        const oldPassphrase = "the real old rotate passphrase";
+        const oldSalt = generateVaultSalt();
+        const oldRawKey = await deriveVaultKeyBytes(oldPassphrase, oldSalt, DMS_PBKDF2_ITERATIONS);
+        const oldKey = await importVaultAesKey(oldRawKey);
+        const oldCanaryCiphertext = await encryptVaultValue(oldKey, DMS_CANARY_PLAINTEXT);
+        const oldDrafts = await buildShareDrafts(oldRawKey, ["Spouse", "Sibling"], 2);
+        const originalPlaintext = "the safe combination is 12-34-56";
+        const oldDocumentCiphertext = await encryptVaultValue(oldKey, originalPlaintext);
+
+        await setupVault(rotateOwner.id, {
+          salt: oldSalt,
+          iterations: DMS_PBKDF2_ITERATIONS,
+          canaryCiphertext: oldCanaryCiphertext,
+          totalShares: 2,
+          thresholdShares: 2,
+          inactivityThresholdDays: 90,
+          gracePeriodDays: 14,
+          beneficiaries: oldDrafts.map((d) => ({ label: d.label, shareIndex: d.shareIndex, shareHash: d.shareHash, inviteTokenHash: d.inviteTokenHash })),
+          documents: [{ title: "Safe combo", ciphertext: oldDocumentCiphertext }],
+        });
+        const statusBeforeRotation = await getVaultStatus(rotateOwner.id);
+        const documentId = statusBeforeRotation.documents[0].id;
+
+        // Everything below is exactly what `dmsVaultRotate`'s worker
+        // handler does internally (src/lib/workers/dead-mans-switch-crypto-worker-handlers.ts's
+        // `rotate`), performed directly here against the real crypto
+        // primitives rather than through the worker-RPC layer (already
+        // covered separately in tests/integration/web-worker-rpc.test.ts)
+        // — this test's job is proving the DAL's atomic persistence, not
+        // re-proving the worker orchestration.
+        const decryptedDocumentPlaintext = await decryptVaultValue(oldKey, oldDocumentCiphertext);
+        const newPassphrase = "a brand new rotate passphrase";
+        const newSalt = generateVaultSalt();
+        const newRawKey = await deriveVaultKeyBytes(newPassphrase, newSalt, DMS_PBKDF2_ITERATIONS);
+        const newKey = await importVaultAesKey(newRawKey);
+        const newCanaryCiphertext = await encryptVaultValue(newKey, DMS_CANARY_PLAINTEXT);
+        const newDocumentCiphertext = await encryptVaultValue(newKey, decryptedDocumentPlaintext);
+        const newDrafts = await buildShareDrafts(newRawKey, ["Spouse", "Sibling"], 2);
+
+        const rotateResult = await rotateVaultPassphrase(rotateOwner.id, {
+          newSalt,
+          newIterations: DMS_PBKDF2_ITERATIONS,
+          newCanaryCiphertext,
+          documents: [{ id: documentId, ciphertext: newDocumentCiphertext }],
+          beneficiaries: statusBeforeRotation.beneficiaries.map((b, i) => ({
+            id: b.id,
+            shareIndex: newDrafts[i].shareIndex,
+            shareHash: newDrafts[i].shareHash,
+          })),
+        });
+        expect(rotateResult).toEqual({ ok: true });
+
+        const statusAfterRotation = await getVaultStatus(rotateOwner.id);
+        expect(statusAfterRotation.salt).toBe(newSalt);
+        expect(statusAfterRotation.canaryCiphertext).toBe(newCanaryCiphertext);
+        expect(statusAfterRotation.documents).toEqual([
+          expect.objectContaining({ id: documentId, ciphertext: newDocumentCiphertext }),
+        ]);
+
+        // Trigger and recover using the NEW shares (submitted through the
+        // EXISTING beneficiary invite tokens — rotation, unlike a
+        // resplit, does not touch invite tokens/labels, only the
+        // cryptographic material) — the recovered plaintext is the
+        // ORIGINAL document content, proving the decrypt-old/re-encrypt-
+        // new round trip preserved it exactly.
+        const vaultRow = await admin.deadMansSwitch.findUniqueOrThrow({ where: { userId: rotateOwner.id } });
+        await admin.deadMansSwitch.update({ where: { id: vaultRow.id }, data: { status: "TRIGGERED", triggeredAt: new Date() } });
+
+        const first = await submitRecoveryShare(oldDrafts[0].rawToken, newDrafts[0].encodedShare);
+        expect(first).toEqual({ status: "accepted_pending", submittedCount: 1, thresholdShares: 2 });
+        const second = await submitRecoveryShare(oldDrafts[1].rawToken, newDrafts[1].encodedShare);
+        expect(second.status).toBe("recovered");
+        if (second.status === "recovered") {
+          expect(second.documents).toEqual([{ id: documentId, title: "Safe combo", plaintext: originalPlaintext }]);
+        }
+      } finally {
+        await admin.user.deleteMany({ where: { id: rotateOwner.id } });
+      }
+    });
   });
 });
