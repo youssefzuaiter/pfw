@@ -3,6 +3,7 @@ import type { Currency, Prisma } from "../../generated/prisma/client";
 import { categorizeTransaction } from "../../lib/categorization/cascade";
 import type { PastOccurrence } from "../../lib/categorization/types";
 import { neutralizeFormulaInjection } from "../../lib/csv-import/formula-injection";
+import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { withUserScope } from "../db/with-user-scope";
 import { BankAccountNotFoundError } from "./transaction-import";
@@ -115,8 +116,20 @@ export async function updateTransactionCategory(
       const merchantKey = normalizeMerchantKey(merchantText);
       await tx.merchantEmbedding.upsert({
         where: { userId_merchantKey: { userId, merchantKey } },
-        create: { userId, merchantKey, sampleMerchantName: merchantText, categoryId, embedding: [...embedding] },
-        update: { sampleMerchantName: merchantText, categoryId, embedding: [...embedding] },
+        create: {
+          userId,
+          merchantKey,
+          sampleMerchantName: merchantText,
+          categoryId,
+          embedding: [...embedding],
+          embeddingModel: CURRENT_EMBEDDING_MODEL_ID,
+        },
+        update: {
+          sampleMerchantName: merchantText,
+          categoryId,
+          embedding: [...embedding],
+          embeddingModel: CURRENT_EMBEDDING_MODEL_ID,
+        },
       });
     }
 
@@ -193,9 +206,12 @@ export async function createTransaction(userId: string, input: CreateTransaction
       .map((prior) => ({ categoryId: prior.categoryId, isManual: !prior.needsReview }));
 
     const embeddingCorrections = input.embedding
-      ? (await tx.merchantEmbedding.findMany({ where: { userId }, select: { categoryId: true, embedding: true } })).map(
-          (row) => ({ categoryId: row.categoryId, embedding: row.embedding }),
-        )
+      ? (
+          await tx.merchantEmbedding.findMany({
+            where: { userId, embeddingModel: CURRENT_EMBEDDING_MODEL_ID },
+            select: { categoryId: true, embedding: true },
+          })
+        ).map((row) => ({ categoryId: row.categoryId, embedding: row.embedding }))
       : undefined;
 
     const suggestion = await categorizeTransaction({

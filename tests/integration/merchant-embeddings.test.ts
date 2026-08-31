@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CURRENT_EMBEDDING_MODEL_ID } from "../../src/lib/embeddings/embedding-model";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { listEmbeddingCorrections, upsertMerchantEmbedding } from "../../src/server/dal/merchant-embeddings";
 import { createTransaction, updateTransactionCategory } from "../../src/server/dal/transactions";
@@ -164,6 +165,78 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Sel
 
       const userACorrections = await listEmbeddingCorrections(userA.id);
       expect(userACorrections.map((c) => c.categoryId)).not.toContain(userBCategory.id);
+    });
+  });
+
+  describe("embeddingModel versioning (AGENTS.md §3aa)", () => {
+    it("upsertMerchantEmbedding always stamps the row with the current model id", async () => {
+      await upsertMerchantEmbedding(userA.id, {
+        merchantKey: "model-tag-check",
+        sampleMerchantName: "Model Tag Check",
+        categoryId: diningA.id,
+        embedding: vector(40),
+      });
+
+      const row = await admin.merchantEmbedding.findUniqueOrThrow({
+        where: { userId_merchantKey: { userId: userA.id, merchantKey: "model-tag-check" } },
+      });
+      expect(row.embeddingModel).toBe(CURRENT_EMBEDDING_MODEL_ID);
+    });
+
+    it("listEmbeddingCorrections excludes a row tagged with a different (e.g. legacy/pre-migration) model", async () => {
+      // Written directly via the admin client, bypassing upsertMerchantEmbedding
+      // entirely — simulates a real pre-existing row from before model
+      // versioning existed (which the migration backfills to
+      // 'legacy-unversioned') or from a since-retired model, neither of
+      // which upsertMerchantEmbedding would ever write today.
+      await admin.merchantEmbedding.create({
+        data: {
+          userId: userA.id,
+          merchantKey: "stale-model-merchant",
+          sampleMerchantName: "Stale Model Merchant",
+          categoryId: diningA.id,
+          embedding: vector(41),
+          embeddingModel: "legacy-unversioned",
+        },
+      });
+
+      const corrections = await listEmbeddingCorrections(userA.id);
+      // The row exists in the table (confirmed directly) but must never
+      // surface through the DAL function Tier 3 actually reads from.
+      const stillThere = await admin.merchantEmbedding.findUnique({
+        where: { userId_merchantKey: { userId: userA.id, merchantKey: "stale-model-merchant" } },
+      });
+      expect(stillThere).not.toBeNull();
+      expect(corrections.some((c) => c.categoryId === diningA.id && c.embedding[41] > 0.9)).toBe(false);
+    });
+
+    it("createTransaction's Tier 3 lookup never matches against a different-model row, even a near-identical vector", async () => {
+      const referenceEmbedding = vector(50);
+      await admin.merchantEmbedding.create({
+        data: {
+          userId: userA.id,
+          merchantKey: "cross-model-merchant",
+          sampleMerchantName: "Cross Model Merchant",
+          categoryId: groceriesA.id,
+          embedding: referenceEmbedding,
+          embeddingModel: "some-retired-model-id",
+        },
+      });
+
+      const created = await createTransaction(userA.id, {
+        bankAccountId: accountA.id,
+        amountAgorot: -1100n,
+        occurredAt: new Date(),
+        description: "Cross Model Merchant #77",
+        merchantName: "Cross Model Merchant #77",
+        // A near-identical vector to the stored one — under the OLD,
+        // unfiltered behavior this would have matched groceriesA with
+        // high confidence; the model-version filter must stop that.
+        embedding: nearVector(referenceEmbedding),
+      });
+
+      expect(created.categoryId).not.toBe(groceriesA.id);
+      expect(created.categoryId).toBe(uncategorizedA.id);
     });
   });
 

@@ -1,5 +1,6 @@
 import "server-only";
 import type { EmbeddingCorrection } from "../../lib/categorization/types";
+import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model";
 import { withUserScope } from "../db/with-user-scope";
 
 /**
@@ -49,11 +50,13 @@ export async function upsertMerchantEmbedding(
         sampleMerchantName: input.sampleMerchantName,
         categoryId: input.categoryId,
         embedding: [...input.embedding],
+        embeddingModel: CURRENT_EMBEDDING_MODEL_ID,
       },
       update: {
         sampleMerchantName: input.sampleMerchantName,
         categoryId: input.categoryId,
         embedding: [...input.embedding],
+        embeddingModel: CURRENT_EMBEDDING_MODEL_ID,
       },
     });
 
@@ -62,16 +65,26 @@ export async function upsertMerchantEmbedding(
 }
 
 /**
- * Every one of this user's stored corrections, in the shape Tier 3's
- * `knnCategorize` wants. Deliberately no filtering/pagination — this
- * app's scale (a personal ledger with, at most, a few hundred distinct
- * merchants) makes an in-memory KNN scan over all of them the right
- * trade-off, the same reasoning `listTransactions`' post-decryption
- * `search` filter already documents for this app's size.
+ * Every one of this user's stored corrections that were embedded by the
+ * CURRENT model, in the shape Tier 3's `knnCategorize` wants. The
+ * `embeddingModel` filter (AGENTS.md §3aa) is load-bearing, not
+ * cosmetic: a row from a previous model's embedding space isn't "less
+ * similar" to a current-model query vector, it's simply not comparable —
+ * cosine similarity between the two produces a number with no real
+ * meaning, so including it here would risk a confidently-wrong KNN vote
+ * rather than just a missed one. Otherwise deliberately no
+ * filtering/pagination beyond that — this app's scale (a personal ledger
+ * with, at most, a few hundred distinct merchants) makes an in-memory
+ * KNN scan over what's left the right trade-off, the same reasoning
+ * `listTransactions`' post-decryption `search` filter already documents
+ * for this app's size.
  */
 export async function listEmbeddingCorrections(userId: string): Promise<EmbeddingCorrection[]> {
   const rows = await withUserScope(userId, (tx) =>
-    tx.merchantEmbedding.findMany({ where: { userId }, select: { categoryId: true, embedding: true } }),
+    tx.merchantEmbedding.findMany({
+      where: { userId, embeddingModel: CURRENT_EMBEDDING_MODEL_ID },
+      select: { categoryId: true, embedding: true },
+    }),
   );
   return rows.map((row) => ({ categoryId: row.categoryId, embedding: row.embedding }));
 }

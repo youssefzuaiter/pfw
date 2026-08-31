@@ -13,18 +13,45 @@
  * training and redeploying the Python sidecar, per the explicit
  * "Transformers.js running in-browser" ask.
  *
- * Model: `Xenova/all-MiniLM-L6-v2`, mean-pooled + L2-normalized, 384
- * dimensions — deliberately the SAME dimension the schema and Tier 3 KNN
- * engine already documented ("384-dimension embeddings",
- * `MerchantEmbedding.embedding Float[]`) before this pass ever wired
- * anything real into them (confirmed by grep: nothing in the app read or
- * wrote that table until this feature — see AGENTS.md §3u for the full
- * verification). KNOWN LIMITATION, stated plainly rather than
- * overclaimed: this model is primarily English-trained; it is NOT a
- * dedicated multilingual model, so similarity quality for Hebrew-heavy
- * merchant text (this app's seeded mock data, §3h) is expected to be
- * weaker than for English text — the same class of honest caveat the
- * Python sidecar's own placeholder-model docstring already gives.
+ * Model (AGENTS.md §3aa): `Xenova/paraphrase-multilingual-MiniLM-L12-v2`,
+ * mean-pooled + L2-normalized, 384 dimensions — same dimension as the
+ * original `Xenova/all-MiniLM-L6-v2` this replaced (confirmed against
+ * the real model's published `config.json`, `hidden_size: 384`, not
+ * assumed), so no schema/KNN math changed to accommodate the swap.
+ * Genuinely multilingual (the underlying sentence-transformers model
+ * covers 50+ languages) — a real fix for the exact gap the previous
+ * model's own docstring flagged: Hebrew-heavy merchant text (this app's
+ * seeded mock data, §3h) no longer sits far outside the model's training
+ * distribution the way it did under an English-primary model.
+ *
+ * `CURRENT_EMBEDDING_MODEL_ID`/`LOCAL_EMBEDDING_DIMENSIONS` now live in
+ * `./embedding-model.ts`, not here — a tiny, side-effect-free sibling
+ * module that both this client-only code AND `src/server/**` can import
+ * (this file itself still can't be imported server-side; a bare string/
+ * number constant carries no browser dependency, so it needs no such
+ * guard). `src/server/dal/merchant-embeddings.ts`'s
+ * `listEmbeddingCorrections` filters on that id — every
+ * `MerchantEmbedding` row is tagged with the model that produced its
+ * vector, and a row tagged with a DIFFERENT model is excluded from KNN
+ * voting rather than compared via cosine similarity anyway. That's not
+ * a nicety: two different models' embedding spaces aren't aligned, so
+ * comparing across them doesn't degrade gracefully to "low similarity,"
+ * it produces a number with no real meaning — silently swapping this
+ * constant without that filter would have risked confidently-wrong
+ * categorizations from every pre-existing correction, not just stopped
+ * matching them.
+ *
+ * KNOWN, DELIBERATE trade-off: the multilingual model's own weights are
+ * real, verified via HTTP HEAD against the actual Hugging Face files,
+ * meaningfully larger than the previous model's — quantized (`dtype:
+ * "q8"`, what `local-embedder-worker-handlers.ts` now requests
+ * explicitly rather than relying on Transformers.js's device-based
+ * default resolution) is ~118MB here vs. ~23MB before; full fp32 would
+ * have been ~470MB, which is why quantized is not optional. Still a
+ * one-time, lazily-triggered, browser-cached download (same "never on
+ * an ordinary page visit" lazy-loading precedent as before) — but a
+ * real, larger first-use cost than the previous model had, stated
+ * plainly rather than glossed over.
  *
  * Enforced client-only by tests/guards/local-embedder-client-only.test.ts
  * (same import-graph-guard pattern as zk-crypto.ts, dead-mans-switch-
@@ -75,7 +102,7 @@
 
 import { createRpcClient, type RpcCall } from "../workers/worker-rpc";
 
-export const LOCAL_EMBEDDING_DIMENSIONS = 384;
+export { LOCAL_EMBEDDING_DIMENSIONS } from "./embedding-model";
 
 let worker: Worker | null = null;
 let call: RpcCall | null = null;

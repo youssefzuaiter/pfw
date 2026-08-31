@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CURRENT_EMBEDDING_MODEL_ID } from "./embedding-model";
 
 /**
  * Mocks `@huggingface/transformers` entirely — this suite never loads a
@@ -74,6 +75,17 @@ describe("createLocalEmbedderHandlers", () => {
     await createLocalEmbedderHandlers().embed({ text: "b" });
 
     expect(pipelineMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads the current multilingual model at explicit q8 (quantized) precision, not the device-default resolution (AGENTS.md §3aa)", async () => {
+    const extractor = vi.fn().mockResolvedValue({ data: [1] });
+    pipelineMock.mockResolvedValue(extractor);
+    const { createLocalEmbedderHandlers } = await import("./local-embedder-worker-handlers");
+    const handlers = createLocalEmbedderHandlers();
+
+    await handlers.embed({ text: "coffee shop" });
+
+    expect(pipelineMock).toHaveBeenCalledWith("feature-extraction", CURRENT_EMBEDDING_MODEL_ID, { dtype: "q8" });
   });
 
   it("propagates a pipeline failure as a rejection (no silent swallowing at this layer — that's local-embedder.ts's embedTextWithTimeout's job)", async () => {

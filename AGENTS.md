@@ -3355,6 +3355,138 @@ was built instead once the user picked a direction.
   confirming the challenge/response round-trip is the other open item —
   this pass built and locally verified everything short of that.
 
+## 3bb. Multilingual Client-Side Embedding Model (ad hoc)
+
+Explicit user request, framed as "Phase 2" of a plan that doesn't exist
+anywhere in this app's actual history — no such phase was previously
+scoped or documented. Read narrowly and delivered for real rather than
+built to match an invented framing: the genuinely well-defined, valuable
+part (swap the client-side embedding model to a real multilingual one,
+fix everything that swap would otherwise silently break) was built; the
+part that presumed capabilities this app doesn't have (Prisma-level
+"semantic query" search over "financial documents," "all three supported
+languages") was flagged, not fabricated — see below.
+
+- **What was flagged, not built, and why**: this app has no semantic
+  search feature over transactions or any other "document" today —
+  `listTransactions`' `search` filter (§3c) is a plain post-decryption
+  substring match in application code, not embedding-based, and
+  `MerchantEmbedding` is a plain `Float[]` column with no `pgvector`
+  extension (§6's own long-standing "known deviation" entry says so
+  explicitly). There is no "Prisma query logic" for semantic search to
+  update, because none exists to update. The "three supported
+  languages" framing doesn't match this app's real, documented language
+  story either — English is the primary UI language app-wide (§3h) with
+  Hebrew appearing in mock/seed data; nothing in this codebase's history
+  ever established a third language. Building a plausible-sounding
+  search feature to satisfy the letter of the request would have meant
+  inventing scope and behavior with no grounding in what this app
+  actually is — the same category of mistake the Arduino/migration-gate
+  request earlier in this session was flagged for, applied here to a
+  fabricated feature rather than a fabricated security control.
+- **What genuinely needed fixing, and would have been a real, silent
+  regression if skipped**: the model actually used for Tier 3 KNN
+  categorization (§3u) changed from `Xenova/all-MiniLM-L6-v2` to
+  `Xenova/paraphrase-multilingual-MiniLM-L12-v2` — verified to exist and
+  produce 384-dim output via a live Hugging Face API/config.json check
+  before committing to it (`hidden_size: 384`, matching this app's
+  existing dimension everywhere, so no KNN math changed). Two different
+  embedding models' vector spaces are NOT comparable via cosine
+  similarity even at identical dimensionality — swapping the constant
+  alone would have left every pre-existing `MerchantEmbedding` row
+  (real, if sparse, per §3u's "starts empty and grows only from new
+  corrections" design) silently compared against new-model query
+  vectors, which doesn't degrade gracefully to "no match," it risks a
+  confidently-WRONG KNN vote. Confirmed this wasn't a hypothetical: the
+  live local dev database actually had one pre-existing row when this
+  migration ran.
+- **`src/lib/embeddings/embedding-model.ts`** (new): a tiny, pure,
+  side-effect-free module holding `CURRENT_EMBEDDING_MODEL_ID` and
+  `LOCAL_EMBEDDING_DIMENSIONS` — split out specifically so both
+  `src/server/**` and the client-only embedder can import the SAME
+  constants directly, closing a real duplication `embedding-validation.ts`
+  previously had to accept (§3u: "duplicate the constant, never the
+  client-only module," since `local-embedder.ts` itself is barred from
+  server code by `tests/guards/local-embedder-client-only.test.ts`). A
+  bare string/number constant carries no browser dependency, so it
+  needs no such guard, and doesn't trip the guard's import-path regex
+  either (confirmed by reading the regex, not assumed).
+- **`MerchantEmbedding` gained `embeddingModel: String @default("legacy-unversioned")`**
+  (migration `20260903090000_merchant_embedding_model_version`,
+  generated via `prisma migrate diff` against the live dev DB — same
+  established workaround as §3p/§3s/§3t/§3w, since `migrate dev`'s
+  shadow-database replay is broken by this history's earlier hand-edited
+  migrations, confirmed again by trying the normal path first and
+  watching it correctly refuse). Every write path
+  (`upsertMerchantEmbedding`, and the two inline
+  `tx.merchantEmbedding.upsert`/`.findMany` calls inside
+  `src/server/dal/transactions.ts`'s `updateTransactionCategory`/
+  `createTransaction` — which duplicate the DAL's own upsert/list logic
+  rather than calling it, a pre-existing pattern this pass didn't
+  refactor, only extended consistently) now stamps or filters on
+  `CURRENT_EMBEDDING_MODEL_ID`. The server never trusts a client-
+  supplied model id — there isn't one; the client never sends one, and
+  the server always writes its own constant, the same "can't verify a
+  genuine model output, so don't accept a claim about it either"
+  posture `embedding-validation.ts`'s own doc comment already holds for
+  the vector's contents.
+  - **`listEmbeddingCorrections` now filters `where: { userId,
+    embeddingModel: CURRENT_EMBEDDING_MODEL_ID }`** — this is the actual
+    fix, done at the query layer, and the one place this pass's work
+    genuinely does touch "Prisma query logic," just for real-model-
+    compatibility reasons rather than the requested-but-nonexistent
+    search feature. A pre-existing/legacy-tagged row becomes inert
+    (silently excluded from KNN voting) rather than actively wrong,
+    until its merchant is naturally corrected again and the row is
+    overwritten with a current-model vector.
+- **Real, verified download-size trade-off, not glossed over**: HTTP
+  HEAD against the actual published files confirmed the new model's
+  quantized (`q8`) weights are ~118MB vs. the previous model's ~23MB —
+  a real ~5x increase in this feature's one-time, lazily-triggered,
+  browser-cached download. Full fp32 would have been ~470MB, so `dtype:
+  "q8"` is now passed to `pipeline()` explicitly in
+  `local-embedder-worker-handlers.ts`, rather than relying on
+  Transformers.js's own device-based default-dtype resolution — traced
+  through the exact installed package version's source
+  (`DEFAULT_DEVICE = apis.IS_NODE_ENV ? "cpu" : "wasm"`, then
+  `DEFAULT_DEVICE_DTYPE_MAPPING["wasm"] = "q8"`) to confirm what the
+  implicit default would actually have resolved to in this app's real
+  browser-Worker environment before deciding an explicit dtype was even
+  necessary, rather than guessing.
+- **Verified, not just written**: `npm run check` clean with the local
+  Postgres genuinely live (950/953 passing, 3 skip for the unrelated
+  embedding sidecar — up from 946 pre-existing DB-backed tests once env
+  vars were actually exported, confirming this pass's own verification
+  ran with real DB coverage, not the silently-skipped default). 3 new
+  integration cases in `tests/integration/merchant-embeddings.test.ts`
+  prove the actual regression this fix prevents: a row upserted through
+  the real DAL is tagged with the current model id; a row tagged
+  `legacy-unversioned` (simulating the real backfilled state) never
+  surfaces through `listEmbeddingCorrections`; and — the concrete
+  failure mode this whole pass exists to prevent — a `createTransaction`
+  call with a vector deliberately near-identical to a stored
+  DIFFERENT-model row's embedding does NOT match it, landing in
+  Uncategorized instead of confidently (and wrongly) inheriting that
+  row's category. One new unit test in `local-embedder.test.ts` asserts
+  `dtype: "q8"` is actually what gets passed to `pipeline()`. Migration
+  applied and confirmed against the real local Postgres via `psql`
+  (`\d "MerchantEmbedding"` showing the new column and its default; a
+  direct row count confirming the one real pre-existing row backfilled
+  correctly). Gitleaks and Semgrep (the same pinned versions §3z wired
+  into CI) both re-run locally against the full changed tree — clean.
+- **Not built, consistent with the flagged scope above**: no semantic
+  search UI or route of any kind: no new page, no new API endpoint, no
+  `pgvector` migration. If real semantic search over transactions is
+  wanted, it needs its own scoping conversation — at minimum: what
+  should be searchable (transaction descriptions? merchant names?
+  something else entirely, like the Emergency Vault's
+  `EmergencyDocument` model, §3t?), whether an app-level cosine scan
+  over `listTransactions`-scale data is fast enough or `pgvector` is
+  actually needed now (§6's deferred-until-needed call revisited), and
+  what "three languages" is actually supposed to mean for an app whose
+  real documented language story is English-primary-with-Hebrew-mock-
+  data, not three.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

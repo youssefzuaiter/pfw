@@ -761,6 +761,15 @@ model MerchantEmbedding {
   categoryId         String
   category           Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   embedding          Float[]
+  /// Which embedding model produced `embedding` — vectors from different
+  /// models are NOT comparable via cosine similarity even at the same
+  /// dimensionality, so this is what lets listEmbeddingCorrections()
+  /// exclude a row from KNN voting the instant the client-side model
+  /// changes, instead of silently comparing apples to oranges. Existing
+  /// rows predating this column back-fill to "legacy-unversioned", a
+  /// value that deliberately matches no real model id — see the
+  /// migration and src/lib/embeddings/embedding-model.ts.
+  embeddingModel     String   @default("legacy-unversioned")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 

@@ -1,0 +1,23 @@
+-- Tags every MerchantEmbedding row with the model that produced its
+-- vector (AGENTS.md §3aa) — needed because this pass swaps the
+-- client-side embedding model (Xenova/all-MiniLM-L6-v2 ->
+-- Xenova/paraphrase-multilingual-MiniLM-L12-v2), and vectors from two
+-- different models are NOT comparable via cosine similarity even at the
+-- same 384 dimensions. Every pre-existing row predates model versioning
+-- entirely, so it backfills to 'legacy-unversioned' — a value that
+-- deliberately matches no real model id, so
+-- src/server/dal/merchant-embeddings.ts's listEmbeddingCorrections
+-- (filtered on the CURRENT model id) correctly excludes every one of
+-- them from KNN voting rather than silently comparing across embedding
+-- spaces. Those rows aren't lost — the same merchant getting corrected
+-- again naturally overwrites the row (upsertMerchantEmbedding) with a
+-- current-model vector, same as this table's own "starts empty and
+-- grows only from new corrections" design already assumed (§3u).
+--
+-- No backfill loop needed beyond the column DEFAULT itself: this is a
+-- pure metadata tag, not a value that needs computing from existing
+-- data (unlike, say, §3k's currency-conversion backfill), so a plain
+-- ALTER TABLE ... DEFAULT is the correct and complete migration.
+--
+-- AlterTable
+ALTER TABLE "MerchantEmbedding" ADD COLUMN     "embeddingModel" TEXT NOT NULL DEFAULT 'legacy-unversioned';

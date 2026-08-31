@@ -7,7 +7,9 @@
  * `zk-crypto-worker-handlers.ts` already established (§3x).
  */
 
-const MODEL_ID = "Xenova/all-MiniLM-L6-v2";
+import { CURRENT_EMBEDDING_MODEL_ID } from "./embedding-model";
+
+const MODEL_ID = CURRENT_EMBEDDING_MODEL_ID;
 
 type FeatureExtractionPipeline = (
   text: string,
@@ -46,7 +48,16 @@ export function createLocalEmbedderHandlers(): LocalEmbedderHandlers {
         env.allowLocalModels = false;
         env.useBrowserCache = true;
 
-        return (await pipeline("feature-extraction", MODEL_ID)) as unknown as FeatureExtractionPipeline;
+        // dtype is explicit, not left to Transformers.js's own
+        // device-based default resolution (AGENTS.md §3aa) — this
+        // model's full-precision weights are ~470MB, confirmed via a
+        // real HTTP HEAD against Hugging Face; "q8" (quantized) is
+        // ~118MB, still a real increase over the previous model's ~23MB
+        // quantized size but the only one of the two worth ever shipping
+        // to a browser on a lazy first use.
+        return (await pipeline("feature-extraction", MODEL_ID, {
+          dtype: "q8",
+        })) as unknown as FeatureExtractionPipeline;
       })();
     }
     return pipelinePromise;
