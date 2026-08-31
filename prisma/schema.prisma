@@ -187,6 +187,14 @@ model User {
   id                 String   @id @default(cuid())
   email              String   @unique
   displayName        String
+  /// Argon2id hash (AGENTS.md §3ff) — null has a real, load-bearing
+  /// meaning: it's what identifies the ORIGINAL seeded demo user row as
+  /// still unclaimed. Every row created by registerUser() gets a real
+  /// hash immediately, so null can only ever mean "this is the seed
+  /// script's row, nobody has registered yet" — that's the entire
+  /// mechanism behind "the first person to register inherits the demo
+  /// data" rather than a separate migration flag or feature switch.
+  passwordHash       String?
   zkSalt             String?
   zkKdfIterations    Int?
   zkCanaryCiphertext String?
@@ -461,31 +469,31 @@ model BankAccount {
 /// nativeAmount` and `exchangeRateAtEntry` is null (rate is trivially 1,
 /// no real conversion happened).
 model NotableTransaction {
-  id                    String      @id @default(cuid())
+  id                    String                      @id @default(cuid())
   userId                String
-  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
   bankAccountId         String
-  bankAccount           BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  bankAccount           BankAccount                 @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
   categoryId            String
-  category              Category    @relation(fields: [categoryId], references: [id])
+  category              Category                    @relation(fields: [categoryId], references: [id])
   providerTransactionId String?
   occurredAt            DateTime
   postedAt              DateTime?
-  currency              Currency    @default(ILS)
+  currency              Currency                    @default(ILS)
   /// Minor units of `currency`, signed.
   nativeAmount          BigInt
   /// ILS agorot equivalent, signed — see model comment.
   amount                BigInt
   /// ILS per 1 unit of `currency` at entry time. Null when currency = ILS.
-  exchangeRateAtEntry   Decimal?    @db.Decimal(12, 6)
+  exchangeRateAtEntry   Decimal?                    @db.Decimal(12, 6)
   /// Encrypted at rest — untrusted free text, see file header and
   /// docs/SECURITY.md §3.4 (indirect prompt injection surface).
   description           String
   merchantName          String?
-  isManual              Boolean     @default(false)
-  needsReview           Boolean     @default(false)
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
+  isManual              Boolean                     @default(false)
+  needsReview           Boolean                     @default(false)
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
   /// Semantic search index (AGENTS.md §3cc) — a 384-dim pgvector
   /// embedding of this row's merchant/description text, computed
   /// CLIENT-SIDE only (same "no financial text leaves the device"

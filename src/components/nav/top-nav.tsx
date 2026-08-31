@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ThemeToggle } from "../theme/theme-toggle";
 import { isNavItemActive, PRIMARY_NAV_ITEMS } from "./nav-items";
+import { SignOutButton } from "./sign-out-button";
 
 /** Desktop-only (`md:` breakpoint and up) — see MobileNav for the small-screen equivalent. */
 export function TopNav() {
@@ -36,6 +37,7 @@ export function TopNav() {
             );
           })}
         </ul>
+        <SignOutButton />
         <ThemeToggle />
       </nav>
     </header>

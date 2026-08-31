@@ -28,9 +28,14 @@ const SRC_ROOT = path.resolve(__dirname, "../../src");
 // exception — a scheduled batch job (AGENTS.md §3t) with no
 // authenticated request and therefore no single userId to scope a
 // withUserScope transaction by at all, since it has to scan every user's
-// DeadMansSwitch row in one pass. Every other file under src/ — the
-// DAL, routes, Server Components — must always go through
-// src/server/db/client.ts instead.
+// DeadMansSwitch row in one pass; and
+// src/server/auth/credentials.ts, real authentication's own bootstrap
+// exception (AGENTS.md §3ff) — login and registration are the identity-
+// bootstrap problem itself: verifying credentials or creating a brand
+// new User row both have to happen before any userId exists to scope a
+// withUserScope call by, the same shape current-user.ts already
+// establishes. Every other file under src/ — the DAL, routes, Server
+// Components — must always go through src/server/db/client.ts instead.
 const ADMIN_CLIENT_IMPORT = /from\s+["'].*\/admin-client["']/;
 
 describe("guard: nothing under src/ imports the admin DB client, except the auth bootstrap", () => {
@@ -41,6 +46,7 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       path.resolve(SRC_ROOT, "server", "groups", "invite-admin-ops.ts"),
       path.resolve(SRC_ROOT, "server", "dead-mans-switch", "recovery-admin-ops.ts"),
       path.resolve(SRC_ROOT, "server", "dead-mans-switch", "inactivity-check.ts"),
+      path.resolve(SRC_ROOT, "server", "auth", "credentials.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

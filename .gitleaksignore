@@ -13,3 +13,7 @@
 # fingerprint will stop matching and Gitleaks will correctly re-flag it
 # until this file is updated to match.
 .github/workflows/ci.yml:generic-api-key:23
+# Same file, same reasoning, for AUTH_SECRET (AGENTS.md §3ff) — a
+# throwaway value that only ever signs/encrypts session JWTs for the
+# lifetime of this job's ephemeral process, never a real secret.
+.github/workflows/ci.yml:generic-api-key:24

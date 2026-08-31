@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { isNavItemActive, MOBILE_MORE_ITEMS, MOBILE_PRIMARY_ITEMS } from "./nav-items";
+import { SignOutButton } from "./sign-out-button";
 
 // Deliberately narrow (real anchors/buttons only) — this dialog's content
 // is fixed (a Close button + a grid of nav links), not arbitrary markup,
@@ -108,6 +109,9 @@ export function MobileNav() {
                 </li>
               ))}
             </ul>
+            <div className="mt-3 border-t border-border pt-3">
+              <SignOutButton variant="drawer" />
+            </div>
           </div>
         </div>
       )}

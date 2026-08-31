@@ -23,7 +23,8 @@
     "verify:client-bundle-secrets": "tsx --conditions=react-server scripts/check-no-secrets-in-client-bundle.ts",
     "sync:rates": "tsx --conditions=react-server scripts/sync-exchange-rates.ts",
     "check:dead-mans-switch": "tsx --conditions=react-server scripts/check-dead-mans-switch.ts",
-    "sync:crypto-prices": "tsx --conditions=react-server scripts/sync-crypto-prices.ts"
+    "sync:crypto-prices": "tsx --conditions=react-server scripts/sync-crypto-prices.ts",
+    "backfill:embeddings": "tsx --conditions=react-server scripts/backfill-embeddings.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.121.0",
@@ -31,7 +32,9 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@react-three/fiber": "^9.7.0",
+    "argon2": "^0.45.1",
     "next": "16.3.3",
+    "next-auth": "^5.0.0-beta.32",
     "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c",
     "react": "19.2.8",
     "react-dom": "19.2.8",

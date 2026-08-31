@@ -11,16 +11,17 @@ on:
 # to local dev — see AGENTS.md §3a and docs/SECURITY.md for why there are
 # two roles (pfw_app is the RLS-bypassing superuser used only for
 # migrations/seeding; pfw_runtime is the restricted, RLS-subject role the
-# app actually connects as). ENCRYPTION_KEY is a throwaway value that only
-# ever exists for the lifetime of this job's ephemeral database — same
-# spirit as the RLS migration's documented throwaway local dev password,
-# not a real secret protecting real data. It's allowlisted by exact
-# fingerprint in .gitleaksignore for this reason — see that file's own
-# comment.
+# app actually connects as). ENCRYPTION_KEY and AUTH_SECRET are both
+# throwaway values that only ever exist for the lifetime of this job's
+# ephemeral database/process — same spirit as the RLS migration's
+# documented throwaway local dev password, not a real secret protecting
+# real data. Both are allowlisted by exact fingerprint in
+# .gitleaksignore for this reason — see that file's own comment.
 env:
   DATABASE_URL: postgresql://pfw_app:pfw_local_dev_password@localhost:5433/pfw_local?schema=public
   APP_DATABASE_URL: postgresql://pfw_runtime:pfw_runtime_dev_password@localhost:5433/pfw_local?schema=public
   ENCRYPTION_KEY: 3KPfiH4Mh3e8dtp5gwC6WWCMJr0YYk0k0r8UCnA9V8U=
+  AUTH_SECRET: MB753LAcz/vL1D9qR3NNvhuHvhJoejgFPNGokQVQBVc=
 
 jobs:
   test:

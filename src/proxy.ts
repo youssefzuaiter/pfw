@@ -1,12 +1,69 @@
 import { randomBytes } from "node:crypto";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { auth } from "./server/auth/auth";
+
+/**
+ * Routes reachable WITHOUT this app's own authenticated session
+ * (AGENTS.md §3ff). Everything else is protected by default — the
+ * opposite of an allowlist-what-needs-auth model, since every existing
+ * page/route already calls `getCurrentUser()` and assumes a resolved
+ * user, so the safe default is "requires auth unless explicitly listed
+ * here," not the reverse.
+ *
+ * `/vault/recover/[token]` and its API twin are NOT an oversight — the
+ * Dead Man's Switch's entire premise (§3t) is that a beneficiary
+ * recovering an emergency vault is, by design, a different real-world
+ * person than this app's own authenticated user. Gating those behind a
+ * login this app has no way to hand a beneficiary would break an
+ * already-shipped, already-verified feature.
+ */
+const PUBLIC_EXACT_PATHS = new Set(["/login", "/register", "/welcome"]);
+const PUBLIC_PATH_PREFIXES = ["/api/auth/", "/vault/recover/", "/api/dead-mans-switch/recover/"];
+
+function isPublicPath(pathname: string): boolean {
+  if (PUBLIC_EXACT_PATHS.has(pathname)) return true;
+  return PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+const AUTH_ENTRY_PATHS = new Set(["/login", "/register"]);
 
 /**
  * Next.js 16 proxy (formerly `middleware`) — always runs on the Node.js
  * runtime, which is required here because the nonce is generated with
- * Node's `crypto` module rather than the Web Crypto API.
+ * Node's `crypto` module rather than the Web Crypto API. Wrapped with
+ * Auth.js's `auth(...)` helper (rather than calling the plain `auth()`
+ * form used in Server Components) specifically because THIS execution
+ * context doesn't have the same request-scoped `headers()`/`cookies()`
+ * async context Server Components get — the wrapper is what makes the
+ * verified session available as `request.auth` here at all.
  */
-export function proxy(request: NextRequest) {
+export const proxy = auth((request) => {
+  const pathname = request.nextUrl.pathname;
+  const isAuthenticated = Boolean(request.auth?.user?.id);
+
+  // Real authentication gate — NOT `getCurrentUser()`'s own defense-in-
+  // depth throw (src/server/auth/current-user.ts's doc comment explains
+  // why a redirect thrown that deep isn't reliable in this app: §3c
+  // already found and fixed a real case of a redirect() call failing to
+  // become a genuine top-level HTTP response under this exact
+  // Next.js/cacheComponents combination — the same reasoning that made
+  // the "/" -> "/dashboard" redirect below a proxy-level concern in the
+  // first place, now extended to the login gate itself).
+  if (!isPublicPath(pathname) && !isAuthenticated) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("from", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Visiting /login or /register while already signed in has nothing
+  // useful to show — send them where they were actually headed.
+  if (isAuthenticated && AUTH_ENTRY_PATHS.has(pathname)) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
   // A real, verified framework quirk: with cacheComponents on, a page
   // whose only content is a synchronous redirect() call gets its
   // redirect embedded inside the streamed RSC payload
@@ -130,7 +187,7 @@ export function proxy(request: NextRequest) {
   response.headers.set("Content-Security-Policy", csp);
 
   return response;
-}
+});
 
 export const config = {
   // Skip static assets and the favicon; every page and API route still gets

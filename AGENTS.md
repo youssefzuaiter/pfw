@@ -3880,6 +3880,228 @@ session, not leave it unverified.
   infra involved here at all — unrelated to §3cc's pgvector work,
   despite both landing in nearby sessions.
 
+## 3ee. Embedding Backfill Script (ad hoc)
+
+Explicit user request, closing two gaps the Punch List (a companion
+artifact to this file) had just flagged: stale-model `MerchantEmbedding`
+rows and `NotableTransaction` rows with no `searchEmbedding` at all.
+
+- **`scripts/backfill-embeddings.ts`** (new): re-embeds every
+  `MerchantEmbedding` row whose `embeddingModel !== CURRENT_EMBEDDING_MODEL_ID`
+  (§3bb's model-versioning column), and computes `searchEmbedding` for
+  every `NotableTransaction` row where it's still `NULL` (raw SQL to
+  filter — `Unsupported("vector(384)")` has no typed query-builder path,
+  same reason `searchTransactionsSemantic` already uses raw SQL, §3cc).
+  Idempotent by construction — every query only ever selects rows still
+  needing work, so re-running after a partial failure picks up exactly
+  where it left off; confirmed live, not assumed (a second run against
+  an already-backfilled database found 0 rows both passes).
+- **A real, deliberate architectural exception, not silently
+  normalized**: every other embedding in this app is computed
+  CLIENT-SIDE ONLY (§3u), specifically so financial text never gets
+  processed as part of live server request handling. A backfill has no
+  "the user's own browser, in the moment" to run in, so this script
+  breaks that pattern on purpose, in a narrow way — treated as an
+  operator-run MAINTENANCE script (the same category as
+  `sync:crypto-prices`/`sync:rates`/`prisma/seed/`, all of which already
+  need the RLS-bypassing admin client for the identical structural
+  reason: touching every user's rows, not one request's worth), not a
+  live feature. Deliberately kept OUT of `src/server/**` — this file
+  itself imports `@huggingface/transformers` directly, not a new
+  `src/server/embeddings/` module, so the client-only guard's real
+  intent ("the embedding model never runs as part of the live server")
+  stays true in spirit, the same reason `prisma/seed/` sits outside that
+  boundary rather than inside it.
+  - **Verified the Node backend actually works on this machine before
+    writing any of the real script** — a throwaway probe confirmed
+    `@huggingface/transformers` resolves to its `onnxruntime-node`
+    backend (the platform-matched `darwin/arm64` native binary was
+    already present) and produces a correctly-shaped, correctly
+    L2-normalized 384-dim vector for real text.
+  - **Known, honest caveat, stated plainly rather than assumed away**:
+    the Node backend (onnxruntime-node) and the browser's WASM backend
+    (onnxruntime-web) are different runtime implementations of the same
+    ONNX graph — floating-point operation ordering can differ enough to
+    produce a bit-level-different (not meaningfully different for
+    cosine-similarity purposes) vector than a real browser would compute
+    for identical input text. Fine for this app's actual use
+    (KNN/cosine-similarity matching), would matter more if byte-for-byte
+    reproducibility were ever needed — it isn't.
+- **Verified live against the real local database, not just unit
+  logic**: before running, 1 stale `MerchantEmbedding` row and 67
+  `NotableTransaction` rows with no search embedding. After: 0 and 0,
+  68 total embeddings written, 0 failures. Re-ran to confirm
+  idempotency (0 rows found both categories, second pass). Then the
+  actual point of the feature, proven end to end: computed a live
+  Hebrew query embedding for "בית קפה" ("coffee house") and hit the
+  real `POST /api/transactions/search` route — it correctly matched a
+  PRE-EXISTING (backfilled, not newly created) transaction, "Cafe Cafe
+  [קפה קפה]", with `mode: "semantic"` — real cross-lingual semantic
+  retrieval against data that was only reachable because this script
+  ran. `npm run check` clean afterward (979/982, 3 skip unrelated).
+
+## 3ff. Real Authentication via Auth.js (ad hoc)
+
+Explicit user request: replace the hardcoded Phase 0 demo user with real
+authentication. The single biggest item on the Punch List (a companion
+artifact to this file), and the riskiest change this project has made —
+`getCurrentUser()` is the trust boundary every page, route, and RLS
+policy depends on. Two decisions genuinely couldn't be made unilaterally
+and were asked rather than guessed: which auth strategy (this app has no
+registered OAuth app anywhere and no outbound email infrastructure —
+Credentials with Argon2id-hashed passwords was the only strategy that
+could be built and actually verified end to end here), and what happens
+to the existing seeded demo data (confirmed: the first real registration
+inherits it).
+
+- **`next-auth@5.0.0-beta.32` + `argon2@0.45.1`** — verified `next-auth`'s
+  peer dependencies explicitly list `next: ^16.0.0` before installing,
+  not assumed compatible. JWT session strategy, deliberately NOT the
+  database-session strategy — two real reasons: (1) `@auth/prisma-adapter`
+  is built against the standard `prisma-client-js` shape, and this app's
+  generator is Prisma 7's newer `prisma-client` TS-source mode (§3a) —
+  this pass never verified adapter compatibility with that shape, and
+  JWT sessions need no adapter at all, sidestepping the question
+  entirely; (2) §5 decision #1's original bet was exactly "no Session
+  table exists or is needed" — JWT sessions keep that bet true.
+- **`User.passwordHash String?`** (migration `20260903120000_user_password_hash`)
+  — nullable with a real, load-bearing meaning, not a transitional
+  state: NULL is what marks the ORIGINAL seeded demo row as still
+  unclaimed. Discovered before writing any registration logic, not
+  after: this app's seed script actually creates THREE unclaimed users
+  (the primary demo user plus two household members, Dana and Avi —
+  §3s), not one — `registerUser()` therefore claims the SPECIFIC primary
+  demo row by its known email, never "any row with a null password,"
+  which would have risked a real registration accidentally claiming a
+  household member's account instead. A dedicated integration test
+  (`tests/integration/auth-credentials.test.ts`) proves this
+  explicitly — registering never touches Dana's or Avi's row.
+- **`src/server/auth/credentials.ts`** (new) — the THIRD narrow
+  admin-client bootstrap exception (alongside `current-user.ts` and the
+  household/vault invite-accept flows, §3s/§3t), now allowlisted in
+  `tests/guards/admin-client-boundary.test.ts`: verifying a login or
+  creating/claiming a row during registration both have to happen
+  before any `userId` exists to scope a normal `withUserScope` call by.
+  `verifyCredentials` returns `null` for all three failure shapes alike
+  (unknown email, an unclaimed row, a wrong password) so a login form
+  can't be used to enumerate which emails have accounts.
+- **`getCurrentUser()`'s external contract is UNCHANGED** — still always
+  resolves to a real `User` row or throws, never returns `null`, never
+  redirects itself. That's what let every one of this app's dozens of
+  existing page/route call sites need ZERO changes for real auth to
+  land, exactly what §5 decision #1 always promised. The real
+  authentication GATE is `src/proxy.ts`, not `getCurrentUser()` — a
+  redirect thrown from deep inside a Route Handler's own try/catch
+  isn't reliable in this app (§3c already found and fixed a real,
+  verified case of exactly that failure mode, for the `"/"` redirect,
+  under this same Next.js/`cacheComponents` combination); `getCurrentUser()`'s
+  own "no session" branch is pure defense-in-depth, expected to be
+  unreachable, and throws loudly rather than attempting a fragile
+  redirect — the same "fail closed, not open" posture RLS itself
+  already takes.
+- **`src/proxy.ts` wrapped with Auth.js's `auth(...)` middleware helper**
+  (not the plain `auth()` form used in Server Components — this
+  execution context doesn't have the same request-scoped
+  `headers()`/`cookies()` async context) — default-protected, an
+  explicit allowlist for what's public: `/login`, `/register`,
+  `/welcome`, `/api/auth/**`, and — NOT an oversight —
+  `/vault/recover/[token]` and `/api/dead-mans-switch/recover/[token]`
+  (§3t), since a Dead Man's Switch beneficiary is, by design, a
+  different real-world person than this app's own authenticated user;
+  gating those behind a login this app has no way to hand a beneficiary
+  would have broken an already-shipped, already-verified feature.
+  Unauthenticated + protected page → redirect to `/login?from=<path>`;
+  unauthenticated + protected `/api/**` → a plain 401 JSON response, not
+  a redirect (an API client expects JSON). Visiting `/login`/`/register`
+  while already signed in redirects to `/dashboard` instead of showing
+  a pointless form.
+- **`POST /api/auth/register`** (new) — deliberately does NOT go through
+  `guardMutation()`, same reason `POST /api/dead-mans-switch/recover/[token]`
+  (§3t) doesn't: `guardMutation` resolves identity via `getCurrentUser()`,
+  which is exactly what doesn't exist yet for someone registering.
+  Origin verification applied by hand instead; rate-limited by the
+  SUBMITTED EMAIL (bounds automated flooding against one target address)
+  plus a coarser global limit.
+- **UI**: `/login`, `/register` (new pages, public per proxy.ts's
+  allowlist), a `SignOutButton` wired into both `TopNav` and
+  `MobileNav`'s drawer. Hit the SAME `focus-visible` guard trap this
+  app's history keeps hitting (§3c, §3d, §3r, §3s, §3t) — twice in one
+  file: once the classic inline-arrow-on-a-button-element shape, and
+  once from this doc comment's OWN prose literally containing the tag
+  name in angle brackets while EXPLAINING the first trap, which the same
+  regex matched right back. Both fixed the established way (a named
+  handler; reworded prose). Also surfaced a genuinely new, previously-
+  undocumented shape of the same guard's blind spot: a REUSABLE button
+  component taking `className` as a prop and applying it via
+  `className={className ?? "default string"}` is invisible to the
+  guard's regex entirely (it only recognizes a literal quoted string or
+  backtick template directly on the tag, never a prop reference or a
+  `??` expression) — even though the guard's own header comment already
+  says a reusable wrapper component is out of scope for it and should
+  get its own component-level test instead. Resolved by giving
+  `SignOutButton` two literal render branches (one real `className="..."`
+  string per branch) rather than fighting the regex or adding an
+  allowlist entry for a component this small.
+- **A real bug in this pass's OWN test file, caught by the test's own
+  cleanup misbehaving, not by inspection**: the first draft of
+  `tests/integration/auth-credentials.test.ts`'s `afterEach` deleted
+  rows matching `testEmails` BEFORE restoring the demo row's email back
+  to `demo@pfw.local`. Since claiming the demo account renames ITS OWN
+  row's email to whatever the test registered with, that delete-by-email
+  step matched and DELETED the demo user row itself while it was still
+  mid-claim, and the following restore-update then threw trying to
+  update a row that no longer existed — corrupting local dev's seeded
+  demo user in the process (caught and fixed via a full `npm run
+  db:seed` reset, confirmed clean via a real second full run of this
+  same test file finishing without leaving any residue). Fixed by
+  reordering (restore the demo row first, delete stray test rows after)
+  plus a defensive `id: { not: demoUserId }` guard on the delete —
+  belt-and-suspenders, matching this app's own established habit for
+  everything else.
+- **Verified live against a real running dev server, not just by unit
+  test** — the full real flow, in order: unauthenticated `/dashboard` →
+  real `307` to `/login?from=%2Fdashboard`; unauthenticated protected API
+  → real `401`; every public route (`/login`, `/register`, `/welcome`,
+  `/api/auth/providers`) → `200` with no gate; a real registration via
+  `POST /api/auth/register` with a brand-new email →
+  `{"inherited":true}`, confirmed the actual demo `User` row's email/
+  password changed in the database; a full real Auth.js CSRF handshake
+  (`GET /api/auth/csrf` → `POST /api/auth/callback/credentials`) →
+  session cookie established, `GET /api/auth/session` returned the real
+  inherited user id; `/dashboard` with that cookie → `200`, containing
+  real ₪ figures; a protected search API with that cookie → `200`,
+  returning the SAME real inherited transaction
+  ("Cafe Cafe [קפה קפה]") the semantic-search backfill (§3ee) had
+  already proven reachable — full inherited-data continuity, not just a
+  session existing; sign-out → session genuinely cleared
+  (`GET /api/auth/session` → `null`), `/dashboard` re-gated; a SECOND
+  registration → `{"inherited":false}`, a genuinely fresh empty account,
+  confirmed to not touch the first user's row; a duplicate-email
+  registration → real `409`; a wrong password → Auth.js's real
+  `error=CredentialsSignin` redirect with no session established; the
+  Dead Man's Switch recovery routes → still `200`/`404` (their own
+  normal responses), never gated. All test data cleaned up afterward via
+  a full `npm run db:seed`, confirmed via a direct query that all three
+  seeded users are unclaimed again. `npm run check` clean throughout
+  (986/989, 3 skip for the unrelated embedding sidecar). Gitleaks and
+  Semgrep (§3z's pinned versions) both re-run against the complete
+  change set — clean, including the two new throwaway secrets
+  (`AUTH_SECRET` in `.env`/`ci.yml`) correctly allowlisted by exact
+  fingerprint in `.gitleaksignore`, the same mechanism §3z already
+  established.
+- **Not built, a deliberate scope decision, not an oversight**: no
+  WebAuthn/TOTP/OAuth (no external provider credentials or email
+  infrastructure exist to build them against — see the opening framing
+  above); no "forgot password" flow (the same honest cost this app's
+  other credential-adjacent features already accept, §3m/§3t — losing
+  a password today means asking whoever administers the deployment to
+  reset it directly in the database, since no email-based reset flow
+  exists); no email verification on registration (an email is just an
+  identifier here, not a proven-reachable address); no rate-limit
+  lockout on repeated failed logins beyond the registration endpoint's
+  own per-email limit — a real login-brute-force throttle would be a
+  reasonable next hardening pass, not built speculatively here.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
@@ -3920,6 +4142,13 @@ session, not leave it unverified.
    change when real auth lands — only `getCurrentUser()`'s internals do.
    **Built in Phase 4**: `src/server/auth/current-user.ts` — see §3c for
    why it's the one legitimate admin-client exception outside seed/tests.
+   **Real credentials landed in §3ff (ad hoc)** — the original bet held
+   exactly as stated: `getCurrentUser()`'s internals changed (reads a
+   real Auth.js session instead of a hardcoded email), its contract and
+   every one of the DAL/RLS layers beneath it did not change at all.
+   Still no WebAuthn/TOTP — Credentials (email + Argon2id) only, per an
+   explicit scope decision (no OAuth app or outbound email
+   infrastructure exists to build the alternatives against).
 2. **Retirement assets** (Pension/Keren Hishtalmut): modeled as a
    `ManualAsset` subtype via an `assetType` enum, not a new table. Consider
    optional `taxAdvantaged: boolean` and `liquidityDate` fields (Keren

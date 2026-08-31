@@ -1,31 +1,42 @@
 import "server-only";
 import { cache } from "react";
+import { auth } from "./auth";
 import { createAdminClient } from "../db/admin-client";
 
 /**
- * Resolves the authenticated user's identity. There's no real login flow
- * yet (see AGENTS.md decision #1) — this always resolves to the single
- * seeded demo user, by a fixed known email.
+ * Resolves the authenticated user's identity (AGENTS.md §3ff — real
+ * Auth.js session-based auth, replacing the old hardcoded single-seeded-
+ * demo-user resolution this comment used to describe).
  *
- * This is the one place outside prisma/seed/ and tests/ that's allowed to
- * use the admin (RLS-bypassing) client — see
- * tests/guards/admin-client-boundary.test.ts. Resolving "who is this" is
- * inherently a bootstrap operation that has to run before any userId
- * exists to scope by (the User table's own RLS policy is keyed on
- * already knowing the id) — the same reason a real login endpoint
- * typically runs with different privileges than authenticated per-request
- * access. Every function downstream of this one receives the resolved
- * userId as a plain argument and goes through the normal RLS-scoped path.
+ * This is the one place outside prisma/seed/, the household/vault invite
+ * flows, and tests/ that's allowed to use the admin (RLS-bypassing)
+ * client — see tests/guards/admin-client-boundary.test.ts. Still a
+ * bootstrap operation in the same sense it always was: even with a
+ * trusted, cryptographically-verified user id already in hand (from
+ * Auth.js's signed session JWT), looking up that id's OWN `User` row is
+ * what the RLS session variable itself depends on already being set to
+ * — the exact chicken-and-egg §5 decision #1 originally described.
+ * Deliberately NOT changed to route through the normal `withUserScope`
+ * RLS path now that a trusted id exists — keeping this one call site as
+ * the sole admin-client exception it already was, tested and
+ * allowlisted, is a smaller, more conservative change than adding a new
+ * RLS-scoped code path here too.
  *
- * Swapping in real session-based auth later only changes this function's
- * internals — every call site already treats the return value as an
- * opaque, already-authenticated user id.
+ * The external contract is UNCHANGED from before this pass: always
+ * resolves to a real `User` row, or throws — never returns null, never
+ * redirects. That's what lets every one of this app's dozens of
+ * existing call sites (every page, every route) need zero changes for
+ * real auth to land — exactly what §5 decision #1 always promised.
+ * `src/proxy.ts` is the actual, reliable authentication GATE (redirects
+ * an unauthenticated request before any Server Component or route
+ * handler runs at all); this function's own "no session" branch below
+ * is pure defense-in-depth, expected to be unreachable in normal
+ * operation.
  *
  * Wrapped in React's `cache()` so multiple components in the same render
  * tree share one lookup instead of hitting the database repeatedly for
  * the same request.
  */
-const SEED_USER_EMAIL = "demo@pfw.local";
 
 /**
  * The Activity Monitor's real-time half (AGENTS.md §3t) — every resolved
@@ -59,10 +70,24 @@ async function touchDeadMansSwitchActivity(admin: ReturnType<typeof createAdminC
 }
 
 export const getCurrentUser = cache(async () => {
+  const session = await auth();
+  const sessionUserId = session?.user?.id;
+  if (!sessionUserId) {
+    // See this function's own doc comment above — src/proxy.ts is
+    // supposed to gate every protected route before this branch can
+    // ever be reached. Throwing loudly (not attempting a redirect this
+    // deep) is the same "fail closed, not open" posture RLS already
+    // takes when app.current_user_id is unset.
+    throw new Error(
+      "getCurrentUser() called with no authenticated session — this should be unreachable. " +
+        "src/proxy.ts is supposed to redirect every protected route to /login before this ever runs.",
+    );
+  }
+
   const admin = createAdminClient();
-  const user = await admin.user.findUnique({ where: { email: SEED_USER_EMAIL } });
+  const user = await admin.user.findUnique({ where: { id: sessionUserId } });
   if (!user) {
-    throw new Error(`Seed user not found (${SEED_USER_EMAIL}). Run \`npm run db:seed\` first.`);
+    throw new Error(`Authenticated session references a user that no longer exists (id ${sessionUserId}).`);
   }
 
   await touchDeadMansSwitchActivity(admin, user.id);

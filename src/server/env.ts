@@ -94,6 +94,15 @@ const REQUIRED_SECRET_SCHEMAS = {
   // with a clear message, instead of only the first time a field is
   // actually encrypted/decrypted.
   ENCRYPTION_KEY: base64EncodedKey("ENCRYPTION_KEY", 32),
+  // Auth.js signs/encrypts session JWTs with this (AGENTS.md §3ff) — a
+  // 32-char floor is a minimum-entropy guard, not a base64 requirement
+  // like ENCRYPTION_KEY's: Auth.js accepts any sufficiently long random
+  // string, and its own `npx auth secret` generator happens to produce
+  // base64 but doesn't require it.
+  AUTH_SECRET: nonEmptyString("AUTH_SECRET").min(
+    32,
+    "AUTH_SECRET must be at least 32 characters — Auth.js uses this to sign/encrypt session JWTs",
+  ),
 } as const;
 
 type RequiredSecretEnvVar = keyof typeof REQUIRED_SECRET_SCHEMAS;
@@ -160,6 +169,10 @@ export function getAppDatabaseUrl(): string {
 
 export function getEncryptionKey(): string {
   return readRequiredEnv("ENCRYPTION_KEY");
+}
+
+export function getAuthSecret(): string {
+  return readRequiredEnv("AUTH_SECRET");
 }
 
 /**
