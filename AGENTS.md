@@ -3487,6 +3487,188 @@ languages") was flagged, not fabricated — see below.
   real documented language story is English-primary-with-Hebrew-mock-
   data, not three.
 
+## 3cc. pgvector-Backed Semantic Transaction Search (ad hoc)
+
+Explicit user request, building for real on the multilingual embedding
+model swap (§3bb) and the pgvector infrastructure question that section's
+own "not built" list flagged as needing its own scoping conversation.
+This time the request named something concrete and real — replace
+`listTransactions`' substring `search` filter with genuine semantic
+search — so it was built for real, not flagged. One accidental schema
+mistake was caught by `prisma migrate diff`'s own output before it ever
+touched the database; documented below rather than quietly fixed and
+forgotten.
+
+- **`pgvector/pgvector:pg17` replaces `postgres:17` in `compose.yaml`**
+  — a drop-in Postgres 17 image with the extension's files installed
+  (confirmed to exist and be multi-arch via `docker manifest inspect`
+  before committing to it). Recreating the local container preserved
+  the existing `pgdata` named volume (`docker compose down` doesn't
+  remove volumes without `-v`) — all 67 existing seeded transactions
+  survived the image swap with zero data loss, confirmed by row count
+  before and after. One benign side effect: the new image's slightly
+  different glibc pulled in a collation-version mismatch warning,
+  cleared with `ALTER DATABASE pfw_local REFRESH COLLATION VERSION`.
+  The k8s CloudNativePG Cluster manifest (§ k8s) is NOT equivalently
+  updated — no verified CNPG+pgvector image exists to point at without
+  a live cluster to test against, flagged in that file's own comment
+  rather than guessed at.
+- **Schema** (migration `20260903100000_transaction_search_embedding`,
+  generated via `prisma migrate diff` against the live dev DB, same
+  established workaround as §3p/§3s/§3t/§3w/§3bb): `previewFeatures =
+  ["postgresqlExtensions"]` and `extensions = [vector]`, verified against
+  the exact installed Prisma version (7.10.0) with `prisma validate`
+  before committing to the design, not assumed from general Prisma
+  docs. `NotableTransaction.searchEmbedding Unsupported("vector(384)")?`
+  — Prisma's `Unsupported` type has no typed Client read/write path at
+  all (confirmed against the generated client, not assumed either);
+  every actual read or write against this column goes through
+  `$queryRaw`/`$executeRaw`. No ANN index (HNSW/IVFFlat) added — same
+  "personal ledger, not millions of rows" scale call §3u's own
+  MerchantEmbedding KNN already makes; a plain sequential `<=>` scan is
+  correct and fast enough here too.
+  - **A real mistake, caught by the tooling before it caused any harm**:
+    the first schema edit adding `searchEmbedding` accidentally deleted
+    `NotableTransaction`'s pre-existing `createdAt`/`updatedAt` fields
+    in the same edit. `prisma migrate diff`'s own output caught it
+    immediately — it proposed `DROP COLUMN "createdAt", DROP COLUMN
+    "updatedAt"` with no corresponding re-add, which is what actually
+    revealed the mistake, not a manual re-read of the schema. Fixed
+    before generating the real migration; the applied migration only
+    ever added the one intended column.
+- **The encryption/raw-SQL trap this pass had to get right**:
+  `NotableTransaction.description` is AES-256-GCM encrypted at rest,
+  transparently, via a Prisma Client extension
+  (`src/server/db/encrypted-fields.ts`) — but `$queryRaw` bypasses EVERY
+  Client extension, including that one, since extensions only wrap the
+  normal query-builder methods. `searchTransactionsSemantic`
+  (`src/server/dal/transactions.ts`) therefore uses raw SQL ONLY to rank
+  by cosine distance and return bare transaction ids — the actual rows
+  are then fetched through the ordinary, extension-wrapped
+  `tx.notableTransaction.findMany`, which correctly decrypts
+  `description`. Fetching a full row directly via `$queryRaw` would have
+  silently returned raw ciphertext instead — caught by reasoning through
+  the encryption extension's actual mechanism before writing the query,
+  not discovered as a bug afterward, the same "verify before trusting"
+  habit that caught the CI shell-injection issue (§3aa) and the
+  onnxruntime-web WASM variant mismatch (§3y).
+  - A second, related correctness detail: `findMany({ where: { id: {
+    in: [...] } } })` does NOT preserve the `IN`-list's order — Postgres
+    returns matching rows in its own order. `searchTransactionsSemantic`
+    re-sorts the fetched rows back into the similarity ranking the raw
+    SQL query already established, via a `Map` lookup — proven by a
+    dedicated ordering test (below), not just assumed correct because
+    the ids matched.
+- **`toPgVectorLiteral`** (`src/lib/vector-math.ts`, new, alongside the
+  existing `cosineSimilarity`): formats a validated embedding as
+  pgvector's `[0.1,0.2,...]` text literal for a `::vector` SQL cast.
+  Re-validates every element finite INSIDE the function itself (not
+  just trusting upstream Zod validation), so its injection-safety
+  argument — a finite number's string form can never contain a SQL
+  metacharacter — holds regardless of caller discipline. Hand-written
+  rather than the `pgvector` npm package's own helper, same "own a
+  small, obviously-correct mechanical primitive directly" call this
+  project already made for the CSV tokenizer, the Levenshtein distance,
+  and the Box-Muller transform — never extended to genuine cryptography,
+  where §3x instead moved TOWARD an audited library for exactly the
+  opposite reason (a different risk class).
+- **The embedding already computed for Tier 3 categorization is REUSED
+  as the search index, not recomputed** — `createTransaction` and
+  `updateTransactionCategory` (`src/server/dal/transactions.ts`) both
+  already receive a client-computed `embedding` for the merchant
+  feedback loop (§3u); this pass adds one more `$executeRaw` write
+  (`setSearchEmbedding`) inside the SAME transaction, using that exact
+  vector. No second client-side computation, no new UI trigger needed —
+  every transaction that already had Tier 3 categorization reachable
+  (manual entry, receipt scanner, inline recategorization) is
+  automatically search-indexed too. CSV-imported transactions and every
+  transaction that predates this pass stay unindexed — the schema's own
+  model comment states this is a forward-only limitation, the same
+  accepted gap §3u's own MerchantEmbedding corrections table already
+  has, not retroactively backfilled.
+- **A real, deliberately-surfaced privacy trade-off, not glossed over**:
+  storing an UNENCRYPTED vector derived from `description` text — text
+  this app otherwise treats as sensitive enough to encrypt — is a
+  genuinely different, narrower guarantee than the encryption itself
+  provides. An adversary with database access AND the same public
+  embedding model could, in principle, narrow down short/guessable
+  description strings via a dictionary/near-match attack against the
+  stored vector, without ever touching the AES-GCM ciphertext. This is
+  an inherent limitation of ANY server-side vector similarity search
+  over otherwise-encrypted data, not a bug specific to this
+  implementation — stated plainly in the schema's own model comment,
+  the same honesty this app already applies to
+  `MerchantEmbedding.sampleMerchantName`'s existing (smaller-scope)
+  plaintext-by-design choice.
+- **`POST /api/transactions/search`** (new route): read-only, so it
+  deliberately skips `guardMutation`'s Origin/CSRF check — same posture
+  as `GET /api/analytics/monte-carlo` (§3n) and `GET /api/tax/simulate`
+  (§3r) — but keeps identity resolution and rate limiting (30/min per
+  user) by calling those primitives directly. POST, not GET, specifically
+  because a 384-float query embedding doesn't fit a query string.
+  `embedding` is OPTIONAL in the request body — a client that couldn't
+  compute one in time (unsupported browser, a cold model download racing
+  past the 3s budget) still gets a real answer via `listTransactions`'s
+  existing substring match, server-side, in the SAME request, rather
+  than an error. The response's `mode` field (`"semantic"` |
+  `"substring"`) tells the UI which path actually served it.
+- **UI**: `src/app/transactions/_components/transactions-explorer.tsx`
+  (new client component) now owns the free-text search box AND the
+  table together — necessary because a result set can come from a
+  client-driven fetch, not just the server-rendered initial rows
+  `page.tsx` passes in. `FilterBar` lost its search input entirely
+  (category/sort stay exactly as before: URL-param-driven, a real page
+  navigation on change, which naturally remounts the explorer with fresh
+  `initialRows` and clears any in-progress client-side search). Debounced
+  400ms; a monotonic request-id ref (not `AbortController`, since
+  nothing here needs to cancel an in-flight fetch early — a `fetch` that
+  finishes late is just ignored) drops a stale response if a newer
+  keystroke already started a later request. Two real
+  `react-hooks/set-state-in-effect` / `react-hooks/immutability` lint
+  errors surfaced while wiring this — fixed by matching
+  `monte-carlo-widget.tsx`'s established shape exactly: the entire async
+  sequence (including the first `setMode("searching")` call) lives
+  inside the debounce timer's deferred callback, never synchronously in
+  the effect body itself; the "query cleared" reset moved out of the
+  effect entirely into the input's `onChange` handler, since it's a
+  direct response to that one event, not an effect-shaped
+  synchronization concern.
+- **Verified live, not just by test**: a real dev-server walkthrough —
+  created a manual transaction with a synthetic embedding via the real
+  `POST /api/transactions`, confirmed `searchEmbedding IS NOT NULL` via
+  `psql`, then a near-(not exactly-)identical query vector against
+  `POST /api/transactions/search` correctly returned it with `mode:
+  "semantic"`; the same endpoint with no embedding and the transaction's
+  exact description text returned it with `mode: "substring"`; a
+  non-matching substring query correctly returned an empty result;
+  malformed bodies (wrong-length embedding, missing `query`) both 400.
+  Test transaction deleted afterward, confirmed via a re-query. `npm run
+  check` clean with the DB genuinely live: 965/968 passing (3 skip, the
+  unrelated embedding sidecar) — up from 950 before this pass, the
+  difference being 8 new integration tests
+  (`tests/integration/transaction-semantic-search.test.ts`: both write
+  paths populate `searchEmbedding`; a near-identical vector matches while
+  an unrelated one doesn't; multi-result ordering is genuinely
+  most-similar-first, not incidental table order; a row with no stored
+  embedding is never returned even when another row shares its exact
+  description text; the `categoryId` filter composes correctly with
+  vector ranking; cross-user IDOR isolation) plus 7 new unit tests for
+  `toPgVectorLiteral` (including a regex-verified "every valid output
+  character is digits/./-/e/+/," injection-safety check). Gitleaks and
+  Semgrep (the pinned versions §3z wired into CI) were re-run locally
+  against this pass's full working tree — both clean, including the new
+  raw-SQL query construction Semgrep's injection-focused rules had every
+  opportunity to flag and didn't.
+- **Not built, consistent with §3bb's own scoping note**: no backfill of
+  pre-existing/CSV-imported transactions' `searchEmbedding` (a real,
+  substantial feature of its own — see §3bb's closing note on why this
+  session didn't build one); no `pgvector` ANN index (flagged above,
+  not needed at this app's current scale); the `?q=` URL param still
+  drives ONLY the page's initial server-render — typing in the live
+  search box does not push further URL history entries, a deliberate
+  simplification over continuously syncing 384-dimension search state
+  into a shareable URL.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

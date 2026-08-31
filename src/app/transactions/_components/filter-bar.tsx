@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition, type FormEvent } from "react";
+import { useTransition } from "react";
 import type { TransactionSort } from "../../../server/dal/transactions";
 
 type Category = { id: string; name: string };
@@ -14,27 +14,26 @@ const SORT_OPTIONS: Array<{ value: TransactionSort; label: string }> = [
 ];
 
 /**
- * Filters live in the URL (`?q=&category=&sort=`), not client state —
- * the server re-fetches and re-renders on navigation. This means a
- * filtered view is shareable/bookmarkable and survives a reload, and it
- * avoids needing a client-fetched "GET /api/transactions" endpoint at
- * all for what is otherwise a plain read.
+ * Category/sort only now (AGENTS.md §3cc) — the free-text search box
+ * moved to `TransactionsExplorer`, which drives it client-side through
+ * `POST /api/transactions/search` rather than a `?q=` URL param, since
+ * computing a query embedding needs the browser. These two filters stay
+ * exactly as before: live in the URL, the server re-fetches and
+ * re-renders on navigation, so a category/sort selection is still
+ * shareable/bookmarkable and survives a reload.
  */
 export function FilterBar({
   categories,
-  initialQuery,
   initialCategoryId,
   initialSort,
 }: {
   categories: readonly Category[];
-  initialQuery: string;
   initialCategoryId: string;
   initialSort: TransactionSort;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [query, setQuery] = useState(initialQuery);
   const [, startTransition] = useTransition();
 
   function updateParams(next: Record<string, string>) {
@@ -51,25 +50,8 @@ export function FilterBar({
     });
   }
 
-  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    updateParams({ q: query });
-  }
-
   return (
-    <form onSubmit={handleSearchSubmit} role="search" className="flex flex-wrap items-center gap-3">
-      <label className="sr-only" htmlFor="transaction-search">
-        Search transactions
-      </label>
-      <input
-        id="transaction-search"
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search merchant or description…"
-        className="min-w-[180px] flex-1 rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
-
+    <div className="flex flex-wrap items-center gap-3">
       <label className="sr-only" htmlFor="transaction-category-filter">
         Filter by category
       </label>
@@ -102,13 +84,6 @@ export function FilterBar({
           </option>
         ))}
       </select>
-
-      <button
-        type="submit"
-        className="rounded-md border border-border px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        Search
-      </button>
-    </form>
+    </div>
   );
 }

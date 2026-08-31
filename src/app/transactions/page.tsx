@@ -7,7 +7,8 @@ import { listTransactions, type TransactionSort } from "../../server/dal/transac
 import { FilterBar } from "./_components/filter-bar";
 import { ImportCsvForm } from "./_components/import-csv-form";
 import { ReceiptScannerModal } from "./_components/receipt-scanner-modal";
-import { TransactionsTable, type TransactionRow } from "./_components/transactions-table";
+import { TransactionsExplorer } from "./_components/transactions-explorer";
+import type { TransactionRow } from "./_components/transactions-table";
 
 export const instant = false;
 
@@ -76,8 +77,13 @@ export default async function TransactionsPage({
         <ImportCsvForm bankAccounts={accountOptions} />
         <ReceiptScannerModal bankAccounts={accountOptions} />
       </div>
-      <FilterBar categories={categoryOptions} initialQuery={query} initialCategoryId={categoryId} initialSort={sort} />
-      <TransactionsTable rows={rows} categories={categoryOptions} />
+      <FilterBar categories={categoryOptions} initialCategoryId={categoryId} initialSort={sort} />
+      <TransactionsExplorer
+        initialRows={rows}
+        categories={categoryOptions}
+        initialQuery={query}
+        categoryId={categoryId || undefined}
+      />
     </div>
   );
 }

@@ -25,4 +25,7 @@ import { LOCAL_EMBEDDING_DIMENSIONS } from "../../lib/embeddings/embedding-model
  */
 export const EMBEDDING_DIMENSIONS = LOCAL_EMBEDDING_DIMENSIONS;
 
-export const EmbeddingSchema = z.array(z.number().finite()).length(EMBEDDING_DIMENSIONS).optional();
+/** The base shape, required — semantic search (AGENTS.md §3cc) has no meaningful request without a query embedding, unlike categorization's optional one below. */
+export const RequiredEmbeddingSchema = z.array(z.number().finite()).length(EMBEDDING_DIMENSIONS);
+
+export const EmbeddingSchema = RequiredEmbeddingSchema.optional();

@@ -1,11 +1,13 @@
 import "server-only";
-import type { Currency, Prisma } from "../../generated/prisma/client";
+import { Prisma } from "../../generated/prisma/client";
+import type { Currency } from "../../generated/prisma/client";
 import { categorizeTransaction } from "../../lib/categorization/cascade";
 import type { PastOccurrence } from "../../lib/categorization/types";
 import { neutralizeFormulaInjection } from "../../lib/csv-import/formula-injection";
 import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model";
 import { normalizeMerchantKey } from "../../lib/text-matching";
-import { withUserScope } from "../db/with-user-scope";
+import { toPgVectorLiteral } from "../../lib/vector-math";
+import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 import { BankAccountNotFoundError } from "./transaction-import";
 
 /** See bank-accounts.ts for why this returns `null` rather than throwing on a mismatch. */
@@ -26,6 +28,16 @@ const ORDER_BY: Record<TransactionSort, Prisma.NotableTransactionOrderByWithRela
   amount_desc: { amount: "desc" },
   amount_asc: { amount: "asc" },
 };
+
+/** Writes this transaction's semantic search index (AGENTS.md §3cc) — not a correctness dependency of the caller's real mutation, so a failure here is never allowed to fail the caller's category assignment. */
+async function setSearchEmbedding(
+  tx: ScopedTransactionClient,
+  transactionId: string,
+  embedding: readonly number[],
+): Promise<void> {
+  const vectorLiteral = toPgVectorLiteral(embedding);
+  await tx.$executeRaw`UPDATE "NotableTransaction" SET "searchEmbedding" = ${vectorLiteral}::vector WHERE "id" = ${transactionId}`;
+}
 
 export type TransactionFilters = {
   categoryId?: string;
@@ -69,6 +81,83 @@ export async function listTransactions(userId: string, filters: TransactionFilte
   return rows.filter(
     (row) => row.description.toLowerCase().includes(term) || (row.merchantName?.toLowerCase().includes(term) ?? false),
   );
+}
+
+export type SemanticSearchFilters = {
+  categoryId?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  limit?: number;
+};
+
+const DEFAULT_SEARCH_LIMIT = 50;
+/** Cosine DISTANCE ceiling (pgvector's `<=>` operator returns `1 - cosine similarity`) — 0.25 mirrors tier3-knn.ts's own DEFAULT_MIN_SIMILARITY = 0.75 floor, so both of this app's KNN-shaped features agree on what "actually similar" means. */
+const MAX_COSINE_DISTANCE = 0.25;
+
+/**
+ * Replaces the plain substring `search` filter above for any caller that
+ * can supply a client-computed query embedding (AGENTS.md §3cc) — ranks
+ * by real semantic similarity via pgvector's `<=>` cosine-distance
+ * operator, computed by Postgres itself, not application code. Only
+ * ever searches transactions that HAVE a stored `searchEmbedding` —
+ * every pre-existing row and anything imported without one stays
+ * unreachable by this function specifically (not an oversight: see the
+ * schema's own model comment on `searchEmbedding` for why this is a
+ * forward-only index, same accepted limitation MerchantEmbedding's own
+ * corrections table already has). Callers that need to search
+ * transactions with no embedding at all should fall back to
+ * `listTransactions`'s `search` filter — the two are deliberately
+ * separate functions, not merged into one with a mode flag, so each
+ * stays simple to read on its own.
+ */
+export async function searchTransactionsSemantic(
+  userId: string,
+  queryEmbedding: readonly number[],
+  filters: SemanticSearchFilters = {},
+) {
+  const vectorLiteral = toPgVectorLiteral(queryEmbedding);
+  const limit = filters.limit ?? DEFAULT_SEARCH_LIMIT;
+
+  return withUserScope(userId, async (tx) => {
+    const conditions = [
+      Prisma.sql`"userId" = ${userId}`,
+      Prisma.sql`"searchEmbedding" IS NOT NULL`,
+      Prisma.sql`"searchEmbedding" <=> ${vectorLiteral}::vector <= ${MAX_COSINE_DISTANCE}`,
+    ];
+    if (filters.categoryId) conditions.push(Prisma.sql`"categoryId" = ${filters.categoryId}`);
+    if (filters.dateFrom) conditions.push(Prisma.sql`"occurredAt" >= ${filters.dateFrom}`);
+    if (filters.dateTo) conditions.push(Prisma.sql`"occurredAt" <= ${filters.dateTo}`);
+
+    // Raw SQL here computes ranking and returns bare ids ONLY — never a
+    // full row. $queryRaw bypasses every Prisma Client extension,
+    // including src/server/db/encrypted-fields.ts's transparent
+    // `description` decryption (extensions wrap the normal
+    // query-builder methods, not $queryRaw) — fetching a full row this
+    // way would silently hand back raw AES-256-GCM ciphertext instead
+    // of plaintext. The real rows are fetched below through the
+    // ordinary, extension-wrapped `tx.notableTransaction.findMany`.
+    const ranked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "NotableTransaction"
+      WHERE ${Prisma.join(conditions, " AND ")}
+      ORDER BY "searchEmbedding" <=> ${vectorLiteral}::vector ASC
+      LIMIT ${limit}
+    `;
+
+    if (ranked.length === 0) return [];
+
+    const rows = await tx.notableTransaction.findMany({
+      where: { id: { in: ranked.map((r) => r.id) }, userId },
+      include: { category: true, bankAccount: true },
+    });
+
+    // findMany's `id: { in: [...] }` does NOT preserve the IN-list's
+    // order — Postgres/Prisma return matching rows in their own order,
+    // not the similarity ranking `ranked` already established. This
+    // re-sort is what actually makes "most similar first" true for the
+    // caller, not just true of the intermediate raw-SQL result.
+    const rowById = new Map(rows.map((row) => [row.id, row]));
+    return ranked.map((r) => rowById.get(r.id)).filter((row): row is (typeof rows)[number] => row !== undefined);
+  });
 }
 
 export type UpdateTransactionCategoryResult = Awaited<ReturnType<typeof getTransactionById>>;
@@ -131,6 +220,13 @@ export async function updateTransactionCategory(
           embeddingModel: CURRENT_EMBEDDING_MODEL_ID,
         },
       });
+
+      // Reuses the SAME embedding already computed for the merchant
+      // feedback loop above — this text (merchant/description) is what
+      // a search query would semantically match against too, so
+      // there's no reason to ask the client to compute it twice for
+      // one correction (AGENTS.md §3cc).
+      await setSearchEmbedding(tx, updated.id, embedding);
     }
 
     return updated;
@@ -223,7 +319,7 @@ export async function createTransaction(userId: string, input: CreateTransaction
       embeddingCorrections,
     });
 
-    return tx.notableTransaction.create({
+    const created = await tx.notableTransaction.create({
       data: {
         userId,
         bankAccountId: input.bankAccountId,
@@ -239,6 +335,15 @@ export async function createTransaction(userId: string, input: CreateTransaction
       },
       include: { category: true, bankAccount: true },
     });
+
+    // Same embedding already computed for Tier 3 categorization above,
+    // reused as this row's semantic search index (AGENTS.md §3cc) — no
+    // second client-side computation needed for the same text.
+    if (input.embedding) {
+      await setSearchEmbedding(tx, created.id, input.embedding);
+    }
+
+    return created;
   });
 }
 

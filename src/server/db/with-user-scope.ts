@@ -9,7 +9,7 @@ import { prisma } from "./client";
  * structurally match a client built with `$extends` (see the type error
  * this replaced: a real, verified mismatch, not a style preference).
  */
-type ScopedTransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+export type ScopedTransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
  * Wraps a DB operation in a transaction that first sets the Postgres
