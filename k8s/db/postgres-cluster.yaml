@@ -246,7 +246,19 @@ spec:
   # failover with no manual intervention and no data-owning StatefulSet
   # to babysit.
   instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgresql:17.2 # keep in sync with compose.yaml's postgres:17
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+  # NOTE (AGENTS.md §3cc): compose.yaml's local dev image moved to
+  # pgvector/pgvector:pg17 (a drop-in Postgres 17 + pgvector build) for
+  # the semantic-search feature's CREATE EXTENSION vector migration.
+  # This CNPG image does NOT have pgvector's files installed — the
+  # official cloudnative-pg image doesn't ship it, and there's no single
+  # verified CNPG+pgvector image to point at without a live cluster to
+  # test against (this session had none). Before deploying §3cc's
+  # migration against this Cluster, build a custom image layering
+  # pgvector onto ghcr.io/cloudnative-pg/postgresql:17.2 (CNPG's own
+  # docs cover this: https://cloudnative-pg.io/documentation/current/image_catalog/)
+  # and point imageName at it — until then, `CREATE EXTENSION vector`
+  # will fail here even though it works locally.
   primaryUpdateStrategy: unsupervised
 
   # Never a real Postgres superuser in production — see the role-model

@@ -1,6 +1,13 @@
 services:
   postgres:
-    image: postgres:17
+    # pgvector/pgvector:pg17 is a drop-in Postgres 17 image (same base as
+    # postgres:17) with the pgvector extension's files installed — not
+    # yet ENABLED in any given database until `CREATE EXTENSION vector`
+    # runs (this migration's own SQL), so this swap alone changes
+    # nothing for a database that never opts in. Confirmed to exist and
+    # be multi-arch (amd64 + arm64) via `docker manifest inspect` before
+    # committing to it, not assumed (AGENTS.md §3cc).
+    image: pgvector/pgvector:pg17
     container_name: pfw_local_db
     restart: unless-stopped
     environment:

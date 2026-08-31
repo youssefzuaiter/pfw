@@ -23,12 +23,30 @@
 // scoping doesn't apply to it. See its own model comment.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  // Needed for the `extensions = [vector]` datasource declaration and
+  // NotableTransaction.searchEmbedding's Unsupported("vector(384)") type
+  // below (AGENTS.md §3cc) — verified against this exact installed
+  // Prisma version (7.10.0) with `prisma validate` before committing to
+  // this design, not assumed from general Prisma docs. `Unsupported`
+  // fields have no typed Prisma Client read/write path regardless of
+  // this flag — every actual read/write against searchEmbedding goes
+  // through $queryRaw/$executeRaw (src/server/dal/transactions.ts).
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  // Declares the pgvector extension as part of this schema's contract —
+  // `compose.yaml` now runs pgvector/pgvector:pg17 (a drop-in Postgres
+  // 17 image with the extension's files installed) instead of the
+  // plain postgres:17 image specifically so `CREATE EXTENSION vector`
+  // (this migration's own SQL) has something to enable. See §3cc's k8s
+  // note for why the CloudNativePG production manifest is NOT
+  // equivalently updated in this pass — that image needs a custom
+  // build this session couldn't verify against a live cluster.
+  extensions = [vector]
 }
 
 enum BankAccountType {
@@ -468,6 +486,36 @@ model NotableTransaction {
   needsReview           Boolean     @default(false)
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
+  /// Semantic search index (AGENTS.md §3cc) — a 384-dim pgvector
+  /// embedding of this row's merchant/description text, computed
+  /// CLIENT-SIDE only (same "no financial text leaves the device"
+  /// property §3u/§3aa already hold for MerchantEmbedding) and populated
+  /// via raw SQL (Prisma's `Unsupported` type has no typed read/write
+  /// path — see src/server/dal/transactions.ts). Null for any
+  /// transaction that never had a client-computed embedding available
+  /// at create/recategorize time (every pre-existing row, CSV-imported
+  /// rows, and any manual entry from a browser where the embedding
+  /// model failed to load) — forward-only coverage, same accepted
+  /// limitation §3u's own MerchantEmbedding backfill gap already
+  /// documents, not retroactively computed.
+  ///
+  /// KNOWN, DELIBERATE trade-off, stated plainly rather than glossed
+  /// over: `description` is encrypted at rest specifically because it's
+  /// treated as sensitive free text (this model's own comment above,
+  /// docs/SECURITY.md §3.4). This column stores an UNENCRYPTED vector
+  /// derived from that same text — not the plaintext itself, but a
+  /// lossy representation an adversary with both database access and
+  /// the same public embedding model could, in principle, narrow down
+  /// via a dictionary/near-match attack for short, guessable strings
+  /// (this is a real, inherent limitation of ANY server-side vector
+  /// similarity search over data whose plaintext must otherwise stay
+  /// hidden — there's no way around it without exotic techniques like
+  /// homomorphic encryption, well outside this app's scope). This is
+  /// the same accepted trade-off `MerchantEmbedding.sampleMerchantName`
+  /// already makes for merchant names (stored in plaintext by design),
+  /// extended here to description text for the first time — flagged
+  /// explicitly rather than silently introduced.
+  searchEmbedding       Unsupported("vector(384)")?
 
   @@unique([userId, providerTransactionId])
   @@index([userId, occurredAt])
