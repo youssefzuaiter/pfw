@@ -1,0 +1,57 @@
+# Public entry point for the app (service.yaml stays ClusterIP-only —
+# this is what actually exposes it). `ingressClassName`/the
+# `nginx.ingress.kubernetes.io/*` annotations below assume ingress-nginx
+# specifically, the most common in-cluster controller — NOT verified
+# against a live cluster in this session (no cluster available), same
+# honesty this repo's other k8s manifests already apply to their own
+# unverified assumptions (e.g. k8s/db/postgres-cluster.yaml's pgvector-
+# image note). Swap `ingressClassName` and drop/replace the
+# `nginx.ingress.kubernetes.io/*` annotations for a different controller
+# (Traefik, a cloud load-balancer controller, ...) — a controller that
+# isn't ingress-nginx simply ignores annotations it doesn't recognize, so
+# leaving them in place is harmless but also not load-bearing for a
+# different controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pfw-app
+  namespace: pfw-app
+  labels:
+    app.kubernetes.io/name: pfw
+  annotations:
+    # REPLACE with a real ClusterIssuer configured in your cluster (e.g.
+    # cert-manager + Let's Encrypt) — deliberately a DIFFERENT issuer
+    # than k8s/db/postgres-cluster.yaml's `pfw-postgres-ca-issuer`, which
+    # is scoped to that file's own internal mTLS client-cert use case
+    # (the backup_reader role), not a public-facing TLS certificate.
+    cert-manager.io/cluster-issuer: "REPLACE_ME_letsencrypt-prod"
+    # ingress-nginx-specific hardening, harmless no-ops under a different
+    # controller:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Must be >= this app's own CSV-statement-import ceiling (2MB decode
+    # ceiling, checked again and more precisely by the app itself once a
+    # request actually arrives — src/lib/csv-import/csv-parse.ts) — an
+    # ingress-level body-size cap that's SMALLER than the app's own would
+    # silently reject a legitimate upload before the app's own,
+    # already-tested guard ever runs. ingress-nginx's own out-of-the-box
+    # default (1m) is too small for this app; set explicitly rather than
+    # inherited.
+    nginx.ingress.kubernetes.io/proxy-body-size: "5m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - "REPLACE_ME.example.com" # the real public hostname this deployment serves
+      secretName: pfw-app-tls # cert-manager creates/renews this automatically once the ClusterIssuer above is real
+  rules:
+    - host: "REPLACE_ME.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pfw-app
+                port:
+                  name: http

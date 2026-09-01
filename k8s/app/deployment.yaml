@@ -1,0 +1,322 @@
+# Production Deployment for PFW's Next.js app (Punch List Phase 4 — the
+# app-deployment prep pass this repo's k8s/ directory had been missing:
+# k8s/db/ covers only the CNPG Postgres cluster and two CronJobs). Builds
+# on the root Dockerfile (`output: "standalone"`, multi-stage, verified
+# to run correctly end-to-end against a real local Postgres before this
+# manifest was written — see that file's own header comment).
+#
+# Namespace/label contract, load-bearing, not arbitrary: k8s/db/postgres-
+# cluster.yaml's PRE-EXISTING `allow-postgres-from-app` NetworkPolicy
+# (in the `pfw-data` namespace) already, specifically, only allows
+# ingress to Postgres from pods matching namespace `pfw-app` AND pod
+# label `app.kubernetes.io/name: pfw` — this Deployment's namespace and
+# pod-template labels below match that EXACTLY, confirmed by reading that
+# NetworkPolicy's own rule before writing this file, not assumed. Get
+# either one wrong and the app can never reach its database at all, with
+# no error beyond a connection timeout at request time.
+#
+# Also declared here (not duplicated across service.yaml/ingress.yaml,
+# which both just reference it by name in their own `namespace:` field):
+# the `pfw-app` Namespace itself — the SAME namespace
+# k8s/dead-mans-switch-cronjob.yaml already creates with identical
+# labels; re-applying the identical definition from either file is an
+# idempotent no-op, not a conflict.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pfw-app
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pfw-app
+  namespace: pfw-app
+  labels:
+    app.kubernetes.io/name: pfw
+---
+# Zero-trust network posture, matching k8s/db/postgres-cluster.yaml's own
+# default-deny-then-explicit-allow shape rather than leaving this
+# namespace fully open by omission.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: pfw-app
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-ingress
+  namespace: pfw-app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pfw
+  policyTypes: ["Ingress"]
+  ingress:
+    # Deliberately NOT scoped to a specific ingress-controller namespace/
+    # label selector: real ingress-controller placement (in-cluster
+    # namespace, pod labels) varies by installation (ingress-nginx,
+    # Traefik, a cloud LB controller, ...) and this repo has no live
+    # cluster to verify a specific one against — an over-narrow guess
+    # here risks silently 503-ing all real production traffic, a far
+    # worse failure mode than an under-restricted ingress rule at this
+    # layer (the Ingress resource + Service still gate what's actually
+    # publicly reachable; this NetworkPolicy's job is intra-cluster
+    # segmentation, not public exposure control). TIGHTEN this to your
+    # actual ingress controller's namespace/pod selector once known —
+    # tracked here explicitly rather than left as a silent gap.
+    - {}
+  # Note: no `ports:` restriction needed beyond the podSelector itself —
+  # the container's only listening port is 3000 (see the Deployment
+  # below); a NetworkPolicy with no `ports:` field allows all ports to
+  # the selected pods, which here means "all traffic to the one port this
+  # pod actually has open."
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-egress
+  namespace: pfw-app
+spec:
+  # Covers BOTH this Deployment's pods (`pfw`) AND the pre-existing
+  # k8s/dead-mans-switch-cronjob.yaml's CronJob pods
+  # (`pfw-dead-mans-switch-check`) — a real cross-file consequence found
+  # and fixed while writing this policy, not an oversight: that CronJob
+  # already ships in the SAME `pfw-app` namespace with no NetworkPolicy
+  # of its own (previously fine, since no policy existed anywhere in this
+  # namespace before this file). This file's `default-deny-all` (below)
+  # applies namespace-wide (`podSelector: {}`), so without explicitly
+  # including the CronJob's own label here too, adding this Deployment's
+  # NetworkPolicies would have silently cut off that already-shipped
+  # CronJob's egress to Postgres and the internet the next time both are
+  # applied together. Ingress is deliberately NOT extended the same way
+  # (see `allow-app-ingress` below) — the CronJob makes outbound calls
+  # only and has no inbound listener to admit traffic to.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["pfw", "pfw-dead-mans-switch-check"]
+  policyTypes: ["Egress"]
+  egress:
+    # DNS — every other egress rule below depends on being able to
+    # resolve a hostname at all.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres (pfw-postgres-rw / -ro in the pfw-data namespace) — the
+    # exact cross-namespace path k8s/db/postgres-cluster.yaml's own
+    # `allow-postgres-from-app` ingress rule (see this file's header)
+    # was written to admit.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pfw-data
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: pfw-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # HTTPS egress for the external APIs this app calls at runtime
+    # (Anthropic's API for the advisor, Frankfurter/CoinGecko for FX and
+    # crypto-price sync, the Hugging Face Hub for embedding-model
+    # weights fetched by a user's OWN browser — not this pod — the
+    # client-side receipt-OCR/embedding features never touch server
+    # egress at all, only the server-side integrations do): left as a
+    # broad 443 allow rather than an exhaustive per-provider IP allowlist,
+    # since none of these providers publish stable IP ranges this policy
+    # could pin to reliably.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# `stringData` below is a PLACEHOLDER SHAPE, not a real value — same
+# "populate via External Secrets Operator / Vault / sealed-secrets, never
+# `kubectl apply` with real values checked into git" convention every
+# other Secret in this repo's k8s/ manifests already uses.
+#
+# DATABASE_URL / APP_DATABASE_URL cannot reference k8s/db/postgres-
+# cluster.yaml's CNPG-generated `pfw-postgres-app` / `pfw-postgres-runtime`
+# Secrets directly via `secretKeyRef` — those Secrets live in the
+# `pfw-data` namespace, and Kubernetes Secrets are namespace-scoped; a Pod
+# can only reference one in its OWN namespace. Populate this Secret's two
+# URL fields by reading those two Secrets' `uri` key (for `pfw-postgres-app`)
+# and `password` key (for `pfw-postgres-runtime`, which — per that
+# manifest's own comment — has NO `uri` key of its own; only `username`/
+# `password`, since it's a `managed.roles` entry, not a `bootstrap.initdb`
+# owner) via your real secret pipeline, e.g.:
+#   kubectl get secret -n pfw-data pfw-postgres-app -o jsonpath='{.data.uri}' | base64 -d
+#   kubectl get secret -n pfw-data pfw-postgres-runtime -o jsonpath='{.data.password}' | base64 -d
+# and construct APP_DATABASE_URL as
+#   postgresql://pfw_runtime:<that password>@pfw-postgres-rw.pfw-data.svc.cluster.local:5432/pfw
+# — never paste either value directly into this file.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pfw-app-secrets
+  namespace: pfw-app
+  annotations:
+    pfw.internal/managed-by: "REPLACE — populate via External Secrets Operator / Vault / sealed-secrets, never `kubectl apply` with real values checked into git"
+type: Opaque
+stringData:
+  DATABASE_URL: "REPLACE_ME" # pfw_app (admin/migration role) — see the comment above for how to source this
+  APP_DATABASE_URL: "REPLACE_ME" # pfw_runtime (restricted, RLS-scoped runtime role) — see the comment above
+  ENCRYPTION_KEY: "REPLACE_ME" # 32 random bytes, base64 — generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  AUTH_SECRET: "REPLACE_ME" # at least 32 random characters — same generation command as ENCRYPTION_KEY
+  ANTHROPIC_API_KEY: "REPLACE_ME" # optional — leave as a real key only if the AI advisor (/advisor) is enabled for this deployment; every other feature works without it
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pfw-app
+  namespace: pfw-app
+  labels:
+    app.kubernetes.io/name: pfw
+spec:
+  # 3, not 1: the whole point of a k8s Deployment over a single container
+  # is surviving a node loss / rolling update with zero downtime — this
+  # app is fully stateless at the process level (every real state lives
+  # in Postgres, per this app's own DAL/RLS architecture), so horizontal
+  # replication needs no session-affinity or shared-disk consideration
+  # at all.
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pfw
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # never drop below `replicas` during a rollout
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pfw
+    spec:
+      serviceAccountName: pfw-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Matches the Dockerfile's own fixed `nextjs` user (uid/gid 1001,
+        # chosen there specifically so this value isn't a guess).
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas across zones/nodes — a single-AZ/node loss should
+      # never take down every replica at once. `preferred`, not
+      # `required`: a smaller cluster (e.g. a single-zone dev/staging
+      # deployment of this same manifest) should still schedule
+      # successfully rather than have pods stuck Pending.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: pfw
+      containers:
+        - name: pfw-app
+          image: "${PFW_APP_IMAGE}" # e.g. registry.internal/pfw/app:1.0.0 — built from this repo's root Dockerfile
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: pfw-app-secrets, key: DATABASE_URL }
+            - name: APP_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: pfw-app-secrets, key: APP_DATABASE_URL }
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: pfw-app-secrets, key: ENCRYPTION_KEY }
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef: { name: pfw-app-secrets, key: AUTH_SECRET }
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef: { name: pfw-app-secrets, key: ANTHROPIC_API_KEY }
+          # Liveness vs. readiness deliberately point at TWO DIFFERENT
+          # routes with two different failure semantics — see
+          # src/app/api/health/route.ts's and .../ready/route.ts's own
+          # doc comments for why coupling liveness to a Postgres check
+          # would turn a transient DB blip into a full pod-restart storm.
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /api/health/ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # `readOnlyRootFilesystem: true` above means Next's standalone
+          # server needs explicit writable locations for its own runtime
+          # writes — two small `emptyDir`s, neither persisted nor shared
+          # across pods (nothing written to either is meant to survive a
+          # restart — this app's real state is always Postgres):
+          #   - /tmp: general scratch space.
+          #   - /app/.next/cache: next.config.ts sets no custom
+          #     `cacheHandler`, so any route opting into `'use cache'`
+          #     (AGENTS.md §3c — most of this app's shell is forced
+          #     dynamic, but individual subtrees can still opt back in)
+          #     falls back to Next's DEFAULT filesystem-backed cache
+          #     handler, which writes here at runtime, not just at build
+          #     time. Mounted writable specifically so `readOnlyRootFilesystem`
+          #     above can stay true without silently breaking that path —
+          #     losing this cache on a pod restart is the correct,
+          #     harmless behavior for a cache, never a correctness issue.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 512Mi

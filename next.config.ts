@@ -35,6 +35,20 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   cacheComponents: true,
   poweredByHeader: false,
+  // Docker production builds (Dockerfile, root): traces only the files
+  // each route actually needs into `.next/standalone`, which is what
+  // lets the runner stage skip installing `node_modules` at all. Native-
+  // binary packages this app depends on at runtime (`argon2`, used by
+  // Argon2id password hashing, §3ff; `@prisma/client`/`pg`, the database
+  // driver) do NOT need a manual `serverExternalPackages` entry here —
+  // verified against this exact installed Next version's own docs
+  // (node_modules/next/dist/docs/.../serverExternalPackages.md): all
+  // three are already in Next's built-in auto-external-packages list,
+  // which is specifically what makes standalone tracing correctly copy
+  // their native `.node` binaries (loaded via non-statically-analyzable
+  // `require()` calls that a naive file tracer would otherwise miss)
+  // instead of trying to bundle them.
+  output: "standalone",
   async headers() {
     return [
       {

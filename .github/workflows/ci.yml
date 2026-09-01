@@ -91,6 +91,39 @@ jobs:
       - name: Run full Vitest suite
         run: npm run test
 
+      # Punch List Phase 4 (Tier 1 deployment/pipeline prep): a real
+      # `next build` now GATES this job — previously `npm run check`
+      # (typecheck+lint+test) was the only thing CI ran, so a build-time-
+      # only failure (a route that only breaks under `next build`'s own
+      # page-data-collection step, not under `tsc`/Vitest — this exact
+      # pass found one for real: AUTH_SECRET needing to be read eagerly
+      # at module load by src/server/auth/auth.ts, only surfacing here,
+      # never in a plain typecheck or unit test) could reach `main`
+      # undetected. AUTH_SECRET/ENCRYPTION_KEY/DATABASE_URL/
+      # APP_DATABASE_URL are already set at the workflow level above, so
+      # no extra env wiring is needed for this step. This also produces
+      # the root Dockerfile's exact build output shape (`output:
+      # "standalone"`, next.config.ts) — a green build here is real
+      # evidence the same `docker build` in a future image-publish step
+      # would succeed too, not a separate, unverified code path.
+      - name: Build (production)
+        run: npm run build
+
+      # Scans the JUST-BUILT `.next/static/` output (the ONLY thing this
+      # workflow's ephemeral job env vars are used for beyond the tests
+      # above) for a literal occurrence of every secret's real current
+      # value — see scripts/check-no-secrets-in-client-bundle.ts's own
+      # doc comment for why a source-level name-regex guard
+      # (tests/guards/no-public-secrets.test.ts, already part of `npm run
+      # test` above) structurally can't catch what this catches (e.g. a
+      # hardcoded copy-paste of a real key into client code). Previously
+      # a manual/opt-in script (docs/SECURITY-CHECKLIST.md item 41, held
+      # at 🟡 for exactly this reason) — now runs on every push/PR,
+      # closing that gap for real rather than relying on a human
+      # remembering to run it locally before a release.
+      - name: Verify no secrets leaked into the client bundle
+        run: npm run verify:client-bundle-secrets
+
   gitleaks:
     name: Security · Gitleaks (credential leak scan)
     runs-on: ubuntu-latest

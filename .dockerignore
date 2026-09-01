@@ -1,0 +1,52 @@
+# Keeps the Docker build context small and prevents host-machine state
+# (a local .env, node_modules, prior build output) from ever being copied
+# into an image layer — the Dockerfile's `deps`/`builder` stages install
+# and build fresh, inside the container, every time.
+node_modules
+.next
+out
+build
+coverage
+reports
+.stryker-tmp
+
+# Never ship a real secret into a build context/layer — local dev's own
+# .env is exactly the kind of file that must never end up baked into an
+# image (see docs on why env.ts's lazy validation means the build doesn't
+# need one at all).
+.env
+.env.*
+!.env.example
+
+# VCS / editor / OS noise
+.git
+.gitignore
+.dockerignore
+.vscode
+.idea
+.DS_Store
+
+# Test/tooling artifacts never needed to build or run the production server
+tests
+test-results
+playwright-report
+blob-report
+playwright/.cache
+*.test.ts
+*.test.tsx
+playwright.config.ts
+stryker.config.json
+vitest.config.mts
+
+# Docs, infra manifests, and the Arduino/Python side-projects — none of
+# them are inputs to `next build`.
+docs
+k8s
+deploy
+sidecar
+arduino
+*.md
+
+# Prisma's own generated output is regenerated fresh in the builder stage
+# (`npx prisma generate`) — never copy a host-machine copy in.
+src/generated

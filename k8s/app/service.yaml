@@ -1,0 +1,22 @@
+# ClusterIP Service fronting the Deployment's pods (deployment.yaml) —
+# internal-only on purpose; public exposure is ingress.yaml's job, not
+# this Service's `type`. Selector matches deployment.yaml's pod template
+# labels exactly (`app.kubernetes.io/name: pfw`) — the same label the
+# pre-existing k8s/db/postgres-cluster.yaml NetworkPolicy already expects
+# from this app (see deployment.yaml's own header comment).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pfw-app
+  namespace: pfw-app
+  labels:
+    app.kubernetes.io/name: pfw
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pfw
+  ports:
+    - name: http
+      port: 80
+      targetPort: http # named port from deployment.yaml's containerPort, not a hardcoded 3000 — resilient to that value changing in only one place
+      protocol: TCP
