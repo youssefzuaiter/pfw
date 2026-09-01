@@ -16,8 +16,14 @@ import { auth } from "./server/auth/auth";
  * person than this app's own authenticated user. Gating those behind a
  * login this app has no way to hand a beneficiary would break an
  * already-shipped, already-verified feature.
+ *
+ * `/api/health` and `/api/health/ready` (Punch List Phase 4, the k8s
+ * deployment prep pass): a kubelet liveness/readiness probe carries no
+ * session and must never be redirected to `/login` — a probe that
+ * receives a 307 instead of a 200 reads as "unhealthy" to Kubernetes,
+ * which would then repeatedly restart an app pod that was actually fine.
  */
-const PUBLIC_EXACT_PATHS = new Set(["/login", "/register", "/welcome"]);
+const PUBLIC_EXACT_PATHS = new Set(["/login", "/register", "/welcome", "/api/health", "/api/health/ready"]);
 const PUBLIC_PATH_PREFIXES = ["/api/auth/", "/vault/recover/", "/api/dead-mans-switch/recover/"];
 
 function isPublicPath(pathname: string): boolean {

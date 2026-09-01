@@ -341,6 +341,46 @@ spec:
         superuser: false
         createdb: false
         createrole: false
+      # pfw_runtime (Punch List Phase 4, k8s app-deployment prep pass) —
+      # the restricted role prisma/migrations/*_rls_and_runtime_role
+      # creates, closing that migration's own long-standing, explicitly-
+      # documented TODO: "the password below is a throwaway local
+      # credential... A Tier 3 deployment manages this role via the
+      # hosting provider's secret management, not a checked-in
+      # migration." Declaring it here, ahead of that migration ever
+      # running against THIS cluster, is what actually satisfies that —
+      # CNPG creates the role (and generates+owns a real random password
+      # in the `pfw-postgres-runtime` Secret this entry names) at cluster
+      # reconciliation time, BEFORE the gated migration workflow
+      # (.github/workflows/deploy-migrations.yml) ever runs `prisma
+      # migrate deploy` against this cluster. The migration's own `CREATE
+      # ROLE ... IF NOT EXISTS` guard then finds the role already present
+      # and skips its hardcoded-password branch entirely — the dev-only
+      # password never gets applied here. Local dev (compose.yaml, no
+      # CNPG) is completely unaffected: that migration's hardcoded
+      # password remains exactly what a fresh local Postgres actually
+      # uses, same throwaway-credential treatment `pfw_app`'s local
+      # password in compose.yaml already has.
+      #
+      # NOT independently verified against a live CNPG cluster in this
+      # session (same honesty this file's own pgvector-image note already
+      # applies elsewhere) — based on CNPG's documented role-management
+      # behavior (a `managed.roles` entry with an explicit `passwordSecret`
+      # name gets that Secret created and kept in sync by the operator if
+      # it doesn't already exist), not verified live. Confirm the
+      # `pfw-postgres-runtime` Secret actually appears with `username`/
+      # `password` keys after applying this manifest, before wiring
+      # k8s/app/deployment.yaml's Secret reference against it in a real
+      # cluster.
+      - name: pfw_runtime
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        createrole: false
+        bypassrls: false
+        passwordSecret:
+          name: pfw-postgres-runtime
 
   monitoring:
     enablePodMonitor: false # flip to true once a Prometheus Operator PodMonitor CRD is confirmed installed
