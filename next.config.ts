@@ -48,7 +48,18 @@ const nextConfig: NextConfig = {
   // their native `.node` binaries (loaded via non-statically-analyzable
   // `require()` calls that a naive file tracer would otherwise miss)
   // instead of trying to bundle them.
-  output: "standalone",
+  //
+  // Deliberately OFF when building on Vercel (`process.env.VERCEL`,
+  // Vercel's own always-set build-env flag): standalone mode replaces
+  // Next's normal `.next/next-server.js.nft.json` trace output with the
+  // self-contained `.next/standalone/` directory instead — verified live
+  // against a real Vercel build, which failed at its own
+  // "onBuildComplete" step with `ENOENT .next/next-server.js.nft.json`
+  // once `next build` finished successfully, because Vercel's builder
+  // (`@vercel/next`) does its own function bundling from that trace file
+  // and never looks for `.next/standalone` at all — the two output modes
+  // are for two different deployment targets, not layerable.
+  output: process.env.VERCEL ? undefined : "standalone",
   async headers() {
     return [
       {
