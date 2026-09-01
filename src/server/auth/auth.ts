@@ -75,7 +75,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   // one of a short list of platforms (Vercel etc.) it auto-recognizes as
   // safe — which is every self-hosted deployment behind a reverse proxy,
   // including the Kubernetes Ingress this app now ships
-  // (k8s/app/ingress.yaml). Auth.js's own installed-package doc comment
+  // (future-infra/k8s/app/ingress.yaml). Auth.js's own installed-package doc comment
   // for this option says exactly what it needs and why: "Auth.js relies
   // on the incoming request's `host` header to function correctly. For
   // this reason this property needs to be set to `true` ... make sure

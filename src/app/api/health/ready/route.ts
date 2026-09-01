@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { checkDatabaseConnectivity } from "../../../../server/dal/health";
 
 /**
- * Readiness probe (k8s/app/deployment.yaml) — see `/api/health/route.ts`'s
+ * Readiness probe (future-infra/k8s/app/deployment.yaml) — see `/api/health/route.ts`'s
  * own doc comment for why this is a SEPARATE endpoint from liveness, not
  * the same one reused: this one deliberately DOES check Postgres
  * connectivity (a plain `SELECT 1`, via the app's real runtime client —

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 /**
- * Liveness probe (k8s/app/deployment.yaml) — deliberately checks NOTHING
+ * Liveness probe (future-infra/k8s/app/deployment.yaml) — deliberately checks NOTHING
  * beyond "this Node process can respond to an HTTP request at all," no
  * database touch. A liveness probe's whole job is telling the kubelet
  * whether to RESTART the pod; coupling it to Postgres reachability would
