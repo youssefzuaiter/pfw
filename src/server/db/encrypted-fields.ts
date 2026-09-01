@@ -23,6 +23,13 @@ import { decryptField, encryptField } from "../crypto/field-encryption";
 const ENCRYPTED_FIELDS = {
   bankAccount: ["last4"],
   notableTransaction: ["description"],
+  // A TOTP secret (Punch List Tier 2, item 3) is exactly as sensitive as a
+  // password — the same at-rest protection `passwordHash`'s Argon2id
+  // hashing gives credentials, applied here to the shared secret itself
+  // (which, unlike a password hash, is a genuinely reversible value an
+  // attacker with read access to the raw table could otherwise use
+  // directly to generate valid codes).
+  user: ["totpSecret"],
 } as const;
 
 type EncryptedModelKey = keyof typeof ENCRYPTED_FIELDS;
@@ -99,6 +106,7 @@ export function withEncryptedFields(client: PrismaClient) {
     query: {
       bankAccount: { $allOperations: makeAllOperationsHandler("bankAccount") },
       notableTransaction: { $allOperations: makeAllOperationsHandler("notableTransaction") },
+      user: { $allOperations: makeAllOperationsHandler("user") },
     },
   });
 }

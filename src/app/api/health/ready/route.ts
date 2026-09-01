@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../server/db/client";
+import { checkDatabaseConnectivity } from "../../../../server/dal/health";
 
 /**
  * Readiness probe (k8s/app/deployment.yaml) — see `/api/health/route.ts`'s
@@ -21,7 +21,7 @@ import { prisma } from "../../../../server/db/client";
  */
 export async function GET() {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await checkDatabaseConnectivity();
     return NextResponse.json({ status: "ok" });
   } catch (error) {
     console.error("GET /api/health/ready: database check failed", error);

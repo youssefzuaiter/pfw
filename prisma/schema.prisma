@@ -184,9 +184,9 @@ enum DeadMansSwitchStatus {
 /// existed). This app has no passphrase-rotation flow: once set up, these
 /// three columns are immutable — see `setupZkVault`'s doc comment.
 model User {
-  id                 String   @id @default(cuid())
-  email              String   @unique
-  displayName        String
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  displayName          String
   /// Argon2id hash (AGENTS.md §3ff) — null has a real, load-bearing
   /// meaning: it's what identifies the ORIGINAL seeded demo user row as
   /// still unclaimed. Every row created by registerUser() gets a real
@@ -194,13 +194,52 @@ model User {
   /// script's row, nobody has registered yet" — that's the entire
   /// mechanism behind "the first person to register inherits the demo
   /// data" rather than a separate migration flag or feature switch.
-  passwordHash       String?
-  zkSalt             String?
-  zkKdfIterations    Int?
-  zkCanaryCiphertext String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  passwordHash         String?
+  zkSalt               String?
+  zkKdfIterations      Int?
+  zkCanaryCiphertext   String?
+  /// Server-side JWT revocation (Punch List Tier 2, item 2). Bumped by
+  /// `bumpTokenVersion()` (src/server/auth/token-version.ts) — currently
+  /// wired to the explicit "Sign out of all sessions" settings action and
+  /// to disabling TOTP MFA. Auth.js's `jwt()` callback
+  /// (src/server/auth/auth.ts) re-checks this against the value baked
+  /// into each session token on every request that isn't a fresh sign-in;
+  /// a mismatch means the token was issued before the most recent bump,
+  /// and the callback returns `null` to clear that session. Starts at 1
+  /// (not 0 — an explicit choice so a genuinely unset/zero-valued
+  /// integer, e.g. from a raw SQL insert that forgot this column, reads
+  /// as suspicious rather than as a normal starting state), never
+  /// decremented — only ever compared for equality, never ordered.
+  tokenVersion         Int      @default(1)
+  /// AES-256-GCM ciphertext at rest (added to encrypted-fields.ts's
+  /// ENCRYPTED_FIELDS, same codec as BankAccount.last4/
+  /// NotableTransaction.description) — a TOTP seed is exactly as
+  /// sensitive as a password and gets the same at-rest protection. Set
+  /// (pending) the moment setup begins, before `totpEnabled` flips to
+  /// true — see src/server/dal/mfa.ts's own doc comment for why a
+  /// "pending, unconfirmed" state is real and load-bearing here, the same
+  /// way `passwordHash: null` is load-bearing above.
+  totpSecret           String?
+  /// True only once the user has proven possession of an authenticator
+  /// app by submitting one correct code against `totpSecret`
+  /// (`confirmTotpSetup`) — never flipped true at the moment a secret is
+  /// merely generated, which would lock a user out if they abandoned
+  /// setup before finishing it.
+  totpEnabled          Boolean  @default(false)
+  /// RFC 6238 replay protection: the otplib time-step index of the last
+  /// TOTP code this account actually accepted (login or setup
+  /// confirmation) — a subsequent `verify()` call passes this back as
+  /// `afterTimeStep` so the exact same 30-second code can never be
+  /// accepted twice, closing an otherwise-real window for a
+  /// shoulder-surfed or intercepted code. Not part of RFC 6238 itself,
+  /// which doesn't mandate this — otplib's own VerifyResult exposes
+  /// exactly what's needed for it "for free," so there's no reason not
+  /// to.
+  totpLastUsedTimeStep Int?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
+  settings                 UserSettings?
   bankAccounts             BankAccount[]
   categories               Category[]
   transactions             NotableTransaction[]
@@ -226,6 +265,93 @@ model User {
   emergencyDocuments       EmergencyDocument[]
   recoveryShareSubmissions RecoveryShareSubmission[]
   cryptoWallets            CryptoWallet[]
+}
+
+/// Cost-basis method for the tax simulator's saved default (mirrors the
+/// TS union type `src/lib/tax-lots.ts` already uses at runtime — that
+/// module stays a pure `src/lib/` engine with no Prisma dependency,
+/// AGENTS.md §3r; this enum exists only so `UserSettings` can persist a
+/// choice, never imported by tax-lots.ts itself).
+enum CostBasisMethod {
+  FIFO
+  LIFO
+}
+
+/// Tax jurisdiction for the tax simulator's saved default — mirrors
+/// `TaxJurisdiction` in src/lib/tax-rules.ts (§3r) for the same reason
+/// CostBasisMethod does above.
+enum TaxJurisdiction {
+  US
+  DE
+  INTL
+}
+
+/// Mirrors `CurrencyDisplayMode` (src/lib/hooks/use-currency-display-mode.ts,
+/// Punch List Phase 3) — that hook stays localStorage-backed and
+/// per-browser (a deliberate choice, see its own doc comment, to avoid
+/// the ThemeToggle-class hydration-mismatch bug a server-synced value
+/// would reintroduce); this column is the SAVED preference a settings
+/// screen can read/write, not a second live source of truth the hook
+/// itself consults.
+enum CurrencyDisplayMode {
+  NATIVE
+  ILS
+}
+
+/// Global per-user preferences and default assumptions (Punch List Tier
+/// 2, item 1) — one row per user, created lazily on first read
+/// (`getOrCreateUserSettings`, src/server/dal/user-settings.ts) rather
+/// than at registration, so every existing user transparently gets
+/// sensible defaults with no backfill migration needed.
+///
+/// Deliberately does NOT duplicate `ManualAsset.liquidityTier` — that
+/// column remains the sole source of truth for an EXISTING asset's tier
+/// (AGENTS.md §3v); mirroring its value here would violate the
+/// derived-truth law (§1) the moment the two ever disagreed.
+/// `defaultManualAssetLiquidityTier` below is a CREATION-TIME default
+/// only, applied when a new ambiguous-type (OTHER/CRYPTO) asset is added
+/// with no explicit tier chosen — a genuinely new preference, not a
+/// mirror of anything that already exists.
+///
+/// Also deliberately excludes a "current age" field for the Monte Carlo
+/// widget: this app never stores a date of birth (§1 law #6 — "Never
+/// store: ... DOB"), and §3n already flagged age as necessarily a
+/// per-request slider input for exactly that reason. Adding it here
+/// would silently reopen a privacy decision this app already made on
+/// purpose.
+model UserSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Mirrors `GET /api/tax/simulate`'s own query-param defaults (§3r) —
+  /// this row is the SAVED version of those assumptions; the route still
+  /// accepts an explicit per-request override, unaffected by this table.
+  taxJurisdiction              TaxJurisdiction @default(US)
+  taxMethod                    CostBasisMethod @default(FIFO)
+  taxOtherOrdinaryIncomeAgorot BigInt          @default(0)
+  taxIncludeNiit               Boolean         @default(false)
+  /// A 0-1 FRACTION, not a 0-100 percentage — matches `GET
+  /// /api/tax/simulate`'s existing `churchTaxRate` query param exactly
+  /// (§3r: `z.coerce.number().min(0).max(1)`), which this column mirrors.
+  taxChurchTaxRate             Float           @default(0)
+  taxAnnualAllowanceAgorot     BigInt?
+  /// Also a 0-1 fraction, despite the name — mirrors the tax-simulate
+  /// route's own `flatRatePercent` param name exactly, so the two stay
+  /// trivially grep-matchable as the same concept.
+  taxFlatRatePercent           Float?
+
+  /// Mirrors the Monte Carlo widget's own slider defaults (§3n) —
+  /// `currentAge` deliberately excluded, see the model comment above.
+  monteCarloRetirementAge           Int     @default(65)
+  monteCarloTargetAnnualSpendAgorot BigInt?
+  monteCarloVolatilityMultiplier    Float   @default(1)
+
+  defaultManualAssetLiquidityTier LiquidityTier?
+  preferredCurrencyDisplay        CurrencyDisplayMode @default(ILS)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// Cryptographic Dead Man's Switch (AGENTS.md §3t) — one row per user,

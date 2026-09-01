@@ -1,8 +1,33 @@
 import "server-only";
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { getAuthSecret } from "../env";
-import { verifyCredentials } from "./credentials";
+import { checkTotpChallenge, verifyCredentials } from "./credentials";
+import { getCurrentTokenVersion } from "./token-version";
+
+/**
+ * TOTP MFA (Punch List Tier 2, item 3) — two distinct `CredentialsSignin`
+ * subclasses, not one generic error, because the client needs to tell them
+ * apart: "required" means "show the code field," "invalid" means "that
+ * code was wrong, let them retry." Both are thrown only AFTER
+ * `verifyCredentials` already confirmed the password (see
+ * `credentials.ts`'s `checkTotpChallenge` doc comment for why that
+ * ordering matters) — subclassing `CredentialsSignin` and setting `code`
+ * is the officially documented way to surface a specific reason from
+ * `authorize()`; verified directly against the installed `@auth/core`
+ * source (`errors.js`/`index.js`) that this `code` is what actually
+ * reaches the client via `next-auth/react`'s `signIn(..., {redirect:
+ * false})` result (`result.code`), not assumed from the beta docs alone —
+ * the same "check the real installed API before relying on it" discipline
+ * this app's history already applies elsewhere (onnxruntime-web variants,
+ * the otplib v13 rewrite).
+ */
+class TotpRequiredError extends CredentialsSignin {
+  code = "totp_required";
+}
+class TotpInvalidError extends CredentialsSignin {
+  code = "totp_invalid";
+}
 
 /**
  * Auth.js v5 config (AGENTS.md §3ff) — Credentials provider (email +
@@ -70,6 +95,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        // Optional — the LoginForm only sends this on a second submission,
+        // once the first one came back with the "totp_required" code
+        // (Punch List Tier 2, item 3). Absent for every account that
+        // hasn't enabled MFA, and for the first submission of every login.
+        totpCode: { label: "Authentication code", type: "text" },
       },
       async authorize(credentials) {
         const email = credentials?.email;
@@ -79,17 +109,60 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const user = await verifyCredentials(email, password);
         if (!user) return null;
 
-        return { id: user.id, email: user.email, name: user.displayName };
+        const totpCode = typeof credentials?.totpCode === "string" ? credentials.totpCode : undefined;
+        const totpResult = await checkTotpChallenge(user.id, totpCode);
+        if (totpResult === "required") throw new TotpRequiredError();
+        if (totpResult === "invalid") throw new TotpInvalidError();
+        // "not_required" (MFA never enabled) or "valid" (code confirmed)
+        // both fall through to a normal successful sign-in.
+
+        return { id: user.id, email: user.email, name: user.displayName, tokenVersion: user.tokenVersion };
       },
     }),
   ],
   callbacks: {
-    // The JWT only ever carries the user id — never re-derive display
-    // data from it; every real page/route still calls getCurrentUser(),
-    // which reads the CURRENT row from the database, so a changed
-    // displayName/email is never stale behind an old token.
-    jwt({ token, user }) {
-      if (user) token.id = user.id;
+    // The JWT only ever carries the user id (+ tokenVersion, below) —
+    // never re-derive display data from it; every real page/route still
+    // calls getCurrentUser(), which reads the CURRENT row from the
+    // database, so a changed displayName/email is never stale behind an
+    // old token.
+    async jwt({ token, user }) {
+      if (user) {
+        // Fresh sign-in — `user` is exactly what `authorize()` returned
+        // above, tokenVersion included (src/types/next-auth.d.ts). The
+        // `?? 1` fallback should never actually trigger (verifyCredentials
+        // always reads a real stored value, defaulted to 1 by the schema
+        // itself), but matches that same starting convention rather than
+        // an inconsistent magic 0 if it ever did.
+        token.id = user.id;
+        token.tokenVersion = user.tokenVersion ?? 1;
+        return token;
+      }
+
+      if (typeof token.id !== "string") return null;
+
+      // Server-side JWT revocation (Punch List Tier 2, item 2): re-check
+      // the CURRENT tokenVersion stored for this user on every request
+      // that isn't a fresh sign-in. A mismatch means
+      // src/server/auth/token-version.ts's bumpTokenVersion() ran since
+      // THIS specific token was issued (the "Sign out of all sessions"
+      // settings action, or disabling TOTP MFA) — returning `null` here
+      // is what actually invalidates the session for JWT-strategy
+      // sessions: verified directly against the installed
+      // `@auth/core/lib/actions/session.js` (not assumed from docs) that
+      // when `jwt()` returns `null`, the session cookie is cleared
+      // instead of re-signed, and the response body stays `null`.
+      //
+      // Real, deliberate one-time transition effect, not a bug: every
+      // session that was already valid BEFORE this feature shipped
+      // carries no tokenVersion at all (`token.tokenVersion === undefined`,
+      // which never strictly matches a real stored integer), so every
+      // pre-existing session is invalidated the first time this runs
+      // post-deploy — a one-time hard cutover, not a recurring cost.
+      const currentVersion = await getCurrentTokenVersion(token.id);
+      if (currentVersion === null || currentVersion !== token.tokenVersion) {
+        return null;
+      }
       return token;
     },
     session({ session, token }) {

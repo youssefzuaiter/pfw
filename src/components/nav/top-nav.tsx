@@ -37,6 +37,12 @@ export function TopNav() {
             );
           })}
         </ul>
+        <Link
+          href="/settings"
+          className="rounded-md px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Settings
+        </Link>
         <SignOutButton />
         <ThemeToggle />
       </nav>

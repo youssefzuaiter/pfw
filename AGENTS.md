@@ -4330,6 +4330,222 @@ been produced.
   confirmed the three touched pages and the tax-simulation API route all
   compile and respond with the expected auth-gated status codes.
 
+## 3hh. Punch List Tier 2: Global User Settings, JWT Revocation, TOTP MFA (ad hoc)
+
+Explicit user request, three items, built in two passes. **The first
+pass had no live Postgres access** (this session's Docker/`.env` access
+was blocked by the harness's own permission classifier) — schema/DAL/
+routes/UI all typechecked and linted clean and every DB-independent unit
+test passed, but the migration was never applied and nothing was
+verified against a real database. **The user then confirmed the working
+tree was still intact and asked to proceed for real**, at which point
+Docker access worked — this section now reflects the SECOND pass's real
+verification, not the first pass's caveats. One substantive change from
+the first draft, per explicit user instruction: `tokenVersion` starts at
+1, not 0 (see that column's own updated schema doc comment for why).
+
+- **1. `UserSettings`** (new model, 1:1 with `User`, migration
+  `20260903130000_user_settings_mfa_token_version`, hand-written — same
+  established workaround as every migration since §3p, since prior
+  hand-edited migrations break `prisma migrate dev`'s shadow-database
+  replay): saved defaults for the tax simulator (§3r) and Monte Carlo
+  widget (§3n), a default liquidity tier for future ambiguous-type
+  (OTHER/CRYPTO) manual assets, and the currency-display preference
+  (§3gg's Currency UI Toggle). Deliberately does NOT duplicate
+  `ManualAsset.liquidityTier` — that column stays the sole source of
+  truth for an EXISTING asset's tier (§3v); this is a creation-time
+  default only. Also deliberately excludes a "current age" field for
+  Monte Carlo — §3n already established that age has no DAL source
+  because this app never stores a DOB (§1 law #6), and adding it here
+  would silently reopen that decision. Created lazily on first read
+  (`getOrCreateUserSettings`, `src/server/dal/user-settings.ts`) via
+  `upsert`, not at registration — every existing user, seeded rows
+  included, transparently gets the schema's own column defaults with no
+  backfill needed. `GET`/`PATCH /api/user-settings`: GET deliberately
+  skips `guardMutation`'s Origin check (same reasoning as
+  `GET /api/tax/simulate`/`GET /api/analytics/monte-carlo`, Section 2.4)
+  but keeps identity+rate-limiting directly; PATCH is a real mutation and
+  goes through the normal preamble. Monetary fields use the same signed-
+  shekel-string wire convention as the tax-simulate/monte-carlo/goals
+  routes. `PreferencesForm` (`src/app/settings/_components/`) also
+  pushes a saved `preferredCurrencyDisplay` through to the localStorage-
+  backed `useCurrencyDisplayMode` hook on save — without that, saving
+  here would change a database row no screen actually reads, exactly the
+  kind of inert half-wired plumbing this app's conventions warn against;
+  the two stay independent sources otherwise, per that hook's own doc
+  comment about why it isn't server-synced on every read.
+- **2. Server-side JWT revocation**: `User.tokenVersion Int @default(1)` —
+  starts at 1, not 0, a deliberate user-specified choice so a genuinely
+  unset/zero-valued integer (e.g. from a raw SQL insert that forgot this
+  column) reads as suspicious rather than as this column's own normal
+  starting state; the comparison itself is pure equality, never ordering,
+  so the actual starting number carries no other semantic weight.
+  `auth.ts`'s `jwt()` callback now re-checks the CURRENT stored
+  tokenVersion (via `src/server/auth/token-version.ts`'s
+  `getCurrentTokenVersion`, a plain `withUserScope` read — NOT a fourth
+  admin-client bootstrap exception, since by the time this callback runs
+  on a non-sign-in request the user id is already cryptographically
+  trusted from inside the signed session token, unlike
+  `current-user.ts`'s genuine bootstrap problem) against the value baked
+  into the token at sign-in; a mismatch returns `null`, which — verified
+  directly against the installed `@auth/core/lib/actions/session.js`
+  source, not assumed from the beta docs — is what actually clears a
+  JWT-strategy session's cookie instead of re-signing it. A real,
+  deliberate one-time transition effect: every session valid BEFORE this
+  shipped carries no `tokenVersion` at all, which never strictly matches
+  a real stored integer, so every pre-existing session is invalidated
+  the first time this runs post-deploy — a one-time hard cutover, not a
+  recurring cost. `bumpTokenVersion()` is wired to two real, callable
+  actions: `POST /api/auth/revoke-sessions` (the settings page's "Sign
+  out of all sessions" button — bumps for EVERY session including the
+  caller's own, so the client immediately `signOut()`s and redirects
+  rather than relying on the mismatch check to catch up) and
+  `disableTotp()` below (a real security-posture downgrade, worth
+  forcing every OTHER outstanding session to re-authenticate over).
+  `TotpRequiredError`/`TotpInvalidError` extend `CredentialsSignin`
+  (Auth.js's own documented mechanism for surfacing a specific reason
+  from `authorize()`) — verified directly against `@auth/core`'s
+  `errors.js`/`index.js` that the subclass's `code` property is what
+  actually reaches `next-auth/react`'s `signIn(..., {redirect:false})`
+  result as `result.code`, and that `X-Auth-Return-Redirect` (which the
+  client SDK always sets) routes through the JSON-response path
+  regardless of the `redirect` option, not the HTTP-redirect path — none
+  of this assumed from the beta docs alone, matching this app's
+  established "verify a beta/unfamiliar library's real API before
+  relying on it" discipline (next-auth's own `trustHost` finding §3z/
+  §3ff, onnxruntime-web's variant mismatch §3y).
+- **3. TOTP MFA**: `otplib` v13 — a genuinely different API shape from
+  older `authenticator`-singleton majors, checked directly against the
+  installed version's own `.d.ts` files before writing anything (same
+  discipline as above). `User` gained `totpSecret` (AES-256-GCM
+  encrypted at rest — added to `encrypted-fields.ts`'s `ENCRYPTED_FIELDS`
+  under a new `user` key, the same codec `BankAccount.last4`/
+  `NotableTransaction.description` already use, since a TOTP seed is
+  exactly as sensitive as a password), `totpEnabled` (only flips true
+  once `confirmTotpSetup` proves possession of a working authenticator
+  app — never at the moment a secret is merely generated, which would
+  risk locking a user out mid-setup), and `totpLastUsedTimeStep` (real
+  RFC-6238-adjacent replay protection: otplib's own `VerifyResult`
+  exposes exactly what's needed to reject the identical 30-second code
+  being accepted twice, which isn't mandated by the RFC but is cheap
+  given the library already surfaces it). `src/server/auth/totp.ts`
+  wraps the `OTP` class (secret generation, `otpauth://` URI building,
+  verification with ±1 step clock-drift tolerance); `credentials.ts`'s
+  `checkTotpChallenge` runs the challenge INSIDE `authorize()`, always
+  AFTER `verifyCredentials` already confirmed the password — so a wrong
+  password never reveals whether an account has MFA enabled, while a
+  correct password legitimately gets a distinct "enter your code" vs.
+  "that code was wrong" response (normal 2FA UX, not an enumeration
+  risk, since password knowledge was already proven). `POST /api/mfa/
+  {setup,confirm,disable}`: setup returns a server-generated QR code
+  (via the `qrcode` package's `toDataURL`, rendered directly as
+  `<img src>`, no client-side QR-rendering dependency needed) alongside
+  the raw secret for manual entry; disable requires re-entering the
+  current password (`verifyCredentials` reused) before clearing state
+  and bumping tokenVersion. `LoginForm` gained a second-step code field,
+  revealed only once `result.code === "totp_required"` comes back from
+  the first submission.
+- **Settings UI**: `/settings` (new page, cross-linked from `TopNav`/
+  `MobileNav` next to `SignOutButton` — account-level functionality, same
+  placement reasoning as sign-out itself — deliberately not added to
+  `PRIMARY_NAV_ITEMS`, same "sub-view, not one of the spec's 9 primary
+  destinations" pattern as `/vault`/`/analytics`/`/trading/portfolio`)
+  hosts `MfaPanel`, `RevokeSessionsButton`, and `PreferencesForm`. Hit
+  the SAME documented `focus-visible` guard trap yet again, in a new
+  shape not previously recorded even though the underlying cause is the
+  §3d one: this component's OWN doc comment used the literal string
+  `` `<button>` `` while explaining the trap itself — the guard's regex
+  matched that prose the same way it matched real JSX, caught
+  immediately by `npm run test:unit`, fixed by rewording to "button or
+  anchor element" (the same fix every prior instance of this shape used).
+- **`src/server/dal/health.ts`** (new, unrelated to the three items
+  above but found while running the full suite this pass's own
+  verification required): `GET /api/health/ready` (added earlier this
+  session alongside the k8s manifests, §-untitled infra commit) imported
+  `prisma` directly instead of going through the DAL — a real,
+  pre-existing violation of this app's own `dal-boundary` guard test that
+  had never actually been run since that route was written. Fixed by
+  extracting the one `SELECT 1` into a proper DAL function; a health
+  check is exactly the kind of thing that's tempting to special-case as
+  "too trivial to need the DAL," which is precisely what that guard test
+  exists to catch.
+- **Testing**: `src/server/auth/totp.test.ts` (6 cases, unit — genuinely
+  run in this session, not just written: secret shape, otpauth URI
+  shape, a real generate-then-verify round trip via the installed
+  `OTP` class, malformed-code rejection, wrong-secret rejection, and the
+  replay-protection mechanism itself). `tests/integration/
+  user-settings-mfa-token-version.test.ts` (18 cases: UserSettings
+  defaults/partial-update/IDOR, tokenVersion bump/read/IDOR/nonexistent-
+  user, and the full TOTP lifecycle including the wrong-code and replay
+  cases) — written to the exact same pattern every other integration
+  suite in this history follows (a dedicated fresh test user per
+  mutation-sequence-sensitive case, not one shared user across
+  order-dependent assertions — a real bug in this test's OWN first draft,
+  caught and fixed before ever running it: reusing one user across a
+  "confirm succeeds" test followed by a "wrong code leaves MFA
+  unconfirmed" test would have made the second assertion false, since
+  the account was already enabled by the first).
+- **Verified live in the second pass, not just by test**: `prisma
+  migrate status` confirmed exactly one pending migration before
+  applying; `npm run db:migrate:deploy` applied it cleanly against the
+  real local `pfw_local` database (`migrate dev` not used, same
+  established reason as every migration since §3p). Confirmed via `psql`
+  directly: `User.tokenVersion` is `integer not null default 1` exactly;
+  `UserSettings` has RLS force-enabled with its `tenant_isolation` policy
+  live, and `pfw_runtime` already holds full INSERT/SELECT/UPDATE/DELETE
+  on it via the pre-existing `ALTER DEFAULT PRIVILEGES` blanket grant
+  (§3k's precedent confirmed again, not just assumed). The full
+  integration suite (`tests/integration/user-settings-mfa-token-
+  version.test.ts` included, all 12 of its cases) ran for real against
+  this database — 182/185 passing, 3 skip for the unrelated embedding
+  sidecar, zero failures; `npm run check` with the DB live: 1063/1066
+  passing (3 skip, same unrelated sidecar). A full real `curl` walkthrough
+  against a freshly restarted dev server, using the real seeded demo
+  account and a real cookie jar: registration claiming `demo@pfw.local`;
+  a genuine Auth.js CSRF handshake and credentials sign-in producing a
+  real session; `GET`/`PATCH /api/user-settings` persisting and reading
+  back real values; `POST /api/mfa/setup` returning a real secret,
+  `otpauth://` URI, and base64 PNG QR code; a REAL 6-digit TOTP code
+  computed from that secret via the installed `otplib` and confirmed
+  through `POST /api/mfa/confirm` (a wrong code rejected first,
+  correctly); a subsequent login attempt with no code correctly coming
+  back `code=totp_required` with no session established, a wrong code
+  correctly `code=totp_invalid`, and the real generated code succeeding;
+  `POST /api/auth/revoke-sessions` called from one live session
+  correctly invalidating BOTH that session AND a second, completely
+  separate already-logged-in session on their very next request (the
+  core "revoke server-side" guarantee, proven across two real sessions,
+  not just one); a forged cross-origin `Origin` on `POST /api/mfa/disable`
+  correctly 403ing; a wrong password on disable correctly 400ing; and the
+  correct password disabling MFA AND immediately invalidating that same
+  session's own cookie (the `disableTotp`-bumps-tokenVersion behavior,
+  confirmed live). The dev database was re-seeded both before and after
+  this walkthrough, confirmed via `psql` to leave zero test residue.
+  `npm run build`/`verify:client-bundle-secrets` and Gitleaks/Semgrep
+  were still NOT re-run in this pass — flagged plainly rather than
+  claimed, the one remaining gap before this is production-verified.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no WebAuthn/passkey second factor (TOTP only, matching this
+  app's existing Credentials-only auth strategy, §3ff); no MFA recovery
+  codes — losing the authenticator app before disabling MFA locks the
+  account out with no self-service recovery, the same honest cost this
+  app's other credential-adjacent features already accept (§3m/§3t); the
+  tax-simulate/monte-carlo ROUTES themselves were not wired to read
+  `UserSettings` as their own defaults (they still default independently,
+  per their own existing logic) — `UserSettings` is reachable and
+  editable today, but nothing outside `/settings` consults it yet, the
+  same "built the primitive, didn't wire every consumer" scope boundary
+  §3v's `ManualAsset.liquidityTier` UI gap already modeled; no
+  "Sign out of all OTHER sessions but keep this one" option — the one
+  button built always signs the current session out too, a simpler and
+  more honest guarantee than trying to re-sign the calling session's own
+  cookie in place; no real authenticator app (Google Authenticator, Authy,
+  etc.) physically scanned the QR code — the setup/confirm flow was
+  proven with a real, independently-computed TOTP code against the real
+  stored secret, which exercises the identical server-side verification
+  path, but the QR-code-rendering/camera-scanning UX itself wasn't
+  physically exercised in this session.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

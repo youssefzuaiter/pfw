@@ -109,7 +109,14 @@ export function MobileNav() {
                 </li>
               ))}
             </ul>
-            <div className="mt-3 border-t border-border pt-3">
+            <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+              <Link
+                href="/settings"
+                onClick={closeMore}
+                className="rounded-md px-2 py-1 text-sm font-medium text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Settings
+              </Link>
               <SignOutButton variant="drawer" />
             </div>
           </div>

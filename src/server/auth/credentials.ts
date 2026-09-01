@@ -1,6 +1,7 @@
 import "server-only";
 import argon2 from "argon2";
 import { createAdminClient } from "../db/admin-client";
+import { verifyTotpCode } from "./totp";
 
 /**
  * Login and registration (AGENTS.md §3ff) — the credential-verification
@@ -17,7 +18,7 @@ import { createAdminClient } from "../db/admin-client";
 
 const PRIMARY_DEMO_USER_EMAIL = "demo@pfw.local"; // matches current-user.ts's own SEED_USER_EMAIL
 
-export type VerifiedUser = { id: string; email: string; displayName: string };
+export type VerifiedUser = { id: string; email: string; displayName: string; tokenVersion: number };
 
 /**
  * Returns `null` on ANY failure (unknown email, no password set yet —
@@ -37,7 +38,40 @@ export async function verifyCredentials(email: string, password: string): Promis
   const valid = await argon2.verify(user.passwordHash, password).catch(() => false);
   if (!valid) return null;
 
-  return { id: user.id, email: user.email, displayName: user.displayName };
+  return { id: user.id, email: user.email, displayName: user.displayName, tokenVersion: user.tokenVersion };
+}
+
+export type TotpChallengeResult = "not_required" | "required" | "invalid" | "valid";
+
+/**
+ * TOTP MFA (Punch List Tier 2, item 3) — the second half of `authorize()`'s
+ * two-factor check, only ever called AFTER `verifyCredentials` has already
+ * confirmed the password, so this never runs (and therefore never reveals
+ * whether MFA is enabled) for a request that got the password wrong.
+ * "required" vs. "invalid" are deliberately distinct outcomes (unlike
+ * `verifyCredentials`'s uniform `null`): the client already proved
+ * password knowledge at this point, so telling it "enter your code" vs.
+ * "that code was wrong" is normal, expected two-factor UX, not an
+ * enumeration risk the way revealing account existence pre-password would
+ * be.
+ */
+export async function checkTotpChallenge(userId: string, code: string | undefined): Promise<TotpChallengeResult> {
+  const admin = createAdminClient();
+  const user = await admin.user.findUnique({
+    where: { id: userId },
+    select: { totpEnabled: true, totpSecret: true, totpLastUsedTimeStep: true },
+  });
+  if (!user?.totpEnabled || !user.totpSecret) return "not_required";
+  if (!code) return "required";
+
+  const result = await verifyTotpCode(user.totpSecret, code, user.totpLastUsedTimeStep);
+  if (!result.valid) return "invalid";
+
+  // Replay protection (totp.ts's own doc comment) — persisted here, not
+  // just checked, so the SAME code can never be accepted a second time
+  // within its own validity window.
+  await admin.user.update({ where: { id: userId }, data: { totpLastUsedTimeStep: result.timeStep } });
+  return "valid";
 }
 
 export type RegisterResult = { ok: true; userId: string; inherited: boolean } | { ok: false; error: "email_taken" };
