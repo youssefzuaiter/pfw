@@ -61,6 +61,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # continue-on-error: known high-severity advisories (adm-zip, sharp)
+      # are transitive, Node-only deps of @huggingface/transformers that
+      # this app's browser/WASM code path never reaches — see AGENTS.md
+      # §3u/§3x for the accepted-risk writeup. Flags new findings in the
+      # Actions log/summary without blocking merges on an already-known,
+      # already-documented gap.
+      - name: Audit dependencies for known vulnerabilities
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
       # `migrate deploy`, not `migrate dev` — the latter is a local-dev
       # tool (drift detection, can prompt interactively); `deploy` just
       # applies the existing migration files non-interactively, which is
