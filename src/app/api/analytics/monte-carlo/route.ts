@@ -5,6 +5,8 @@ import { getCurrentUser } from "../../../../server/auth/current-user";
 import { checkRateLimit } from "../../../../server/api/rate-limit";
 import { jsonBadRequest, jsonServerError, jsonTooManyRequests } from "../../../../server/api/responses";
 import { buildMonteCarloAnalytics, serializeMonteCarloAnalytics } from "../../../../server/analytics/build-monte-carlo-data";
+import { getOrCreateUserSettings } from "../../../../server/dal/user-settings";
+import { agorot } from "../../../../lib/money";
 
 /**
  * A GET, read-only compute endpoint — no state changes, so this
@@ -41,7 +43,19 @@ export async function GET(request: NextRequest) {
     return jsonBadRequest("Invalid query parameters", parsed.error.issues);
   }
 
-  let annualSpendAgorot: ReturnType<typeof parseShekelsToAgorot> | undefined;
+  // Saved defaults (Punch List Tier 2, item 1 — `/settings`'s "Monte Carlo
+  // widget defaults" panel): an explicit query param (a slider drag on
+  // `/analytics`) always wins over the saved row, which itself wins over
+  // `buildMonteCarloAnalytics`'s own internal fallback for the one field
+  // (`annualSpend`) `UserSettings` leaves nullable. `currentAge` has no
+  // saved default and never will — see that DAL function's own doc
+  // comment on why this app never stores a DOB.
+  const settings = await getOrCreateUserSettings(user.id);
+
+  let annualSpendAgorot: ReturnType<typeof parseShekelsToAgorot> | undefined =
+    settings.monteCarloTargetAnnualSpendAgorot !== null
+      ? agorot(Number(settings.monteCarloTargetAnnualSpendAgorot))
+      : undefined;
   if (parsed.data.annualSpend !== undefined) {
     try {
       annualSpendAgorot = parseShekelsToAgorot(parsed.data.annualSpend);
@@ -53,13 +67,28 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // `monteCarloRetirementAge` is a non-nullable column (schema default
+  // 65) — there's no way to tell "the user explicitly saved 65" apart
+  // from "never touched, still the column default." An EXPLICIT query
+  // override (a real slider drag) is trusted as-is, including a
+  // deliberate already-retired/decumulation-from-start scenario
+  // (src/lib/monte-carlo.ts's own documented, intentional behavior).
+  // Falling back to the saved/default value instead re-applies the same
+  // `Math.max(currentAge, ...)` safety clamp `buildMonteCarloAnalytics`
+  // itself used to apply for its own internal default, so a stale/
+  // never-customized 65 can't silently request a nonsensical
+  // before-today retirement for someone older than 65 who never
+  // touched this setting.
+  const retirementAge =
+    parsed.data.retirementAge ?? Math.max(parsed.data.currentAge, settings.monteCarloRetirementAge);
+
   try {
     const analytics = await buildMonteCarloAnalytics(
       user.id,
       parsed.data.currentAge,
-      parsed.data.retirementAge,
+      retirementAge,
       annualSpendAgorot,
-      parsed.data.volatilityMultiplier,
+      parsed.data.volatilityMultiplier ?? settings.monteCarloVolatilityMultiplier,
     );
 
     return NextResponse.json(serializeMonteCarloAnalytics(analytics));

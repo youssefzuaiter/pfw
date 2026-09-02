@@ -4546,6 +4546,146 @@ the first draft, per explicit user instruction: `tokenVersion` starts at
   path, but the QR-code-rendering/camera-scanning UX itself wasn't
   physically exercised in this session.
 
+## 3ii. Production Verification & Stale-Docs Refresh Pass (ad hoc)
+
+Explicit user request to close three items this file's own §3hh had
+flagged as outstanding: re-run `npm run build`/`verify:client-bundle-
+secrets`/Gitleaks/Semgrep after the TOTP MFA pass (never done post-shipping,
+per §3hh's own closing note), refresh `docs/SECURITY.md`/
+`docs/SECURITY-CHECKLIST.md`'s stale auth/session rows (per §3gg's own
+closing note), and wire the built-but-unconsumed `UserSettings` row into
+the two routes it was always meant to default (per §3hh's own known-
+limitations note).
+
+- **Build/scan verification, run for real**: `npm run build` clean;
+  `verify:client-bundle-secrets` re-run WITH real `.env` secrets loaded
+  (a bare shell has none set, which silently no-ops the check — the
+  first run in this pass found exactly that, corrected before treating
+  it as a real pass) — 57 client files checked against 5 real secret
+  values, none found. Gitleaks (pinned `v8.30.1`, `--source . --no-git`,
+  matching `ci.yml`'s exact invocation, run from the repo root rather
+  than a Docker bind-mount path — an earlier attempt mounted at `/repo`,
+  which changed every fingerprint's path prefix and silently broke
+  `.gitleaksignore`'s two existing entries; re-run matching CI's real
+  working directory to get a true read) found one real, previously
+  undocumented false positive in a TRACKED, non-`.next` file:
+  `future-infra/k8s/app/deployment.yaml`'s own comment phrase ("API for
+  the advisor, Frankfurter/CoinGecko for FX") coincidentally matched the
+  `generic-api-key` rule. Fixed the established way (reword, don't
+  suppress — same precedent as every `focus-visible` guard false
+  positive this history has hit): "APIs...(Anthropic's API for the
+  advisor, Frankfurter/CoinGecko for FX..." became "external
+  services...(Anthropic for the advisor, plus Frankfurter and CoinGecko
+  for FX...". Every remaining finding is confirmed (`git check-ignore`)
+  inside the gitignored `.next/` build-output tree, which a fresh CI
+  checkout never even contains (no build runs before that job). Semgrep
+  (pinned `1.174.0`, the same 5 rulesets `ci.yml` uses): 0 findings, 354
+  rules over 448 git-tracked files. Full `npm run check` re-run after:
+  1063/1066 (3 skip, the unrelated embedding sidecar) — unchanged from
+  §3hh's own last-recorded number, confirming nothing regressed between
+  that pass and this verification.
+- **`docs/SECURITY-CHECKLIST.md` V2/V3 rewritten against reality, not
+  just re-stamped ✅**: items 6 (Argon2id — ✅), 7 (WebAuthn — still ⬜,
+  now framed as §3ff's own explicit scope decision rather than a
+  leftover "deferred"), 8 (TOTP — 🟡, real and live-verified but
+  genuinely missing hashed recovery codes, a stated §3hh known
+  limitation, not silently marked done), 9 (no user enumeration — ✅,
+  `verifyCredentials`'s uniform `null`), 10 (constant-time comparison —
+  ✅, now has a real target: `argon2.verify`), 11 (rewritten from "single
+  seeded user" to describe real multi-user auth and the inheritance
+  mechanism), 12 (server-managed/revokable sessions — ✅, but honestly
+  describes what was actually built: JWT-strategy sessions with a
+  `tokenVersion` revocation check, a deliberate departure from the
+  literal "server-managed" wording, not literally that), 13 (cookie
+  hardening — 🟡, three real, still-open gaps identified by reading
+  Auth.js's own untouched defaults rather than assuming: not
+  `__Host`-prefixed, `SameSite=Lax` not `Strict`, default 30-day maxAge
+  not short), 14 (session rotation — 🟡, achieved via coarse
+  invalidate-everything `tokenVersion` bump rather than literal
+  per-session rotation, stated as a deliberate trade-off). Item 18's
+  IDOR note updated to reflect that real auth now exists but a genuine
+  two-real-session HTTP-level IDOR test still hasn't been written — an
+  honest "still open, now buildable" rather than a false "closed."
+  Guard-test list (previously listing 7, missing 5) brought current: 5
+  client-only crypto/ML guards added, and the admin-client-boundary
+  entry's allowlist description brought up to date with all 4 real
+  exceptions (`current-user.ts`, the household/vault invite flows, the
+  Dead Man's Switch inactivity check, `credentials.ts`).
+- **A new npm audit finding surfaced and documented while re-checking
+  the dependency-audit section, not previously recorded anywhere**:
+  `prisma`'s own transitive `mysql2` dependency
+  (`GHSA-3f6p-5ww8-9rcr`, high). `npm audit fix --force`'s suggested fix
+  is `prisma@6.19.3` — an actual downgrade from this app's installed
+  `7.10.0`, so not applied. Confirmed genuinely unreachable, not
+  assumed: this app's `datasource` provider is `postgresql` exclusively,
+  every `PrismaClient` construction uses `@prisma/adapter-pg`, and a
+  repo-wide grep for `mysql` outside test fixtures returns nothing — the
+  Prisma CLI simply bundles multi-database driver support the app never
+  loads. Documented alongside the pre-existing `qs` (§3g) and
+  `@huggingface/transformers`-optional-Node-backend (§3u) findings,
+  same accepted-risk treatment.
+- **`docs/SECURITY.md` narrative sections rewritten**, not just
+  re-dated: the Tier 2 auth-strength cell, the Tier2→Tier3 checklist (now
+  describing real registration's actual remaining gaps — email
+  verification, self-service reset, brute-force lockout, cookie
+  hardening — instead of "turn on registration"), the data-inventory
+  table's Session-identifiers/Password-hash rows (now describing the
+  real JWT+Argon2id shape instead of "not built yet"), a new
+  TOTP-secret-storage row, §3.1's Auth-endpoints entry (now describing
+  the real, live, rate-limited/enumeration-safe routes), and the trust-
+  boundary diagram (corrected to note the cookie is NOT yet
+  `__Host`-prefixed/`Strict`, and that `src/proxy.ts` — not just
+  `getCurrentUser()` — is the real auth gate, per §3ff).
+- **`UserSettings` wired into its two intended consumers**
+  (`GET /api/tax/simulate`, `GET /api/analytics/monte-carlo`) — built in
+  §3hh, reachable via `/settings`, but never actually read by anything
+  outside that one screen until this pass. Precedence in both routes: an
+  explicit query param (a real slider drag) always wins, falling back to
+  the user's saved row, falling back to each route's own pre-existing
+  hardcoded default for the fields `UserSettings` itself leaves
+  nullable (`taxAnnualAllowanceAgorot`, `taxFlatRatePercent`,
+  `monteCarloTargetAnnualSpendAgorot`).
+  - **A real regression caught and fixed before it shipped, not after**:
+    `monteCarloRetirementAge` is a NON-nullable column (schema default
+    65), so there's no way to distinguish "the user explicitly saved
+    65" from "never touched, still the column default" the way the
+    nullable fields above allow. `buildMonteCarloAnalytics` had its own
+    existing safety clamp for exactly this ambiguity
+    (`retirementAgeOverride ?? Math.max(currentAge, 65)`, protecting an
+    already-past-65 user with no override from a nonsensical
+    before-today default retirement age) — naively passing
+    `settings.monteCarloRetirementAge` straight through as an "override"
+    would have silently defeated that clamp for every user who never
+    customized the setting. Fixed by reproducing the identical
+    `Math.max(currentAge, ...)` clamp in the route itself, applied only
+    when falling back to the saved/default value — an EXPLICIT query
+    override still bypasses it on purpose, preserving
+    `monte-carlo.ts`'s own documented, intentional
+    already-retired/decumulation-from-start scenario, which only ever
+    needs to work for a deliberate per-request slider position, not a
+    stale saved default.
+- **Verified live against the real running dev server, not just by
+  test**: registered/claimed the seeded demo user for real (Auth.js
+  CSRF handshake + credentials sign-in, a real session cookie); before
+  saving any settings, both routes returned their original hardcoded
+  defaults (`retirementAge: 65`, `jurisdiction: "US"`, `method: "FIFO"`);
+  after `PATCH /api/user-settings` saved `monteCarloRetirementAge: 50`,
+  the Monte Carlo route picked it up with no query param; an explicit
+  `retirementAge=40` query param correctly overrode the saved 50; the
+  clamp fix specifically: `currentAge=60` with the saved value still 50
+  and no override correctly clamped to 60, while an EXPLICIT
+  `retirementAge=55` at `currentAge=60` correctly stayed 55 (unclamped,
+  proving the decumulation scenario survived); after saving
+  `taxJurisdiction: "DE"`/`taxMethod: "LIFO"`, the tax route picked up
+  both with no query params, and a partial override
+  (`?jurisdiction=US` alone) correctly overrode only that one field
+  while `method` stayed the saved `LIFO` — proving per-field precedence,
+  not an all-or-nothing override. Settings reset and the dev database
+  fully re-seeded afterward, confirmed via the seed script's own output
+  that all three seeded users (demo + the two household members) came
+  back unclaimed, leaving zero test residue. `npm run check` re-run
+  clean one final time after cleanup: 1063/1066, unchanged.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

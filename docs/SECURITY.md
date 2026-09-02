@@ -1,9 +1,12 @@
 # PFW Security & Threat Model
 
-Status: current as of Phase 7 (Verification, Accessibility & Security Audit) —
-originally drafted in Phase 0, revisited at the end of every phase that
-introduced new attack surface, most recently to reflect what actually shipped
-vs. what was deferred (see §3.3 and §2 below).
+Status: originally drafted in Phase 0, revisited at the end of every phase
+that introduced new attack surface. Most recently refreshed to reflect real
+authentication landing (AGENTS.md §3ff — Auth.js Credentials + Argon2id —
+and §3hh — TOTP MFA + server-side JWT revocation via `tokenVersion`),
+replacing this document's original "no real auth exists yet" framing
+wherever it appeared (see §2's Session identifiers row and §3.1's Auth
+endpoints entry below).
 Owner: engineering (single-maintainer project)
 Scope: this document is narrative (threat model, attack surfaces, data map). The
 itemized OWASP ASVS control matrix, including Phase 7's audit findings and
@@ -23,13 +26,14 @@ schema or architecture change.
 
 | Tier | Data sensitivity | Deployment | Auth strength required |
 |---|---|---|---|
-| **Tier 2 (current)** | Synthetic/mock Israeli banking data, deterministically seeded. No real PII, no real account credentials, no real balances. | Public deployment allowed (e.g. Vercel preview/prod) for demo purposes. | Session-based single-user model, ASVS L1 baseline + L2 on auth/session/access-control primitives even though there's one user, so the primitives are already load-bearing. |
+| **Tier 2 (current)** | Synthetic/mock Israeli banking data, deterministically seeded. No real PII, no real account credentials, no real balances. | Public deployment allowed (e.g. Vercel preview/prod) for demo purposes. | Real multi-user authentication (Auth.js Credentials, Argon2id, optional TOTP MFA — AGENTS.md §3ff/§3hh), ASVS L1 baseline + L2 on auth/session/access-control primitives. |
 | **Tier 3 (future)** | Real linked bank data (via CSV import or future Open Banking/Israeli "Open Finance" API), real balances, real identity. | Restricted deployment, requires DPA/PIA. | Full multi-user auth: WebAuthn primary, TOTP+recovery codes secondary, Argon2id fallback, mandatory MFA step-up on sensitive actions. |
 
 The **only** things that should need to change between Tier 2 → Tier 3:
-- Turn on real user registration (the auth tables/flows exist from Phase 1-2 onward, just gated behind a single seeded user in Tier 2).
+- Real user registration is already live (§3ff) — Tier 3 would tighten it: email verification on registration, a self-service password-reset flow, and a login-brute-force lockout beyond the existing per-email rate limit on `/api/auth/register`, none of which exist yet (see `docs/SECURITY-CHECKLIST.md` V2/V3's notes for the full current gap list).
 - Point CSV import adapters at real statements (same adapter interface, same Zod validation, same formula-injection guard).
-- Tighten rate limits / enable step-up MFA policy flags.
+- Tighten rate limits / enable step-up MFA policy flags (TOTP MFA itself already exists per-user, §3hh — this would be making it mandatory rather than opt-in).
+- Harden session cookie posture: `__Host-`-prefixed name, `SameSite=Strict`, a short JWT TTL (currently Auth.js's untouched defaults — see `docs/SECURITY-CHECKLIST.md` item 13).
 - Add a DPIA/PIA writeup and breach-notification runbook (process doc, not code).
 
 No re-architecture: RLS policies, DAL scoping, encryption columns, audit log, and CSP/headers are already Tier-3-grade from day one.
@@ -47,8 +51,9 @@ No re-architecture: RLS policies, DAL scoping, encryption columns, audit log, an
 | Category rules / user corrections | Yes | Plaintext | Feeds Tier 1/Tier 3 of the categorization cascade. |
 | Merchant embeddings | Yes | 384-dim float vector, shared/anonymized cache | No PII beyond the merchant string itself, which is already low-sensitivity (a shop name, not a person). |
 | Portfolio holdings / trades | Yes | Integer agorot + share counts | Simulated only — no real brokerage linkage, no real money at risk. |
-| Session identifiers | **Not built yet** | — | No real login flow exists — every request resolves to a single seeded demo user server-side (`src/server/auth/current-user.ts`), by design (AGENTS.md decision #1: auth-*shaped* plumbing — DAL/RLS `userId` scoping — ships now; real credentials/sessions are a later milestone). When built: opaque server-side session ID, `__Host-` cookie, no JWT with embedded claims. |
-| Password hash (Tier 3) | Future | Argon2id, salted | bcrypt fallback only for migration compatibility, never as the primary scheme. |
+| Session identifiers | Yes | Signed JWT (Auth.js, `session: { strategy: "jwt" }`) | `src/server/auth/current-user.ts`'s `getCurrentUser()` contract is unchanged from the original design (always resolves a real `User` row server-side, never trusts a client-supplied id) — only its internals changed, from a hardcoded seeded email to a real session read. The JWT carries only `id`/`tokenVersion`, no other claims; server-side revocation is real despite the stateless-JWT format (`tokenVersion` re-checked every request — AGENTS.md §3hh, `docs/SECURITY-CHECKLIST.md` item 12). Cookie posture is Auth.js's untouched default (`HttpOnly`+`Secure` yes, not `__Host-`-prefixed, `SameSite=Lax` not `Strict` — item 13's documented gap). |
+| Password hash | Yes | Argon2id, salted | `src/server/auth/credentials.ts` (`argon2` package, Argon2id — the library's default mode). No bcrypt fallback exists or is needed; every real password in this app has been Argon2id from the start. |
+| TOTP MFA secret | Yes (opt-in) | AES-256-GCM encrypted at rest, same codec as row below | `User.totpSecret` — only present for a user who has enabled MFA (AGENTS.md §3hh); `totpEnabled` only flips true once setup is proven with a real working code, never at mere secret-generation time. |
 | Sensitive metadata requiring field-level encryption | Yes | AES-256-GCM via Prisma extension | Candidates: institution name field, any freeform notes fields, recovery codes (hashed, not merely encrypted). |
 | Audit log (who/what/when/before/after) | Yes | Append-only, integer deltas | Never contains secrets; references entity IDs and integer values only. |
 
@@ -65,7 +70,7 @@ in the 15-model schema (14 domain models + the append-only `AuditLog`).
 - **~17 API routes / server actions** — every state-changing route is a potential IDOR, mass-assignment, or replay target. Mitigations: DAL-enforced `userId` scoping, Zod at every boundary, `Idempotency-Key` on mutations, architectural test banning direct Prisma imports in route files.
 - **`/api/advisor`** — the highest-value target: an LLM endpoint with tool access to the user's full financial ledger. Treated as its own threat zone (Section 3.4).
 - **CSV import endpoint** — untrusted file upload; treated as its own threat zone (Section 3.3).
-- **Auth endpoints (Tier 3)** — login/register/reset don't exist yet (no real auth ships until a later milestone — see the Session identifiers row in §2); they're classic user-enumeration and credential-stuffing targets, so timing-safe/identical-response design is a requirement *when they're built*, tracked as ⬜ in `docs/SECURITY-CHECKLIST.md` items 6-10, not something already shipped.
+- **Auth endpoints** (`/login`, `/register`, `POST /api/auth/register`, Auth.js's own `/api/auth/*` handlers) — real and live (AGENTS.md §3ff), classic user-enumeration and credential-stuffing targets. `verifyCredentials` returns an identical `null` for all three failure shapes (unknown email, unclaimed row, wrong password), so login can't be used to enumerate accounts; `POST /api/auth/register` rate-limits by the submitted email plus a coarser global limit. **Not yet built**: email verification, self-service password reset, and a dedicated login-brute-force lockout beyond that per-email registration limit — see `docs/SECURITY-CHECKLIST.md` V2/V3 for the itemized status.
 
 ### 3.2 Client / browser surface
 - **XSS via merchant/description strings rendered in the UI** — these are user- or CSV-supplied strings, never treated as trusted HTML. No `dangerouslySetInnerHTML` anywhere (enforced by a Phase 1 guard test).
@@ -104,12 +109,14 @@ a real upload — see AGENTS.md §3j.
 
 ```
 [ Browser ]
-    | HTTPS, CSP nonce, __Host- session cookie
+    | HTTPS, CSP nonce, HttpOnly+Secure session JWT cookie (Auth.js default
+    | naming/SameSite -- not yet __Host-/Strict, see SECURITY-CHECKLIST item 13)
     v
-[ Next.js Middleware ]  -- generates CSP nonce, security headers, Origin/Host allowlist check
-    |
+[ Next.js proxy.ts ]  -- generates CSP nonce, security headers, Origin/Host allowlist
+    |                     check, AND the real auth gate (redirect to /login / 401 JSON)
     v
-[ Route Handlers / Server Actions ]  -- Zod validation, session -> userId resolution
+[ Route Handlers / Server Actions ]  -- Zod validation, getCurrentUser() -> real
+    |                                    Auth.js session -> userId resolution
     |  (NEVER imports Prisma directly -- enforced by architectural test)
     v
 [ Data Access Layer (DAL) / Repositories ]  -- every function requires userId, enforces where:{userId}

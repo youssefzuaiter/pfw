@@ -5,6 +5,7 @@ import { getCurrentUser } from "../../../../server/auth/current-user";
 import { checkRateLimit } from "../../../../server/api/rate-limit";
 import { jsonBadRequest, jsonServerError, jsonTooManyRequests } from "../../../../server/api/responses";
 import { buildTaxSimulation, serializeTaxSimulation } from "../../../../server/tax/build-tax-data";
+import { getOrCreateUserSettings } from "../../../../server/dal/user-settings";
 import {
   DE_DEFAULT_ANNUAL_ALLOWANCE_AGOROT,
   INTL_DEFAULT_ANNUAL_ALLOWANCE_AGOROT,
@@ -45,7 +46,15 @@ export async function GET(request: NextRequest) {
     return jsonBadRequest("Invalid query parameters", parsed.error.issues);
   }
 
-  let otherOrdinaryIncomeAgorot = agorot(0);
+  // Saved defaults (Punch List Tier 2, item 1 — `/settings`'s "Tax
+  // simulator defaults" panel): an explicit query param always wins (a
+  // slider drag on `/trading/tax` is a per-request override, never a
+  // silent write to the saved row), falling back to whatever the user
+  // saved, falling back to this route's own original hardcoded defaults
+  // for the two fields `UserSettings` itself leaves nullable.
+  const settings = await getOrCreateUserSettings(user.id);
+
+  let otherOrdinaryIncomeAgorot = agorot(Number(settings.taxOtherOrdinaryIncomeAgorot));
   if (parsed.data.otherOrdinaryIncome !== undefined) {
     try {
       otherOrdinaryIncomeAgorot = parseShekelsToAgorot(parsed.data.otherOrdinaryIncome);
@@ -57,7 +66,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  let annualAllowanceAgorot: number | undefined;
+  let annualAllowanceAgorot: number | undefined =
+    settings.taxAnnualAllowanceAgorot !== null ? Number(settings.taxAnnualAllowanceAgorot) : undefined;
   if (parsed.data.annualAllowance !== undefined) {
     try {
       annualAllowanceAgorot = parseShekelsToAgorot(parsed.data.annualAllowance);
@@ -69,21 +79,23 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const jurisdiction = parsed.data.jurisdiction ?? "US";
+  const jurisdiction = parsed.data.jurisdiction ?? settings.taxJurisdiction;
+  const includeNiit =
+    parsed.data.includeNiit !== undefined ? parsed.data.includeNiit === "true" : settings.taxIncludeNiit;
 
   try {
     const data = await buildTaxSimulation(
       user.id,
-      parsed.data.method ?? "FIFO",
+      parsed.data.method ?? settings.taxMethod,
       jurisdiction,
       otherOrdinaryIncomeAgorot,
-      parsed.data.includeNiit === "true",
-      parsed.data.churchTaxRate ?? 0,
+      includeNiit,
+      parsed.data.churchTaxRate ?? settings.taxChurchTaxRate,
       agorot(
         annualAllowanceAgorot ??
           (jurisdiction === "DE" ? DE_DEFAULT_ANNUAL_ALLOWANCE_AGOROT : INTL_DEFAULT_ANNUAL_ALLOWANCE_AGOROT),
       ),
-      parsed.data.flatRatePercent ?? INTL_DEFAULT_FLAT_RATE,
+      parsed.data.flatRatePercent ?? settings.taxFlatRatePercent ?? INTL_DEFAULT_FLAT_RATE,
     );
 
     return NextResponse.json(serializeTaxSimulation(data));

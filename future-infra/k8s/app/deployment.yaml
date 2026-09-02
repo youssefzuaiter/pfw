@@ -130,9 +130,9 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # HTTPS egress for the external APIs this app calls at runtime
-    # (Anthropic's API for the advisor, Frankfurter/CoinGecko for FX and
-    # crypto-price sync, the Hugging Face Hub for embedding-model
+    # HTTPS egress for the external services this app calls at runtime
+    # (Anthropic for the advisor, plus Frankfurter and CoinGecko for FX and
+    # crypto-price sync, and the Hugging Face Hub for embedding-model
     # weights fetched by a user's OWN browser — not this pod — the
     # client-side receipt-OCR/embedding features never touch server
     # egress at all, only the server-side integrations do): left as a
