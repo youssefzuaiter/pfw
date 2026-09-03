@@ -3,15 +3,16 @@ import { z } from "zod";
 import { bps, formatBpsAsPercent } from "../../lib/apr";
 import { buildAmortizationSchedule, isNegativeAmortization, summarizePayoff } from "../../lib/debt-math";
 import { computeMonthProgress, computeProrationStatus } from "../../lib/budget-proration";
+import { monthKeyFor } from "../../lib/date-month";
 import { summarizeGoalProgress } from "../../lib/goal-progress";
 import { getMockPriceAgorot, getMockPriceUsdCents } from "../../lib/mock-market-data";
 import { agorot, formatAgorot } from "../../lib/money";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { deriveValuationFreshness } from "../../lib/valuation-freshness";
-import { listBudgets } from "../dal/budgets";
 import { listAllCategories } from "../dal/categories";
 import { listDebts } from "../dal/debts";
+import { getEnvelopeBalances } from "../dal/envelopes";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { listGoals } from "../dal/goals";
 import { listManualAssets } from "../dal/manual-assets";
@@ -190,31 +191,31 @@ const listRecentTransactions = defineTool({
 
 const listBudgetsWithUtilization = defineTool({
   name: "list_budgets_with_utilization",
-  description: "List the user's budgets for the current calendar month, with amount spent, limit, and utilization percent.",
+  description:
+    "List the user's zero-sum budget envelopes for the current calendar month, with each envelope's rolling balance (carried forward across months), this month's allocation, and this month's spend.",
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
     const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     const monthProgress = computeMonthProgress(now);
 
-    const [budgets, spendRows] = await Promise.all([
-      listBudgets(userId),
-      getSpendByCategoryInRange(userId, monthStart, nextMonthStart),
-    ]);
-    const spendByCategory = new Map(spendRows.map((row) => [row.categoryId, agorot(Number(row.totalAgorot))]));
+    const envelopes = await getEnvelopeBalances(userId, monthKeyFor(now));
 
-    return budgets.map((budget) => {
-      const spent = spendByCategory.get(budget.categoryId) ?? agorot(0);
-      const limit = agorot(Number(budget.monthlyLimit));
-      const utilizationPercent = limit > 0 ? Math.round((spent / limit) * 100) : 0;
-      const paceStatus = computeProrationStatus(spent, limit, monthProgress);
+    return envelopes.map((envelope) => {
+      // Pacing only makes sense against a FRESH allocation made this
+      // month — a category coasting purely on carried-forward surplus
+      // (allocatedThisMonthAgorot === 0) has no "this month's limit" to
+      // pace against, same reasoning budget-breaches.ts's warning
+      // condition already applies.
+      const paceStatus =
+        envelope.allocatedThisMonthAgorot > 0
+          ? computeProrationStatus(envelope.spentThisMonthAgorot, envelope.allocatedThisMonthAgorot, monthProgress)
+          : undefined;
       return {
-        category: budget.category.name,
-        spent: formatAgorot(spent),
-        limit: formatAgorot(limit),
-        utilizationPercent,
+        category: envelope.categoryName,
+        rollingBalance: formatAgorot(envelope.balanceAgorot),
+        allocatedThisMonth: formatAgorot(envelope.allocatedThisMonthAgorot),
+        spentThisMonth: formatAgorot(envelope.spentThisMonthAgorot),
         paceStatus,
       };
     });

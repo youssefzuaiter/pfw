@@ -280,16 +280,19 @@ async function main() {
     });
   }
 
-  // --- Budgets --------------------------------------------------------------
-  const budgetLimitsIls: Record<string, number> = {
+  // --- Envelope allocations (Zero-Sum Envelope Budgeting) --------------------
+  // One row for the CURRENT calendar month per category — the seeded
+  // starting point for each envelope's rolling balance, same figures the
+  // old Budget.monthlyLimit rows used to seed.
+  const envelopeAllocationsIls: Record<string, number> = {
     groceries: 2_200,
     dining: 900,
     transport: 500,
     entertainment: 400,
   };
-  for (const [slug, limit] of Object.entries(budgetLimitsIls)) {
-    await prisma.budget.create({
-      data: { userId: user.id, categoryId: categoryId(slug), monthlyLimit: ils(limit) },
+  for (const [slug, amount] of Object.entries(envelopeAllocationsIls)) {
+    await prisma.envelopeAllocation.create({
+      data: { userId: user.id, categoryId: categoryId(slug), amountAgorot: ils(amount), month: monthKeyFor(now) },
     });
   }
 
@@ -613,9 +616,9 @@ async function main() {
     ],
   });
 
-  // Dana (spouse) gets her own category + budget — a genuinely separate
-  // user's own data, not a copy of the primary user's — then shares it
-  // into the household.
+  // Dana (spouse) gets her own category + envelope allocation — a
+  // genuinely separate user's own data, not a copy of the primary
+  // user's — then shares it into the household.
   const spouseUtilitiesCategory = await prisma.category.create({
     data: {
       userId: spouse.id,
@@ -624,21 +627,25 @@ async function main() {
       sharedGroupId: household.id,
     },
   });
-  await prisma.budget.create({
+  await prisma.envelopeAllocation.create({
     data: {
       userId: spouse.id,
       categoryId: spouseUtilitiesCategory.id,
-      monthlyLimit: ils(650),
+      amountAgorot: ils(650),
+      month: monthKeyFor(now),
       sharedGroupId: household.id,
     },
   });
 
-  // The primary user shares their own existing "groceries" budget and
+  // The primary user shares their own existing "groceries" envelope and
   // joint checking account into the same group.
-  const groceriesBudget = await prisma.budget.findFirstOrThrow({
+  const groceriesAllocation = await prisma.envelopeAllocation.findFirstOrThrow({
     where: { userId: user.id, categoryId: categoryId("groceries") },
   });
-  await prisma.budget.update({ where: { id: groceriesBudget.id }, data: { sharedGroupId: household.id } });
+  await prisma.envelopeAllocation.update({
+    where: { id: groceriesAllocation.id },
+    data: { sharedGroupId: household.id },
+  });
   await prisma.bankAccount.update({ where: { id: checking.id }, data: { sharedGroupId: household.id } });
 
   console.log("Seed complete:", {

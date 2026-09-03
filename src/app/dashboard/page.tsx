@@ -39,7 +39,7 @@ export default async function DashboardPage() {
         name: group.name,
         role: membership.role,
         permission: membership.permission,
-        sharedBudgetCount: shared.budgets.length,
+        sharedEnvelopeCount: shared.envelopeAllocations.length,
         sharedAccountCount: shared.bankAccounts.length,
       };
     }),

@@ -15,8 +15,8 @@ function emptyForecast() {
 describe("generateInsights() orchestrator", () => {
   it("combines results from multiple generators and ranks them, most urgent first", () => {
     const insights = generateInsights({
-      budgets: [
-        { categoryId: "cat-dining", categoryName: "Dining", monthlyLimit: agorot(100_000), spentThisMonth: agorot(150_000) },
+      envelopes: [
+        { categoryId: "cat-dining", categoryName: "Dining", balanceAgorot: agorot(-50_000), spentThisMonthAgorot: agorot(150_000) },
       ],
       spendHistories: [],
       cashFlowForecast: emptyForecast(),
@@ -49,7 +49,7 @@ describe("generateInsights() orchestrator", () => {
 
   it("returns an empty array when nothing is noteworthy", () => {
     const insights = generateInsights({
-      budgets: [],
+      envelopes: [],
       spendHistories: [],
       cashFlowForecast: emptyForecast(),
       goals: [],

@@ -6,7 +6,7 @@ export type HouseholdSummaryRow = {
   name: string;
   role: "OWNER" | "MEMBER";
   permission: "READ" | "WRITE";
-  sharedBudgetCount: number;
+  sharedEnvelopeCount: number;
   sharedAccountCount: number;
 };
 
@@ -50,7 +50,7 @@ export function HouseholdSummary({ households }: { households: HouseholdSummaryR
                 {household.name}
               </Link>
               <span className="flex items-center gap-2 text-xs text-muted">
-                {household.sharedBudgetCount} budget{household.sharedBudgetCount === 1 ? "" : "s"} ·{" "}
+                {household.sharedEnvelopeCount} envelope{household.sharedEnvelopeCount === 1 ? "" : "s"} ·{" "}
                 {household.sharedAccountCount} account{household.sharedAccountCount === 1 ? "" : "s"}
                 <Badge variant={household.permission === "WRITE" ? "positive" : "neutral"}>
                   {household.role === "OWNER" ? "Owner" : household.permission}

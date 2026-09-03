@@ -254,7 +254,7 @@ model User {
   categories               Category[]
   transactions             NotableTransaction[]
   transactionRules         TransactionRule[]
-  budgets                  Budget[]
+  envelopeAllocations      EnvelopeAllocation[]
   goals                    Goal[]
   goalContributions        GoalContribution[]
   debts                    Debt[]
@@ -587,9 +587,9 @@ model Category {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
-  transactions       NotableTransaction[]
-  budgets            Budget[]
-  merchantEmbeddings MerchantEmbedding[]
+  transactions        NotableTransaction[]
+  envelopeAllocations EnvelopeAllocation[]
+  merchantEmbeddings  MerchantEmbedding[]
 
   @@unique([userId, slug])
   @@index([userId])
@@ -744,27 +744,55 @@ model TransactionRule {
   @@index([userId, priority])
 }
 
-/// One row per (user, category) — the current monthly limit. Utilization
-/// and month-progress proration are computed live by the DAL, never
-/// stored.
-/// `sharedGroupId` (AGENTS.md §3s): nullable, additive — `userId` always
-/// stays the true owner/creator, sharing only extends visibility (and,
-/// for a WRITE-permission member, editability of `monthlyLimit`) to the
-/// rest of the group.
-model Budget {
+/// Zero-sum envelope budgeting (replaces the old stateless `Budget`
+/// monthly-limit model). One row per (user, category, month) — an
+/// AMOUNT ALLOCATED to that category for that specific month, not a
+/// running balance: `src/server/dal/envelopes.ts` computes each
+/// envelope's rolling balance by summing every allocation up to and
+/// including a target month and subtracting that same window's actual
+/// spend, live, never stored — same "derived truth" law `Budget`'s own
+/// utilization already followed, just applied to a genuinely
+/// carry-forward figure instead of a calendar-reset one.
+///
+/// `month` is a plain `YYYY-MM` string, not a `DateTime` — deliberately,
+/// to avoid ANY timezone-boundary ambiguity about which month an
+/// allocation belongs to (a `DateTime` at a month boundary is exactly
+/// the kind of value that reads as a different calendar month depending
+/// on which timezone asks). Comparing/summing "up to month X" is a
+/// plain string comparison, safe because `YYYY-MM` sorts identically to
+/// its own chronological order.
+///
+/// `sharedGroupId` (AGENTS.md §3s), preserved from `Budget`: nullable,
+/// additive — `userId` always stays the true owner/creator, sharing
+/// only extends visibility (and, for a WRITE-permission member,
+/// editability) to the rest of the group. Granularity note: sharing is
+/// keyed by CATEGORY, not by one allocation row — `setResourceSharing`'s
+/// "budget" case (`shared-groups.ts`) sets `sharedGroupId` on every
+/// existing allocation row for a (user, category), and a new month's
+/// allocation for an already-shared category inherits that same
+/// `sharedGroupId` automatically (`envelopes.ts`'s `allocateToEnvelope`)
+/// — the practical equivalent of "sharing was a per-category decision"
+/// that `Budget`'s own one-row-per-category shape made trivial, adapted
+/// to a model with many rows per category over time.
+model EnvelopeAllocation {
   id            String       @id @default(cuid())
   userId        String
   user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   categoryId    String
   category      Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  /// Agorot.
-  monthlyLimit  BigInt
+  /// Agorot — the amount allocated to this category for this month.
+  amountAgorot  BigInt
+  /// `YYYY-MM`, always UTC-anchored at the call site (src/lib/money.ts's
+  /// sibling `src/lib/date-month.ts`) — see the model comment above.
+  month         String
   sharedGroupId String?
   sharedGroup   SharedGroup? @relation(fields: [sharedGroupId], references: [id], onDelete: SetNull)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  @@unique([userId, categoryId])
+  @@unique([userId, categoryId, month])
+  @@index([userId, categoryId])
+  @@index([userId, month])
   @@index([sharedGroupId])
 }
 
@@ -1255,11 +1283,11 @@ model SharedGroup {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  members      GroupMember[]
-  invites      GroupInvite[]
-  budgets      Budget[]
-  bankAccounts BankAccount[]
-  categories   Category[]
+  members             GroupMember[]
+  invites             GroupInvite[]
+  envelopeAllocations EnvelopeAllocation[]
+  bankAccounts        BankAccount[]
+  categories          Category[]
 
   @@index([createdById])
 }

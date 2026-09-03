@@ -46,7 +46,7 @@ export const DescriptionConditionSchema = z.object({
 /**
  * `value` is a shekel-string ("125.50", "-40.00"), the SAME wire
  * convention every other money-bearing input in this app already uses
- * (Budget's `monthlyLimit`, the tax simulator's income fields, etc.) —
+ * (EnvelopeAllocation's `amountAgorot`, the tax simulator's income fields, etc.) —
  * parsed via `money.ts`'s own `parseShekelsToAgorot`, never a raw JSON
  * number, per the "money is never a float" law. Validated eagerly here
  * (`.refine`) so a malformed amount condition can never be stored and

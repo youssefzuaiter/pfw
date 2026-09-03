@@ -334,6 +334,17 @@ export type SetResourceSharingResult =
  * therefore only ever returned to a caller who *does* own the resource
  * (its ownership check already passed) but picked a group they don't
  * belong to.
+ *
+ * `"budget"` (Zero-Sum Envelope Budgeting migration): `resourceId` is a
+ * CATEGORY id, not one allocation row's id — `EnvelopeAllocation` has
+ * many rows per category over time (one per month), unlike the old
+ * `Budget` model's one row per category, so "sharing a budget" is now
+ * "sharing this category's envelope," applied to every existing
+ * allocation row for that (user, category) in one `updateMany`.
+ * `allocateToEnvelope` (envelopes.ts) inherits the same `sharedGroupId`
+ * for a new month's allocation to an already-shared category, so this
+ * remains a durable, category-level decision rather than something that
+ * has to be re-applied every month.
  */
 export async function setResourceSharing(
   userId: string,
@@ -344,13 +355,13 @@ export async function setResourceSharing(
   return withUserScope(userId, async (tx) => {
     switch (resourceType) {
       case "budget": {
-        const existing = await tx.budget.findFirst({ where: { id: resourceId, userId } });
+        const existing = await tx.envelopeAllocation.findFirst({ where: { categoryId: resourceId, userId } });
         if (!existing) return { ok: false, error: "resource_not_found" };
         if (sharedGroupId !== null) {
           const membership = await tx.groupMember.findFirst({ where: { sharedGroupId, userId } });
           if (!membership) return { ok: false, error: "not_group_member" };
         }
-        await tx.budget.update({ where: { id: resourceId }, data: { sharedGroupId } });
+        await tx.envelopeAllocation.updateMany({ where: { categoryId: resourceId, userId }, data: { sharedGroupId } });
         return { ok: true };
       }
       case "bankAccount": {
@@ -390,11 +401,11 @@ export async function setResourceSharing(
  */
 export async function getSharedGroupData(userId: string, sharedGroupId: string) {
   return withUserScope(userId, async (tx) => {
-    const [budgets, bankAccounts, categories] = await Promise.all([
-      tx.budget.findMany({
+    const [envelopeAllocations, bankAccounts, categories] = await Promise.all([
+      tx.envelopeAllocation.findMany({
         where: { sharedGroupId },
         include: { category: true, user: { select: { id: true, displayName: true } } },
-        orderBy: { category: { name: "asc" } },
+        orderBy: [{ category: { name: "asc" } }, { month: "desc" }],
       }),
       tx.bankAccount.findMany({
         where: { sharedGroupId },
@@ -407,6 +418,6 @@ export async function getSharedGroupData(userId: string, sharedGroupId: string) 
         orderBy: { name: "asc" },
       }),
     ]);
-    return { budgets, bankAccounts, categories };
+    return { envelopeAllocations, bankAccounts, categories };
   });
 }

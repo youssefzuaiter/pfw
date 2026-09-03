@@ -4,9 +4,11 @@ import { Badge } from "../../../components/badge/badge";
 import { CurrencyAmount } from "../../../components/currency/currency-amount";
 import { CurrencyToggle } from "../../../components/currency/currency-toggle";
 
-type SharedBudgetRow = {
+type SharedEnvelopeAllocationRow = {
   id: string;
-  monthlyLimit: bigint;
+  amountAgorot: bigint;
+  /** `YYYY-MM` (src/lib/date-month.ts). */
+  month: string;
   category: { name: string };
   user: { id: string; displayName: string };
 };
@@ -38,12 +40,12 @@ type SharedCategoryRow = {
  */
 export function HouseholdSharedView({
   myUserId,
-  budgets,
+  envelopeAllocations,
   bankAccounts,
   categories,
 }: {
   myUserId: string;
-  budgets: SharedBudgetRow[];
+  envelopeAllocations: SharedEnvelopeAllocationRow[];
   bankAccounts: SharedBankAccountRow[];
   categories: SharedCategoryRow[];
 }) {
@@ -54,18 +56,20 @@ export function HouseholdSharedView({
   return (
     <div className="flex flex-col gap-4">
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Shared budgets</h2>
-        {budgets.length === 0 ? (
-          <p className="text-sm text-muted">No budgets shared into this household yet.</p>
+        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Shared envelopes</h2>
+        {envelopeAllocations.length === 0 ? (
+          <p className="text-sm text-muted">No envelopes shared into this household yet.</p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {budgets.map((budget) => (
-              <li key={budget.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 first:border-t-0 first:pt-0">
+            {envelopeAllocations.map((allocation) => (
+              <li key={allocation.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 first:border-t-0 first:pt-0">
                 <div>
-                  <p className="text-sm text-fg">{budget.category.name}</p>
-                  <p className="text-xs text-muted">Shared by {ownerLabel(budget.user)}</p>
+                  <p className="text-sm text-fg">{allocation.category.name}</p>
+                  <p className="text-xs text-muted">Shared by {ownerLabel(allocation.user)}</p>
                 </div>
-                <p className="font-tabular-figures text-sm text-fg">{formatAgorot(agorot(Number(budget.monthlyLimit)))}/mo</p>
+                <p className="font-tabular-figures text-sm text-fg">
+                  {formatAgorot(agorot(Number(allocation.amountAgorot)))} allocated ({allocation.month})
+                </p>
               </li>
             ))}
           </ul>

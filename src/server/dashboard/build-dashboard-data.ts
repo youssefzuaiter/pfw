@@ -1,11 +1,12 @@
 import "server-only";
 import { cache } from "react";
 import { buildCashFlowForecast, estimateAverageDailyDiscretionarySpend } from "../../lib/cash-flow-forecast";
+import { monthKeyFor } from "../../lib/date-month";
 import type { GoalPaceInput } from "../../lib/insights/goal-pace";
 import { generateInsights } from "../../lib/insights/generate-insights";
 import { agorot, multiplyAgorot, type Agorot } from "../../lib/money";
 import { findRecurringMerchants } from "../../lib/recurring-detection";
-import { listBudgets } from "../dal/budgets";
+import { getEnvelopeBalances } from "../dal/envelopes";
 import { listCategories } from "../dal/categories";
 import { listGoals } from "../dal/goals";
 import { getLatestRateTable } from "../dal/exchange-rates";
@@ -60,7 +61,7 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
   const [
     netWorth,
     netWorthHistory,
-    budgets,
+    envelopeBalances,
     categories,
     goals,
     holdings,
@@ -73,7 +74,7 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
   ] = await Promise.all([
     computeLiveNetWorth(userId, now),
     getNetWorthHistory(userId, CASH_FLOW_HISTORY_DAYS),
-    listBudgets(userId),
+    getEnvelopeBalances(userId, monthKeyFor(now)),
     listCategories(userId),
     listGoals(userId),
     listPortfolioHoldings(userId),
@@ -85,13 +86,13 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     getLatestRateTable(now),
   ]);
 
-  // --- Budget status (this month's spend per budgeted category) ---------
+  // --- Envelope status (rolling balance per category) --------------------
   const spendThisMonthByCategory = new Map(currentMonthSpend.map((s) => [s.categoryId, s.totalAgorot]));
-  const budgetStatuses = budgets.map((b) => ({
-    categoryId: b.categoryId,
-    categoryName: b.category.name,
-    monthlyLimit: agorot(Number(b.monthlyLimit)),
-    spentThisMonth: agorot(Number(spendThisMonthByCategory.get(b.categoryId) ?? 0n)),
+  const envelopeStatuses = envelopeBalances.map((e) => ({
+    categoryId: e.categoryId,
+    categoryName: e.categoryName,
+    balanceAgorot: e.balanceAgorot,
+    spentThisMonthAgorot: e.spentThisMonthAgorot,
   }));
 
   // --- Spending-spike history (6 prior months, zero-filled) -------------
@@ -180,7 +181,7 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
   const merchantNameByKey = (key: string) => occurrences.find((o) => o.merchantKey === key)?.displayName ?? key;
 
   const insights = generateInsights({
-    budgets: budgetStatuses,
+    envelopes: envelopeStatuses,
     spendHistories,
     cashFlowForecast,
     goals: goalPaceInputs,

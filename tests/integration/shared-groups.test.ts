@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { withUserScope } from "../../src/server/db/with-user-scope";
-import { getBudgetById } from "../../src/server/dal/budgets";
 import { getTransactionById } from "../../src/server/dal/transactions";
 import {
   acceptGroupInvite,
@@ -42,7 +41,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
     let memberRead: { id: string };
     let stranger: { id: string };
 
-    let ownerBudgetId: string;
+    let ownerCategoryId: string;
+    let ownerEnvelopeAllocationId: string;
     let ownerBankAccountId: string;
     let ownerTransactionId: string;
 
@@ -60,10 +60,11 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
         data: { userId: owner.id, slug: "uncategorized", name: "Uncategorized", isUncategorized: true },
       });
 
-      const budget = await admin.budget.create({
-        data: { userId: owner.id, categoryId: category.id, monthlyLimit: 100_000n },
+      const envelopeAllocation = await admin.envelopeAllocation.create({
+        data: { userId: owner.id, categoryId: category.id, amountAgorot: 100_000n, month: "2026-09" },
       });
-      ownerBudgetId = budget.id;
+      ownerCategoryId = category.id;
+      ownerEnvelopeAllocationId = envelopeAllocation.id;
 
       const bankAccount = await admin.bankAccount.create({
         data: {
@@ -245,22 +246,22 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
     });
 
     describe("resource sharing & cross-group data leakage", () => {
-      it("the owner can share their own budget into their own group", async () => {
-        const result = await setResourceSharing(owner.id, "budget", ownerBudgetId, groupId);
+      it("the owner can share their own envelope (by category) into their own group", async () => {
+        const result = await setResourceSharing(owner.id, "budget", ownerCategoryId, groupId);
         expect(result).toEqual({ ok: true });
 
-        const budget = await getBudgetById(owner.id, ownerBudgetId);
-        expect(budget?.sharedGroupId).toBe(groupId);
+        const allocation = await admin.envelopeAllocation.findUniqueOrThrow({ where: { id: ownerEnvelopeAllocationId } });
+        expect(allocation.sharedGroupId).toBe(groupId);
       });
 
       it("sharing into a group you don't belong to is rejected", async () => {
         const otherGroup = await createSharedGroup(stranger.id, "Stranger's Group");
-        const result = await setResourceSharing(owner.id, "budget", ownerBudgetId, otherGroup.id);
+        const result = await setResourceSharing(owner.id, "budget", ownerCategoryId, otherGroup.id);
         expect(result).toEqual({ ok: false, error: "not_group_member" });
       });
 
-      it("sharing someone else's resource ID is an IDOR-safe not-found, never a permission leak", async () => {
-        const result = await setResourceSharing(stranger.id, "budget", ownerBudgetId, groupId);
+      it("sharing someone else's category is an IDOR-safe not-found, never a permission leak", async () => {
+        const result = await setResourceSharing(stranger.id, "budget", ownerCategoryId, groupId);
         expect(result).toEqual({ ok: false, error: "resource_not_found" });
       });
 
@@ -269,51 +270,55 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
         // earlier), so if ownership weren't checked first this would
         // wrongly report `not_group_member` instead of the correct
         // `resource_not_found` — the exact ordering bug this test guards.
-        const result = await setResourceSharing(memberWrite.id, "budget", ownerBudgetId, groupId);
+        const result = await setResourceSharing(memberWrite.id, "budget", ownerCategoryId, groupId);
         expect(result).toEqual({ ok: false, error: "resource_not_found" });
       });
 
-      it("a member (any permission level) can see the shared budget via getSharedGroupData", async () => {
+      it("a member (any permission level) can see the shared envelope via getSharedGroupData", async () => {
         const data = await getSharedGroupData(memberRead.id, groupId);
-        expect(data.budgets.some((b) => b.id === ownerBudgetId)).toBe(true);
+        expect(data.envelopeAllocations.some((e) => e.id === ownerEnvelopeAllocationId)).toBe(true);
       });
 
       it("CROSS-GROUP LEAKAGE CHECK: a stranger querying the same real groupId gets nothing back, not an error", async () => {
         const data = await getSharedGroupData(stranger.id, groupId);
-        expect(data.budgets).toEqual([]);
+        expect(data.envelopeAllocations).toEqual([]);
         expect(data.bankAccounts).toEqual([]);
         expect(data.categories).toEqual([]);
       });
 
-      it("a READ-only member cannot edit a budget they don't own, even via a raw update (RLS proof)", async () => {
+      it("a READ-only member cannot edit an envelope they don't own, even via a raw update (RLS proof)", async () => {
         const result = await withUserScope(memberRead.id, (tx) =>
-          tx.budget.updateMany({ where: { id: ownerBudgetId }, data: { monthlyLimit: 999_999n } }),
+          tx.envelopeAllocation.updateMany({ where: { id: ownerEnvelopeAllocationId }, data: { amountAgorot: 999_999n } }),
         );
         expect(result.count).toBe(0);
 
-        const unchanged = await admin.budget.findUniqueOrThrow({ where: { id: ownerBudgetId } });
-        expect(unchanged.monthlyLimit).toBe(100_000n);
+        const unchanged = await admin.envelopeAllocation.findUniqueOrThrow({ where: { id: ownerEnvelopeAllocationId } });
+        expect(unchanged.amountAgorot).toBe(100_000n);
       });
 
-      it("a WRITE member CAN edit a budget shared into the group, even though they don't own it (positive control)", async () => {
+      it("a WRITE member CAN edit an envelope shared into the group, even though they don't own it (positive control)", async () => {
         const result = await withUserScope(memberWrite.id, (tx) =>
-          tx.budget.updateMany({ where: { id: ownerBudgetId }, data: { monthlyLimit: 150_000n } }),
+          tx.envelopeAllocation.updateMany({ where: { id: ownerEnvelopeAllocationId }, data: { amountAgorot: 150_000n } }),
         );
         expect(result.count).toBe(1);
 
-        const updated = await admin.budget.findUniqueOrThrow({ where: { id: ownerBudgetId } });
-        expect(updated.monthlyLimit).toBe(150_000n);
+        const updated = await admin.envelopeAllocation.findUniqueOrThrow({ where: { id: ownerEnvelopeAllocationId } });
+        expect(updated.amountAgorot).toBe(150_000n);
       });
 
       it("un-sharing removes it from every non-owner's view", async () => {
-        const unshareResult = await setResourceSharing(owner.id, "budget", ownerBudgetId, null);
+        const unshareResult = await setResourceSharing(owner.id, "budget", ownerCategoryId, null);
         expect(unshareResult).toEqual({ ok: true });
 
         const dataForMember = await getSharedGroupData(memberWrite.id, groupId);
-        expect(dataForMember.budgets.some((b) => b.id === ownerBudgetId)).toBe(false);
+        expect(dataForMember.envelopeAllocations.some((e) => e.id === ownerEnvelopeAllocationId)).toBe(false);
 
-        // The true owner can always still see their own (now personal-again) budget.
-        const ownersOwnView = await getBudgetById(owner.id, ownerBudgetId);
+        // The true owner can always still see their own (now personal-again)
+        // envelope — a real RLS-scoped read (withUserScope), not the admin
+        // bypass, to keep this a genuine "the owner's own view" proof.
+        const ownersOwnView = await withUserScope(owner.id, (tx) =>
+          tx.envelopeAllocation.findUnique({ where: { id: ownerEnvelopeAllocationId } }),
+        );
         expect(ownersOwnView?.sharedGroupId).toBeNull();
       });
 
@@ -424,7 +429,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
         expect(await admin.sharedGroup.findUnique({ where: { id: groupId } })).toBeNull();
         expect(await admin.groupMember.findMany({ where: { sharedGroupId: groupId } })).toHaveLength(0);
 
-        // Budget/BankAccount/Category revert to purely personal
+        // EnvelopeAllocation/BankAccount/Category revert to purely personal
         // (onDelete: SetNull) — never deleted, per the DAL doc comment.
         const bankAccount = await admin.bankAccount.findUniqueOrThrow({ where: { id: ownerBankAccountId } });
         expect(bankAccount.sharedGroupId).toBeNull();

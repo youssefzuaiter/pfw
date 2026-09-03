@@ -6,7 +6,10 @@ import { recordAuditLog } from "../../../../server/dal/audit-log";
 import { setResourceSharing } from "../../../../server/dal/shared-groups";
 
 const ENTITY_TYPE_BY_RESOURCE_TYPE: Record<"budget" | "bankAccount" | "category", string> = {
-  budget: "Budget",
+  // "budget" is now backed by EnvelopeAllocation (Zero-Sum Envelope
+  // Budgeting migration) — the resourceType key stays "budget" for API
+  // stability, but the audit log should name the real entity.
+  budget: "EnvelopeAllocation",
   bankAccount: "BankAccount",
   category: "Category",
 };

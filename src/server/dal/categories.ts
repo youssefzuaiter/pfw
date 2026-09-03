@@ -85,7 +85,7 @@ export async function deleteCategoryWithReassignment(userId: string, id: string)
       data: { categoryId: uncategorized.id, needsReview: true },
     });
 
-    // Budget rows cascade-delete automatically (schema.prisma's onDelete: Cascade).
+    // EnvelopeAllocation rows cascade-delete automatically (schema.prisma's onDelete: Cascade).
     await tx.category.delete({ where: { id } });
 
     return { ok: true, reassignedCount: count };

@@ -3,55 +3,71 @@ import { agorot } from "../money";
 import { generateBudgetBreachInsights } from "./budget-breaches";
 
 describe("generateBudgetBreachInsights()", () => {
-  it("flags a breach at or above 100% utilization", () => {
+  it("flags a critical breach when the rolling balance is negative", () => {
     const insights = generateBudgetBreachInsights([
-      { categoryId: "cat-dining", categoryName: "Dining", monthlyLimit: agorot(100_000), spentThisMonth: agorot(120_000) },
+      { categoryId: "cat-dining", categoryName: "Dining", balanceAgorot: agorot(-20_000), spentThisMonthAgorot: agorot(50_000) },
     ]);
     expect(insights).toHaveLength(1);
     expect(insights[0]).toMatchObject({ type: "budget_breach", severity: "critical", relatedEntityId: "cat-dining" });
   });
 
-  it("flags a warning between 80% and 100% utilization", () => {
+  it("flags a critical breach for a NEGATIVE balance even with ZERO spend this month — a carried-forward deficit, not just fresh overspending", () => {
     const insights = generateBudgetBreachInsights([
-      { categoryId: "cat-groceries", categoryName: "Groceries", monthlyLimit: agorot(100_000), spentThisMonth: agorot(85_000) },
+      { categoryId: "cat-old-deficit", categoryName: "Old Deficit", balanceAgorot: agorot(-5_000), spentThisMonthAgorot: agorot(0) },
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].severity).toBe("critical");
+  });
+
+  it("flags a warning when this month's spend has driven the balance to exactly zero", () => {
+    const insights = generateBudgetBreachInsights([
+      { categoryId: "cat-groceries", categoryName: "Groceries", balanceAgorot: agorot(0), spentThisMonthAgorot: agorot(85_000) },
     ]);
     expect(insights).toHaveLength(1);
     expect(insights[0].severity).toBe("warning");
   });
 
-  it("produces no insight below the 80% warning threshold", () => {
+  it("flags a warning when the balance has dropped below this month's own spend", () => {
     const insights = generateBudgetBreachInsights([
-      { categoryId: "cat-transport", categoryName: "Transport", monthlyLimit: agorot(100_000), spentThisMonth: agorot(50_000) },
+      { categoryId: "cat-groceries", categoryName: "Groceries", balanceAgorot: agorot(10_000), spentThisMonthAgorot: agorot(85_000) },
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].severity).toBe("warning");
+  });
+
+  it("produces no insight for a healthy positive balance comfortably above this month's spend", () => {
+    const insights = generateBudgetBreachInsights([
+      { categoryId: "cat-transport", categoryName: "Transport", balanceAgorot: agorot(100_000), spentThisMonthAgorot: agorot(50_000) },
     ]);
     expect(insights).toHaveLength(0);
   });
 
-  it("ranks a bigger overspend higher than a smaller one, both critical", () => {
+  it("produces no insight for an inactive envelope (nothing spent this month), even at a low positive balance", () => {
     const insights = generateBudgetBreachInsights([
-      { categoryId: "small-over", categoryName: "Small", monthlyLimit: agorot(100_000), spentThisMonth: agorot(101_000) },
-      { categoryId: "big-over", categoryName: "Big", monthlyLimit: agorot(100_000), spentThisMonth: agorot(200_000) },
+      { categoryId: "cat-idle", categoryName: "Idle", balanceAgorot: agorot(100), spentThisMonthAgorot: agorot(0) },
     ]);
-    const bigOver = insights.find((i) => i.relatedEntityId === "big-over")!;
-    const smallOver = insights.find((i) => i.relatedEntityId === "small-over")!;
-    expect(bigOver.rank).toBeGreaterThan(smallOver.rank);
+    expect(insights).toHaveLength(0);
   });
 
-  it("a critical breach always outranks a warning, regardless of raw percentages", () => {
+  it("ranks a bigger deficit higher than a smaller one, both critical", () => {
     const insights = generateBudgetBreachInsights([
-      { categoryId: "barely-breached", categoryName: "Barely", monthlyLimit: agorot(100_000), spentThisMonth: agorot(100_001) },
-      { categoryId: "almost-breached", categoryName: "Almost", monthlyLimit: agorot(100_000), spentThisMonth: agorot(99_999) },
+      { categoryId: "small-deficit", categoryName: "Small", balanceAgorot: agorot(-1_000), spentThisMonthAgorot: agorot(1_000) },
+      { categoryId: "big-deficit", categoryName: "Big", balanceAgorot: agorot(-100_000), spentThisMonthAgorot: agorot(100_000) },
     ]);
-    const breach = insights.find((i) => i.relatedEntityId === "barely-breached")!;
-    const warning = insights.find((i) => i.relatedEntityId === "almost-breached")!;
+    const bigDeficit = insights.find((i) => i.relatedEntityId === "big-deficit")!;
+    const smallDeficit = insights.find((i) => i.relatedEntityId === "small-deficit")!;
+    expect(bigDeficit.rank).toBeGreaterThan(smallDeficit.rank);
+  });
+
+  it("a critical breach always outranks a warning, regardless of raw magnitudes", () => {
+    const insights = generateBudgetBreachInsights([
+      { categoryId: "barely-negative", categoryName: "Barely", balanceAgorot: agorot(-1), spentThisMonthAgorot: agorot(1) },
+      { categoryId: "just-warning", categoryName: "Warning", balanceAgorot: agorot(0), spentThisMonthAgorot: agorot(1_000_000) },
+    ]);
+    const breach = insights.find((i) => i.relatedEntityId === "barely-negative")!;
+    const warning = insights.find((i) => i.relatedEntityId === "just-warning")!;
     expect(breach.severity).toBe("critical");
     expect(warning.severity).toBe("warning");
     expect(breach.rank).toBeGreaterThan(warning.rank);
-  });
-
-  it("ignores a zero-limit budget rather than dividing by zero", () => {
-    const insights = generateBudgetBreachInsights([
-      { categoryId: "zero", categoryName: "Zero", monthlyLimit: agorot(0), spentThisMonth: agorot(500) },
-    ]);
-    expect(insights).toHaveLength(0);
   });
 });

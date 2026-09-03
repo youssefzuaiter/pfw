@@ -1,6 +1,6 @@
 import type { CashFlowForecast } from "../cash-flow-forecast";
 import type { RecurringDetectionResult } from "../recurring-detection";
-import { type BudgetStatus, generateBudgetBreachInsights } from "./budget-breaches";
+import { type EnvelopeStatus, generateBudgetBreachInsights } from "./budget-breaches";
 import { generateCashFlowRiskInsights, type CashFlowRiskThresholds } from "./cash-flow-risk";
 import { type GoalPaceInput, generateGoalPaceInsights } from "./goal-pace";
 import { type HoldingValue, generatePortfolioConcentrationInsights } from "./portfolio-concentration";
@@ -10,7 +10,7 @@ import { generateTransactionReviewInsights } from "./transaction-review-queue";
 import { rankInsights, type Insight } from "./types";
 
 export type GenerateInsightsInput = {
-  budgets: readonly BudgetStatus[];
+  envelopes: readonly EnvelopeStatus[];
   spendHistories: readonly CategorySpendHistory[];
   cashFlowForecast: CashFlowForecast;
   cashFlowRiskThresholds?: CashFlowRiskThresholds;
@@ -29,7 +29,7 @@ export type GenerateInsightsInput = {
  */
 export function generateInsights(input: GenerateInsightsInput): Insight[] {
   const all: Insight[] = [
-    ...generateBudgetBreachInsights(input.budgets),
+    ...generateBudgetBreachInsights(input.envelopes),
     ...generateSpendingSpikeInsights(input.spendHistories),
     ...generateCashFlowRiskInsights(input.cashFlowForecast, input.cashFlowRiskThresholds),
     ...generateGoalPaceInsights(input.goals),
