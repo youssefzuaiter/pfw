@@ -1,8 +1,8 @@
 import "server-only";
 import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { getAuthSecret } from "../env";
-import { checkTotpChallenge, verifyCredentials } from "./credentials";
+import { getAppUrl, getAuthSecret } from "../env";
+import { checkLoginRateLimit, checkTotpChallenge, verifyCredentials } from "./credentials";
 import { getCurrentTokenVersion } from "./token-version";
 
 /**
@@ -27,6 +27,10 @@ class TotpRequiredError extends CredentialsSignin {
 }
 class TotpInvalidError extends CredentialsSignin {
   code = "totp_invalid";
+}
+/** Login-lockout (auth hardening pass, ad hoc post-§3ff) — see `credentials.ts`'s `checkLoginRateLimit` doc comment. */
+class LoginRateLimitedError extends CredentialsSignin {
+  code = "too_many_attempts";
 }
 
 /**
@@ -88,7 +92,55 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   // front of it (the Ingress) is what's actually responsible for
   // presenting correctly.
   trustHost: true,
-  session: { strategy: "jwt" },
+  // Auth hardening pass (ad hoc, post-§3ff) — a shorter session lifetime
+  // than Auth.js's own 30-day default (`docs/SECURITY-CHECKLIST.md` item
+  // 13 flagged this gap explicitly): 7 days, refreshed once a day of
+  // activity (`updateAge`) so an actively-used session doesn't
+  // unexpectedly expire mid-week while an abandoned one still does stop
+  // being valid within a bounded window.
+  session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
+  // Cookie hardening (`docs/SECURITY-CHECKLIST.md` item 13's other two
+  // gaps: not `__Host`-prefixed, `SameSite=Lax` not `Strict`) —
+  // deliberately gated on `APP_URL` actually being an `https://` origin,
+  // NOT on `NODE_ENV === "production"` (a real bug this pass's own e2e
+  // work caught: `next start` unconditionally sets `NODE_ENV=production`
+  // internally, even when serving plain HTTP with no TLS in front of it
+  // — e.g. this app's own Playwright e2e suite, which runs `next build
+  // && next start` on `http://localhost:3100`. Gating on `NODE_ENV`
+  // alone would have applied `Secure`/`__Host-` to a cookie set over a
+  // connection that was never actually HTTPS, silently breaking sign-in
+  // for anyone running `next start` without an HTTPS-terminating proxy
+  // in front of it — caught by the e2e login flow failing, not assumed).
+  // `getAppUrl()` is this app's own operator-set signal for its real
+  // public origin (added this same pass, for building email links) —
+  // checking its protocol mirrors Auth.js's OWN default cookie logic
+  // (`defaultCookies()`, `useSecureCookies = url.protocol === "https:"`,
+  // verified directly against the installed `@auth/core` source rather
+  // than assumed) using a value this static config block can actually
+  // see (a per-request URL isn't available here). `SameSite: "strict"`
+  // is a real, accepted trade-off: a link to this app clicked FROM an
+  // external site (an email client, a bookmark-sharing tool) won't carry
+  // the session cookie on that very first cross-site-initiated
+  // navigation, reading as logged-out until the next same-site request —
+  // acceptable here since this app never emails a link to a page that
+  // itself requires an existing session (the reset/verify links land on
+  // dedicated public pages, `src/proxy.ts`'s own allowlist).
+  ...(getAppUrl().startsWith("https://")
+    ? {
+        cookies: {
+          sessionToken: {
+            name: "__Host-authjs.session-token",
+            options: {
+              httpOnly: true,
+              sameSite: "strict" as const,
+              path: "/",
+              secure: true,
+              maxAge: 60 * 60 * 24 * 7,
+            },
+          },
+        },
+      }
+    : {}),
   pages: { signIn: "/login" },
   providers: [
     Credentials({
@@ -105,6 +157,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const email = credentials?.email;
         const password = credentials?.password;
         if (typeof email !== "string" || typeof password !== "string") return null;
+
+        if (!checkLoginRateLimit(email)) throw new LoginRateLimitedError();
 
         const user = await verifyCredentials(email, password);
         if (!user) return null;

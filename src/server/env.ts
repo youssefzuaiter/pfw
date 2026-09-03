@@ -103,6 +103,13 @@ const REQUIRED_SECRET_SCHEMAS = {
     32,
     "AUTH_SECRET must be at least 32 characters — Auth.js uses this to sign/encrypt session JWTs",
   ),
+  // Real transactional email (auth hardening pass, ad hoc post-§3ff) —
+  // password-reset and email-verification links. Only ever read from
+  // src/server/email/resend-client.ts, lazily, so an environment that
+  // never triggers either flow (most test runs) never needs this set —
+  // same "throws only when actually used" posture ANTHROPIC_API_KEY
+  // already has for the advisor.
+  RESEND_API_KEY: nonEmptyString("RESEND_API_KEY"),
 } as const;
 
 type RequiredSecretEnvVar = keyof typeof REQUIRED_SECRET_SCHEMAS;
@@ -173,6 +180,37 @@ export function getEncryptionKey(): string {
 
 export function getAuthSecret(): string {
   return readRequiredEnv("AUTH_SECRET");
+}
+
+export function getResendApiKey(): string {
+  return readRequiredEnv("RESEND_API_KEY");
+}
+
+/**
+ * Not a secret — the "From" address for outbound auth emails. Defaults
+ * to Resend's own shared testing sender (`onboarding@resend.dev`), which
+ * works with zero domain-verification setup — the right default for this
+ * app's local-dev-first posture (same reasoning `getEmbeddingSidecarUrl()`/
+ * `getOllamaConfig()` already give for defaulting instead of throwing).
+ * Swap to a verified custom domain's address for a real deployment.
+ */
+export function getResendFromAddress(): string {
+  return process.env.RESEND_FROM_EMAIL ?? "PFW <onboarding@resend.dev>";
+}
+
+/**
+ * Not a secret — the app's own public origin, used only to build
+ * absolute links inside outbound emails (a password-reset/email-
+ * verification link has to be a full URL, not a relative path, since it's
+ * opened from an email client, not a browser tab already on this site).
+ * Deliberately NOT derived from the incoming request's Host header the
+ * way a route handler might — `auth.ts`'s own `trustHost: true` comment
+ * already documents why this app doesn't treat an inbound Host header as
+ * self-authenticating; an email link is exactly the kind of value that
+ * must come from a value THIS server controls, not from request input.
+ */
+export function getAppUrl(): string {
+  return process.env.APP_URL ?? "http://localhost:3000";
 }
 
 /**

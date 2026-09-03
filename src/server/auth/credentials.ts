@@ -1,6 +1,7 @@
 import "server-only";
 import argon2 from "argon2";
 import { createAdminClient } from "../db/admin-client";
+import { checkRateLimit } from "../api/rate-limit";
 import { verifyTotpCode } from "./totp";
 
 /**
@@ -17,6 +18,26 @@ import { verifyTotpCode } from "./totp";
  */
 
 const PRIMARY_DEMO_USER_EMAIL = "demo@pfw.local"; // matches current-user.ts's own SEED_USER_EMAIL
+
+/**
+ * Login-attempt lockout (auth hardening pass, ad hoc post-§3ff) — the
+ * same in-memory sliding-window limiter every other bootstrap route in
+ * this app already uses (`POST /api/auth/register`'s per-email limit),
+ * reused rather than a second hand-rolled "consecutive failures" counter
+ * with its own reset-on-success bookkeeping. Keyed by the SUBMITTED
+ * email (lowercased, matching Zod's own email normalization on the
+ * client-facing routes), not by IP — bounds automated credential-
+ * stuffing against one target account regardless of how many source IPs
+ * an attacker rotates through, which a per-IP limit alone would miss.
+ * Deliberately checked BEFORE `verifyCredentials` runs (auth.ts's
+ * `authorize()`), so a locked-out account never even pays the Argon2id
+ * hashing cost per attempt.
+ */
+const LOGIN_RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxRequests: 10 };
+
+export function checkLoginRateLimit(email: string): boolean {
+  return checkRateLimit(`auth:login:${email.trim().toLowerCase()}`, LOGIN_RATE_LIMIT).allowed;
+}
 
 export type VerifiedUser = { id: string; email: string; displayName: string; tokenVersion: number };
 

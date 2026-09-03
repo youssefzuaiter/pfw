@@ -16,6 +16,7 @@
 # playwright (Phase 7 e2e/accessibility suite)
 /test-results/
 /playwright-report/
+/tests/e2e/.auth/
 /blob-report/
 /playwright/.cache/
 

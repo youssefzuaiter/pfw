@@ -4686,6 +4686,293 @@ limitations note).
   back unclaimed, leaving zero test residue. `npm run check` re-run
   clean one final time after cleanup: 1063/1066, unchanged.
 
+## 3jj. Auth hardening: password reset, email verification, login lockout, cookie hardening (ad hoc)
+
+Explicit user request closing four gaps in real authentication (§3ff):
+no forgot-password flow, no email verification, no login-lockout, and a
+session cookie not yet `__Host`-prefixed/`Strict` — the four items
+`docs/SECURITY-CHECKLIST.md` (§3ii) had already flagged by name. Built
+ASVS/NIST-800-63B-aligned per an explicit design discussion with the
+user: cryptographically random single-use tokens (never predictable data
+like a base64-encoded email), short expiry, uniform "if an account
+exists…" messaging (no enumeration signal), and — since this app never
+had security-question/KBA-style recovery to begin with — no fallback to
+invent or remove.
+
+- **`PasswordResetToken`/`EmailVerificationToken`** (new models, migration
+  `20260903140000_password_reset_email_verification`; `User.emailVerified
+  DateTime?` added alongside, same "null is load-bearing" pattern
+  `passwordHash` already established): only a SHA-256 `tokenHash` is ever
+  persisted — same "hash it, never store the secret" rule as
+  `GroupInvite.tokenHash`/`Beneficiary.shareHash`. RLS-`FORCE`d, standard
+  per-user `tenant_isolation` policy; the actual request/confirm flows run
+  UNAUTHENTICATED by design (that's why they're resetting; a verification
+  link may be opened with no session at all), so they go through the
+  FOURTH allowlisted admin-client bootstrap exception,
+  `src/server/auth/account-recovery-admin-ops.ts`.
+- **A real bug this pass found and fixed in its OWN new code, not
+  pre-existing**: the first draft fetched a reset token's owning user via
+  `passwordResetToken.findUnique({ include: { user: true } })`. Field-level
+  encryption (`encrypted-fields.ts`) is a Prisma Client extension
+  registered per-model on `user`'s own top-level operations only — a
+  NESTED `user` relation returned from a different model's query never
+  passes through it, so `record.user.totpSecret` was raw ciphertext, not
+  the real secret, and TOTP verification during reset silently rejected
+  every genuinely correct code. Caught by this pass's own integration
+  test failing (a freshly-generated, correct code coming back invalid),
+  traced to the cause rather than worked around — fixed with a SEPARATE
+  `adminFindUserById` call (a direct `admin.user.findUnique`, which
+  correctly decrypts). Same root-cause class §3cc's own doc comment
+  already documents for `$queryRaw` bypassing this same extension, hit
+  here via `include` instead of raw SQL — worth knowing for any future
+  admin-client query that joins across an encrypted-field model.
+- **True 2-step verification on reset, not KBA**: if the account has TOTP
+  enabled, `confirmPasswordReset` requires a valid code (reusing
+  `totp.ts`'s `verifyTotpCode` and the same replay-protection bookkeeping
+  `checkTotpChallenge` already does for login) before the password
+  actually changes — surfaced to the client via the same `totp_required`/
+  `totp_invalid` two-step shape `LoginForm` already uses.
+- **Login lockout** (`credentials.ts`'s `checkLoginRateLimit`): the
+  existing in-memory sliding-window limiter (`rate-limit.ts`), reused
+  rather than a second hand-rolled "consecutive failures" counter —
+  10 attempts / 15 minutes, keyed by the submitted email so it bounds
+  credential stuffing against one target account regardless of source
+  IP. Checked in `auth.ts`'s `authorize()` BEFORE `verifyCredentials`
+  runs, so a locked-out account never pays the Argon2id hashing cost.
+- **Cookie hardening** (`auth.ts`): `session.maxAge` shortened to 7 days
+  (from Auth.js's 30-day default), `updateAge` 1 day. `__Host-`-prefixed
+  session cookie name + `SameSite=Strict` are gated on `getAppUrl()`
+  actually being an `https://` origin — NOT `NODE_ENV === "production"`,
+  which was this pass's own first draft and a real bug caught while
+  building the e2e login flow (§3kk): `next start` sets
+  `NODE_ENV=production` internally even over plain HTTP (this app's own
+  Playwright suite runs `next build && next start` on
+  `http://localhost:3100`), so gating on `NODE_ENV` alone would have
+  applied `Secure`/`__Host-` to a cookie that was never actually HTTPS,
+  silently breaking sign-in for any plain-HTTP `next start` deployment —
+  caught by the e2e sign-in step failing, not assumed. `getAppUrl()`'s
+  protocol mirrors Auth.js's OWN `useSecureCookies = url.protocol ===
+  "https:"` default (verified directly against the installed
+  `@auth/core` source) using a value this static config block can
+  actually see. `SameSite: "strict"`'s real, accepted trade-off: a link
+  to this app clicked FROM an external site won't carry the session
+  cookie on that first cross-site-initiated navigation — acceptable since this
+  app never emails a link to a page requiring an existing session (the
+  reset/verify links land on dedicated public pages).
+- **Real outbound email via Resend** (`src/server/email/resend-client.ts`,
+  a dependency-free `fetch` wrapper, same "own small HTTP surfaces
+  directly" habit as the Frankfurter/CoinGecko/Ollama clients) — chosen
+  explicitly over this app's other established pattern (returning a raw
+  link in the API response, per `GroupInvite`/Dead Man's Switch) because
+  the user asked for real delivery this time. `RESEND_API_KEY` (new
+  required-but-lazy secret, `SECRET_ENV_VAR_NAMES`), `RESEND_FROM_EMAIL`/
+  `APP_URL` (non-secret, defaulted). Both `requestPasswordReset` and
+  `sendEmailVerification` catch and log a send failure internally rather
+  than throwing — the uniform "if an account exists…" response has to
+  stay uniform even under a Resend outage, not just on the happy path.
+  `auth-emails.ts`'s inline-hex-styled HTML is the one deliberate
+  exception to the "no untokenized hex" guard (`tests/guards/
+  no-untokenized-hex.test.ts`, `ALLOWED_HEX_FILES`) — outbound email
+  renders in third-party mail clients with zero access to this app's CSS
+  custom properties.
+- **New public routes** (`src/proxy.ts`): `/forgot-password` (exact),
+  `/reset-password/`, `/verify-email/` (prefixes, dynamic `[token]`
+  pages) — same "opened from an email client, possibly with no session"
+  reasoning as `/vault/recover/[token]` (§3t). Confirmation pages
+  deliberately do NOT validate/consume the token at GET/render time —
+  only the client-side POST does — so an email security scanner's
+  link-prefetch (a real, known failure mode for GET-based single-use
+  links) can't burn the token before the real user ever clicks it.
+- **Settings UI**: `EmailVerificationPanel` (badge + "Resend verification
+  email" button, same shape as `RevokeSessionsButton`) added to the
+  existing Security section alongside `MfaPanel`.
+- **Verified live, not just by test**: `npm run check` clean with the DB
+  live — full suite 1085/1088 passing (3 skip, the unrelated embedding
+  sidecar), including 14 new integration tests
+  (`tests/integration/password-reset-email-verification.test.ts`:
+  unknown-email/unclaimed-row no-ops, expired/consumed/garbage token
+  rejection, a real reset changing the Argon2id hash and bumping
+  `tokenVersion`, single-use enforcement, the TOTP-required/invalid/valid
+  three-step path, graceful degradation with no `RESEND_API_KEY` set, and
+  RLS cross-user isolation) plus new unit coverage for the Resend client
+  and the login-lockout keying. Both Gitleaks (`v8.30.1`) and Semgrep
+  (`1.174.0`, the pinned versions §3z wired into CI) re-run locally
+  against the full changed tree: Semgrep 0 findings across 378 files;
+  Gitleaks' 23 findings are ALL inside the gitignored `.next/` build
+  directory (confirmed via `git check-ignore`), none in any tracked
+  source file. Live `curl` against the running dev server: public pages
+  200, a forged cross-origin `Origin` on `forgot-password` 403s, a
+  request against the real seeded/claimed demo account created a genuine
+  `PasswordResetToken` row (deleted afterward, no residue left).
+- **Known limitations, left as such rather than silently expanded
+  scope**: no rate-limit lockout UI countdown (the 429 response's
+  `Retry-After` header is there; the client doesn't surface a "try again
+  in N minutes" message yet); no "resend password reset email" cooldown
+  beyond the existing per-email rate limit; Resend's shared
+  `onboarding@resend.dev` sender is a real deliverability constraint for
+  a production deployment — a verified custom domain is a real next step
+  once one exists, not built here.
+
+## 3kk. Dollar-Green Theme & e2e Suite Auth Repair (ad hoc)
+
+Two explicit user requests handled together because the second surfaced
+mid-way through verifying the first: (1) recolor the page background to
+"dollar bill green," and (2) once that change needed real verification,
+this app's own Playwright e2e suite (Phase 7) turned out to have been
+silently broken since real authentication landed (§3ff) — every route it
+drives redirects to `/login` under real auth, and it was never updated,
+never being part of the routine `npm run check` loop. Fixed for real
+rather than left as a known gap, since it was actively blocking
+verification of the color change itself.
+
+- **Full re-theme, not just `--pfw-bg`** (`src/app/globals.css`): light
+  mode's `--pfw-bg` is `#85bb65` (the commonly-referenced "Dollar Bill"
+  named hex), dark mode's is `#0f1f14` (a deep, desaturated money-green).
+  A saturated background this different from the original near-white/
+  near-black pages meant every OTHER token needed real re-verification,
+  not just the background — checked with the actual WCAG relative-
+  luminance formula (the same one axe-core uses), not eyeballed:
+  `--pfw-accent` (deep navy `#143058`/unchanged `#5b8def`),
+  `--pfw-positive` (hue-shifted to teal, `#06392f`/`#3ddbc0` — a green
+  "gain" color sitting on a now-green page reads as noise even once
+  contrast is technically fixed, so this shifted hue, not just
+  lightness), `--pfw-negative`, `--pfw-signature`, `--pfw-muted`, and
+  `--pfw-border` all got new light-mode values; dark mode needed far
+  less — only `--pfw-bg` and `--pfw-border` actually changed there,
+  `--pfw-surface` stayed at its ORIGINAL `#12161f`.
+- **A real regression caught and reverted mid-pass, not shipped**: the
+  first draft also lightened dark-mode `--pfw-surface` (to a green-tinted
+  `#1c3524`) for "card definition against the new bg." Live axe-core
+  testing (via the e2e repair below) caught that this silently broke
+  several ALREADY-tuned pairings from the Phase 7 audit — `text-accent`
+  on its own `bg-accent/10` header pill dropped to 3.77:1, `text-negative`
+  on `bg-surface` dropped to 3.69:1, both under the 4.5:1 AA floor —
+  because those colors were never re-verified against the NEW surface
+  value, only against the new bg. Reverted `--pfw-surface` back to the
+  original `#12161f` entirely: measured, not assumed, that its
+  relationship to the new dark bg (1.057:1) is nearly identical to its
+  relationship to the OLD dark bg (1.07:1), so nothing was actually lost
+  by leaving it alone — this app's dark cards were always defined mainly
+  by their border, not a background jump.
+- **A second real regression, same root cause, different token**: the
+  first-draft border colors (`#3a4a30` light / `#3d6249` dark) were
+  picked to be visible against the new green bg, but `Badge`'s "neutral"
+  variant and a couple of progress-track components use `bg-border` as an
+  actual TEXT-bearing fill (`bg-border text-muted`), not just a
+  decorative line — a role this pass hadn't accounted for. Muted text on
+  those first-draft borders measured 1.22:1 (light) and 2.73:1 (dark),
+  both real axe violations. Fixed with `#cddbc0` (light, a pale sage —
+  muted-on-it: 8.03:1) and `#2f3a42` (dark — 4.61:1), both chosen by
+  explicitly solving for the text-contrast case this time, not just the
+  border-as-line case.
+- **e2e suite auth repair** (`tests/e2e/global-setup.ts`,
+  `global-teardown.ts`, `playwright.config.ts`): a Playwright
+  `globalSetup` now claims the seeded `demo@pfw.local` row (the one
+  account guaranteed to hold full seeded data after `npm run db:seed` —
+  security.spec.ts's own `beforeAll` already assumed this precondition),
+  signs in through the REAL credentials flow (register → CSRF token →
+  `POST /api/auth/callback/credentials`, using Playwright's own
+  `request.newContext()` rather than hand-parsing `Set-Cookie` headers —
+  matters because this app's cookie shape now genuinely differs between
+  an `https://` deployment and a plain-HTTP one, see below), and saves
+  the resulting `storageState` for every spec's `page`/`request` fixture
+  to reuse. `global-teardown.ts` restores the row to unclaimed afterward
+  — same snapshot/restore discipline `tests/integration/
+  auth-credentials.test.ts` already established for this exact row, so a
+  developer running the suite locally never wakes up to a permanently-
+  claimed demo account.
+- **A real, separate auth.ts bug this repair caught**: cookie hardening
+  (§3jj) was gated on `NODE_ENV === "production"`, but `next start` —
+  which this e2e suite runs on plain `http://localhost:3100`, no TLS —
+  sets `NODE_ENV=production` internally regardless of whether anything is
+  actually serving over HTTPS. That would have applied `Secure`/
+  `__Host-` to a cookie set over a connection that was never HTTPS,
+  breaking sign-in for any plain-HTTP `next start` deployment, e2e suite
+  included. Fixed by gating on `getAppUrl().startsWith("https://")`
+  instead — an explicit, operator-set signal (the same env var added in
+  §3jj for building email links) rather than an environment-variable
+  proxy that doesn't actually track what protocol is being served.
+- **Three more real, pre-existing test bugs found and fixed while
+  getting the suite green, none related to color or auth**:
+  1. `security.spec.ts`'s CSP check asserted `.not.toContain("unsafe-eval")`
+     — a false positive against this app's own legitimate
+     `'wasm-unsafe-eval'` token (§3q/§3u), which contains that substring.
+     Fixed with a word-boundary regex that distinguishes the two.
+  2. `security.spec.ts`'s `beforeAll` grabbed "the most recent
+     transaction across the whole table" with no `userId` scope — safe
+     in the old single-demo-user world, but a real multi-user dev
+     database (post-§3ff) means that query could grab a row belonging to
+     a DIFFERENT user than the one the e2e session is authenticated as,
+     making RLS correctly 404 a PATCH the test expected to succeed. Fixed
+     by scoping both the transaction and category lookups to the e2e
+     test user specifically.
+  3. `keyboard-navigation.spec.ts` failed "had no focusable elements at
+     all" on every single route — traced to a genuine, reproducible
+     Playwright/Chromium quirk (confirmed independent of this app
+     entirely, via a throwaway script against the public, auth-free
+     `/login` page): the very first synthetic `Tab` keypress after a
+     fresh `page.goto()` doesn't move `document.activeElement` at all;
+     the second one does, consistently. Fixed with one untracked
+     "warm-up" `Tab` press before the counted/asserted loop begins.
+  4. (Genuinely fixed, not test-side) `copilot-sidebar.tsx`'s closed
+     panel used `aria-hidden` alone, which doesn't stop an off-screen
+     `translate-x-full` panel's "Close copilot" button from staying
+     reachable via Tab — a real `aria-hidden-focus` axe violation, caught
+     on every single page since the copilot mounts globally. Fixed with
+     `inert={!isOpen}` (React 19 passes it straight through), which
+     removes the whole closed subtree from both the tab order and the
+     accessibility tree at once — `aria-hidden` alone never did that.
+- **Verified, not just written**: full `npm run test:e2e` — **41/41
+  passing** (0 failed), up from 8/41 at the start of this pass. `npm run
+  check` clean (1085/1088, 3 unrelated skips). Gitleaks (`v8.30.1`) and
+  Semgrep (`1.174.0`) re-run locally against the full changed tree —
+  Semgrep 0 findings across 379 files; every Gitleaks finding confirmed
+  (via `git check-ignore`) confined to `.env`/`.next/`, both gitignored.
+  `demo@pfw.local` confirmed unclaimed and `youssef.zuaiter2005@gmail.com`
+  untouched after a full e2e run, via direct `psql` query — zero residue.
+- **Known limitations, left as such**: the e2e suite still isn't wired
+  into `.github/workflows/ci.yml` (§3z/§3aa's pinned Gitleaks/Semgrep
+  jobs are; this Playwright suite remains manual/local-only, same
+  Phase-7-era limitation this pass didn't expand scope to close); no
+  visual/pixel screenshot regression testing exists for the new palette
+  beyond axe's contrast checks — a human look at the rendered app is
+  still worth doing, this pass verified computed contrast ratios, not
+  pixel appearance.
+- **Superseded later the same session**: the dollar-green theme this
+  section describes was the state at the time it was written, but was
+  replaced by a dark navy blue theme immediately after (same session,
+  undocumented as its own lettered section since it's a direct
+  continuation of this one — the CURRENT live palette is described here
+  instead of a separate entry). The user asked for the background to
+  become "dark navy blue," which surfaced a real, different constraint
+  than green did: WCAG's luminance formula weighs blue far lower than
+  green (0.0722 vs. 0.7152), so a blue dark enough to read as authentic
+  navy makes DARK text fail catastrophically against it (~1.0-1.3:1) —
+  there's no "darken it a bit more" fix the way there was for green.
+  Flagged to the user directly before building; the user chose the
+  architecturally sound answer over a lighter "steel blue" workaround:
+  **`:root`'s light-mode block now mirrors this app's own dark-mode
+  shape** (dark bg `#101a33`, a subtly-lifted dark surface `#182645`
+  instead of white, light fg `#eef1f7`) rather than trying to force a
+  light-mode-shaped palette onto a genuinely dark ground. `--pfw-positive`
+  reverted to an ordinary green (`#34d399`) — the "hue-shift away from
+  the page's own hue" reasoning that forced it to teal against a green
+  page doesn't apply against a navy one. `--pfw-accent` stayed blue
+  (`#5ec8f2`, a bright sky-blue, not navy) specifically because it's kept
+  distinct from the bg by LIGHTNESS this time, not hue — a bright-vs-deep
+  gap this large reads as clearly different even within one hue family,
+  unlike the green pass's "positive" collision, which was between two
+  similar MID-tones. Same rigor as the green pass throughout: every
+  token computed against real WCAG contrast math, including the
+  `bg-accent/10`-blended-pill compound case and the `Badge`-neutral
+  muted-on-border-as-fill case that caught real bugs in the green pass —
+  verified again via the full `npm run test:e2e` suite this same section
+  built: **41/41 passing**, `demo@pfw.local` confirmed unclaimed and
+  `youssef.zuaiter2005@gmail.com` untouched afterward. Dark mode
+  (`prefers-color-scheme: dark` / `data-theme="dark"`) is completely
+  unchanged by any of this — still the deep money-green from earlier in
+  this same session.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

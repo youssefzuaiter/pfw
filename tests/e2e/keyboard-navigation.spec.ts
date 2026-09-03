@@ -22,6 +22,20 @@ for (const route of ROUTES) {
     await page.goto(route);
     await page.waitForLoadState("networkidle");
 
+    // A real, reproducible Playwright/Chromium quirk this pass found
+    // while diagnosing a wall of "had no focusable elements at all"
+    // failures (§3kk) — confirmed independent of this app entirely: the
+    // VERY FIRST synthetic `Tab` keypress after a fresh `page.goto()`
+    // doesn't move `document.activeElement` at all (still `BODY`), even
+    // on the public, auth-free `/login` page with a real, populated form
+    // right there; the SECOND press moves it correctly, every time,
+    // reproduced directly outside this test file too. One untracked
+    // warm-up press absorbs that dropped keystroke before the real,
+    // asserted loop begins, so `i === 0` genuinely means "the first
+    // COUNTED press landed on body" again, matching this test's own
+    // stated intent, rather than being an artifact of automation timing.
+    await page.keyboard.press("Tab");
+
     let reachedEndOfTabOrder = false;
 
     for (let i = 0; i < MAX_TAB_PRESSES; i += 1) {

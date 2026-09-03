@@ -1,6 +1,7 @@
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getMfaStatus } from "../../server/dal/mfa";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
+import { EmailVerificationPanel } from "./_components/email-verification-panel";
 import { MfaPanel } from "./_components/mfa-panel";
 import { PreferencesForm, type PreferencesFormData } from "./_components/preferences-form";
 import { RevokeSessionsButton } from "./_components/revoke-sessions-button";
@@ -47,6 +48,7 @@ export default async function SettingsPage() {
       <div>
         <h2 className="text-base font-semibold text-fg">Security</h2>
         <div className="mt-2 flex flex-col gap-3">
+          <EmailVerificationPanel initialVerified={user.emailVerified !== null} />
           <MfaPanel initialEnabled={mfaStatus.enabled} initialPending={mfaStatus.pending} />
           <RevokeSessionsButton />
         </div>

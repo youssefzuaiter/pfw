@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
@@ -62,6 +63,10 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
         if (result?.code === "totp_invalid") {
           setMfaRequired(true);
           setError("Incorrect authentication code — try again.");
+          return;
+        }
+        if (result?.code === "too_many_attempts") {
+          setError("Too many attempts — wait a few minutes before trying again.");
           return;
         }
         setError("Invalid email or password.");
@@ -131,9 +136,17 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="login-password" className="text-xs font-medium text-muted">
-          Password
-        </label>
+        <div className="flex items-center justify-between">
+          <label htmlFor="login-password" className="text-xs font-medium text-muted">
+            Password
+          </label>
+          <Link
+            href="/forgot-password"
+            className="text-xs text-accent-ink underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <input
           id="login-password"
           type="password"

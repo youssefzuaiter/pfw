@@ -23,8 +23,29 @@ import { auth } from "./server/auth/auth";
  * receives a 307 instead of a 200 reads as "unhealthy" to Kubernetes,
  * which would then repeatedly restart an app pod that was actually fine.
  */
-const PUBLIC_EXACT_PATHS = new Set(["/login", "/register", "/welcome", "/api/health", "/api/health/ready"]);
-const PUBLIC_PATH_PREFIXES = ["/api/auth/", "/vault/recover/", "/api/dead-mans-switch/recover/"];
+// "/forgot-password", "/reset-password/[token]", "/verify-email/[token]"
+// (auth hardening pass, ad hoc post-§3ff) — same reasoning as the
+// existing public entries: a password-reset/email-verification link is
+// opened from an email client, quite possibly with no session in that
+// browser at all, so these pages must be reachable pre-login. The API
+// routes behind them (`/api/auth/forgot-password`, `/reset-password`,
+// `/verify-email`) are already covered by the existing "/api/auth/"
+// prefix below.
+const PUBLIC_EXACT_PATHS = new Set([
+  "/login",
+  "/register",
+  "/welcome",
+  "/forgot-password",
+  "/api/health",
+  "/api/health/ready",
+]);
+const PUBLIC_PATH_PREFIXES = [
+  "/api/auth/",
+  "/vault/recover/",
+  "/api/dead-mans-switch/recover/",
+  "/reset-password/",
+  "/verify-email/",
+];
 
 function isPublicPath(pathname: string): boolean {
   if (PUBLIC_EXACT_PATHS.has(pathname)) return true;

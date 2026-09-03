@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { registerUser } from "../../../../server/auth/credentials";
+import { sendEmailVerification } from "../../../../server/auth/email-verification";
 import { checkRateLimit } from "../../../../server/api/rate-limit";
 import { isTrustedOrigin } from "../../../../server/api/verify-origin";
 import { jsonBadRequest, jsonForbidden, jsonTooManyRequests } from "../../../../server/api/responses";
@@ -63,6 +64,13 @@ export async function POST(request: NextRequest) {
     // exist specifically to avoid revealing whether an email exists).
     return NextResponse.json({ error: "An account with this email already exists." }, { status: 409 });
   }
+
+  // Fire-and-forget-but-awaited: sendEmailVerification never throws (it
+  // catches and logs its own send failure internally, see that
+  // function's doc comment), so this never turns a successful
+  // registration into a failed response just because outbound email had
+  // a bad moment.
+  await sendEmailVerification(result.userId, email);
 
   return NextResponse.json({ ok: true, inherited: result.inherited }, { status: 201 });
 }

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { STORAGE_STATE_PATH } from "./tests/e2e/global-setup";
 
 const PORT = 3100;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -26,9 +27,18 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   timeout: 30_000,
+  // Real authentication (AGENTS.md §3ff) landed after this suite was
+  // originally written — every route/API call it drives is now gated
+  // behind a real session, so `globalSetup` signs in once (claiming the
+  // seeded demo account) and every test's `page`/`request` fixture reuses
+  // that session via `storageState`, rather than each test hitting
+  // `/login` or a bare 401 (§3kk).
+  globalSetup: "./tests/e2e/global-setup",
+  globalTeardown: "./tests/e2e/global-teardown",
   use: {
     baseURL: BASE_URL,
     trace: "retain-on-failure",
+    storageState: STORAGE_STATE_PATH,
   },
   projects: [
     {

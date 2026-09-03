@@ -1,5 +1,6 @@
 import { Client } from "pg";
 import { expect, test } from "@playwright/test";
+import { E2E_EMAIL } from "./global-setup";
 
 /**
  * Phase 7's security hardening pass, automated against the real running
@@ -29,18 +30,41 @@ test.beforeAll(async () => {
   db = new Client({ connectionString: process.env.DATABASE_URL });
   await db.connect();
 
+  // Scoped to the e2e test user's OWN data (§3kk) — a real bug this fix
+  // closes: real multi-user auth (§3ff) means this dev database can now
+  // hold several users' transactions, and the un-scoped "most recent
+  // transaction across the whole table" query this file originally used
+  // could grab a row belonging to a DIFFERENT user than the one
+  // `global-setup.ts` actually signs the browser in as. The requests
+  // below are made under that authenticated session (via `storageState`),
+  // so RLS correctly 404s a cross-user PATCH — which is the right
+  // behavior, but meant these tests were failing on a false premise
+  // (asserting 200 against a row the session doesn't own), not
+  // discovering a real IDOR gap.
   const rows = await db.query<{ id: string; categoryId: string }>(
-    'select id, "categoryId" from "NotableTransaction" order by "occurredAt" desc limit 1',
+    `select nt.id, nt."categoryId"
+     from "NotableTransaction" nt
+     join "BankAccount" ba on ba.id = nt."bankAccountId"
+     join "User" u on u.id = ba."userId"
+     where u.email = $1
+     order by nt."occurredAt" desc
+     limit 1`,
+    [E2E_EMAIL],
   );
   if (rows.rows.length === 0) {
-    throw new Error("No seeded transactions found — run `npm run db:seed` before the e2e suite.");
+    throw new Error("No seeded transactions found for the e2e test user — run `npm run db:seed` before the e2e suite.");
   }
   realTransactionId = rows.rows[0].id;
   realCategoryId = rows.rows[0].categoryId;
 
-  const categories = await db.query<{ id: string }>('select id from "Category" where id != $1 limit 1', [
-    realCategoryId,
-  ]);
+  const categories = await db.query<{ id: string }>(
+    `select c.id
+     from "Category" c
+     join "User" u on u.id = c."userId"
+     where u.email = $1 and c.id != $2
+     limit 1`,
+    [E2E_EMAIL, realCategoryId],
+  );
   otherCategoryId = categories.rows[0].id;
 });
 
@@ -68,7 +92,15 @@ test.describe("security headers", () => {
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).not.toContain("unsafe-inline");
-    expect(csp).not.toContain("unsafe-eval");
+    // NOT `.not.toContain("unsafe-eval")` — a real false positive this
+    // pass caught: the CSP legitimately carries `'wasm-unsafe-eval'`
+    // (§3q/§3u, scoped narrowly to WASM compilation for the client-side
+    // OCR/embedding engines), which contains "unsafe-eval" as a
+    // substring despite being a genuinely different, narrower token than
+    // the broad `'unsafe-eval'` this check exists to catch. A
+    // word-boundary regex distinguishes the two; a plain substring check
+    // can't.
+    expect(csp).not.toMatch(/(?<!wasm-)unsafe-eval/);
   });
 });
 

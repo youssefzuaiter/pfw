@@ -195,6 +195,16 @@ model User {
   /// mechanism behind "the first person to register inherits the demo
   /// data" rather than a separate migration flag or feature switch.
   passwordHash         String?
+  /// Auth hardening pass (ad hoc, post-§3ff): null until the address has
+  /// been proven reachable via `EmailVerificationToken`'s confirm flow —
+  /// same "null is a real, load-bearing state" pattern `passwordHash`
+  /// already establishes above, not a boolean, so the UI can show WHEN
+  /// verification happened, not just whether. Never set at registration
+  /// time (an email is just an identifier at that point, not yet a
+  /// proven-reachable address) — only `confirmEmailVerification` sets it,
+  /// mirroring `totpEnabled`'s own "only flips true once possession is
+  /// actually proven" rule.
+  emailVerified        DateTime?
   zkSalt               String?
   zkKdfIterations      Int?
   zkCanaryCiphertext   String?
@@ -265,6 +275,55 @@ model User {
   emergencyDocuments       EmergencyDocument[]
   recoveryShareSubmissions RecoveryShareSubmission[]
   cryptoWallets            CryptoWallet[]
+  passwordResetTokens      PasswordResetToken[]
+  emailVerificationTokens  EmailVerificationToken[]
+}
+
+/// Time-limited, single-use password reset tokens (auth hardening pass,
+/// ad hoc post-§3ff — ASVS-aligned: cryptographically random, not
+/// predictable data like a base64-encoded email; short expiry; single
+/// use). Only `tokenHash` (SHA-256 of the raw token) is ever persisted —
+/// the same "hash it, never store the secret" rule already established
+/// for `GroupInvite.tokenHash` (§3s) and `Beneficiary.shareHash` (§3t).
+/// The raw token exists only in the outbound email and the URL the user
+/// clicks; a database dump reveals no usable token.
+///
+/// `consumedAt` is set both on legitimate use AND when a newer token is
+/// requested for the same user (`adminCreatePasswordResetToken`
+/// invalidates any still-open prior token first) — a real, load-bearing
+/// distinction from "doesn't exist," so a stale emailed link from an
+/// earlier request reads as "used or replaced," not silently as
+/// "not found," aiding support/debugging without weakening the security
+/// property (either way the token no longer works).
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// Time-limited, single-use email verification tokens — same shape and
+/// same reasoning as `PasswordResetToken` above (deliberately not a
+/// shared/generic "AuthToken" model with a purpose enum: this app's own
+/// history already prefers one dedicated model per distinct flow over a
+/// shared polymorphic one — `GroupInvite`, `Beneficiary`, and
+/// `PasswordResetToken` each get their own table rather than a single
+/// "Token" table branching on a `kind` column).
+model EmailVerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
 }
 
 /// Cost-basis method for the tax simulator's saved default (mirrors the

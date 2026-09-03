@@ -142,6 +142,15 @@ export function CopilotSidebar() {
         role="dialog"
         aria-label="PFW Copilot"
         aria-hidden={!isOpen}
+        // A real axe finding (`aria-hidden-focus`), caught while
+        // verifying an unrelated change: `aria-hidden` alone doesn't stop
+        // its off-screen (`translate-x-full`) contents from staying
+        // focusable — the panel's own "Close copilot" button was still
+        // reachable via Tab while hidden. `inert` (native, React 19
+        // passes it straight through) removes the whole closed subtree
+        // from both the tab order and the accessibility tree at once,
+        // which `aria-hidden` on its own never did.
+        inert={!isOpen}
         className={`uv-copilot-panel fixed inset-y-0 right-0 z-20 flex w-full max-w-sm flex-col border-l border-border bg-surface shadow-2xl ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
