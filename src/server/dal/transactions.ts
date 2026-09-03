@@ -2,13 +2,16 @@ import "server-only";
 import { Prisma } from "../../generated/prisma/client";
 import type { Currency } from "../../generated/prisma/client";
 import { categorizeTransaction } from "../../lib/categorization/cascade";
+import { applyRules, type TransactionRuleData } from "../../lib/categorization/rule-engine";
 import type { PastOccurrence } from "../../lib/categorization/types";
 import { neutralizeFormulaInjection } from "../../lib/csv-import/formula-injection";
 import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model";
+import { agorot } from "../../lib/money";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { parsePgVectorLiteral, toPgVectorLiteral } from "../../lib/vector-math";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 import { BankAccountNotFoundError } from "./transaction-import";
+import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
 /** See bank-accounts.ts for why this returns `null` rather than throwing on a mismatch. */
 export async function getTransactionById(userId: string, id: string) {
@@ -327,6 +330,10 @@ export type CreateTransactionInput = {
  * `isManual: true` here is the correct, already-documented flag for
  * this (§3j: "`isManual` means... manually *entered*") — this is the
  * first code path that actually sets it.
+ *
+ * Categorization now runs a Tier 0 pass first (`rule-engine.ts`, user-
+ * defined deterministic rules) ahead of the cascade — see the Tier 0
+ * block below for exactly what bypasses what.
  */
 export async function createTransaction(userId: string, input: CreateTransactionInput) {
   return withUserScope(userId, async (tx) => {
@@ -342,45 +349,82 @@ export async function createTransaction(userId: string, input: CreateTransaction
     const merchantName = input.merchantName ? neutralizeFormulaInjection(input.merchantName) : undefined;
     const merchantText = merchantName ?? description;
 
-    const priorRows = await tx.notableTransaction.findMany({
-      where: { userId },
-      select: { merchantName: true, description: true, categoryId: true, needsReview: true },
-    });
-    const pastOccurrences: PastOccurrence[] = priorRows
-      .filter((prior) => normalizeMerchantKey(prior.merchantName ?? prior.description) === normalizeMerchantKey(merchantText))
-      .map((prior) => ({ categoryId: prior.categoryId, isManual: !prior.needsReview }));
+    // Tier 0: user-defined deterministic rules, evaluated BEFORE the
+    // cascade below. Uses the ALREADY-OPEN `tx` from this withUserScope
+    // block (fetchActiveRulesForEvaluation, not
+    // listActiveTransactionRulesForEvaluation) — see that function's own
+    // doc comment for why a nested scoped transaction here would be wrong.
+    const activeRules = await fetchActiveRulesForEvaluation(tx, userId);
+    const tier0Input: TransactionRuleData = {
+      merchantName,
+      description,
+      amountAgorot: agorot(Number(input.amountAgorot)),
+    };
+    const tier0 = applyRules(tier0Input, activeRules);
+    const tier0CategoryId = tier0.categorySlug ? categoryIdBySlug.get(tier0.categorySlug) : undefined;
 
-    const embeddingCorrections = input.embedding
-      ? (
-          await tx.merchantEmbedding.findMany({
-            where: { userId, embeddingModel: CURRENT_EMBEDDING_MODEL_ID },
-            select: { categoryId: true, embedding: true },
-          })
-        ).map((row) => ({ categoryId: row.categoryId, embedding: row.embedding }))
-      : undefined;
+    let categoryId: string;
+    let confidence: number;
 
-    const suggestion = await categorizeTransaction({
-      merchantText,
-      pastOccurrences,
-      resolveCategoryIdBySlug: (slug) => categoryIdBySlug.get(slug),
-      uncategorizedCategoryId: uncategorized.id,
-      merchantEmbedding: input.embedding,
-      embeddingCorrections,
-    });
+    if (tier0CategoryId) {
+      // A matched, deterministic, user-authored rule BYPASSES Tiers 1-4
+      // entirely for categorization (a rule matching a slug this user has
+      // no category for falls through to the cascade instead, same
+      // reasoning Tier 2's own slug-resolution failure already falls
+      // through in cascade.ts) — treated as fully confident, at least as
+      // confident as Tier 2's app-default keyword rules (0.9), since a
+      // user's own explicit rule outranks a generic default.
+      categoryId = tier0CategoryId;
+      confidence = 1;
+    } else {
+      const priorRows = await tx.notableTransaction.findMany({
+        where: { userId },
+        select: { merchantName: true, description: true, categoryId: true, needsReview: true },
+      });
+      const pastOccurrences: PastOccurrence[] = priorRows
+        .filter((prior) => normalizeMerchantKey(prior.merchantName ?? prior.description) === normalizeMerchantKey(merchantText))
+        .map((prior) => ({ categoryId: prior.categoryId, isManual: !prior.needsReview }));
+
+      const embeddingCorrections = input.embedding
+        ? (
+            await tx.merchantEmbedding.findMany({
+              where: { userId, embeddingModel: CURRENT_EMBEDDING_MODEL_ID },
+              select: { categoryId: true, embedding: true },
+            })
+          ).map((row) => ({ categoryId: row.categoryId, embedding: row.embedding }))
+        : undefined;
+
+      const suggestion = await categorizeTransaction({
+        merchantText,
+        pastOccurrences,
+        resolveCategoryIdBySlug: (slug) => categoryIdBySlug.get(slug),
+        uncategorizedCategoryId: uncategorized.id,
+        merchantEmbedding: input.embedding,
+        embeddingCorrections,
+      });
+      categoryId = suggestion.categoryId;
+      confidence = suggestion.confidence;
+    }
+
+    // A Tier 0 `rename` action overrides the entered merchant name; a
+    // `flag` action overrides the review-queue decision either tier
+    // above would otherwise make.
+    const finalMerchantName = tier0.renamedMerchantName ?? merchantName;
+    const finalNeedsReview = tier0.forceNeedsReview ?? confidence < 0.5;
 
     const created = await tx.notableTransaction.create({
       data: {
         userId,
         bankAccountId: input.bankAccountId,
-        categoryId: suggestion.categoryId,
+        categoryId,
         occurredAt: input.occurredAt,
         currency: "ILS",
         amount: input.amountAgorot,
         nativeAmount: input.amountAgorot,
         description,
-        merchantName,
+        merchantName: finalMerchantName,
         isManual: true,
-        needsReview: suggestion.confidence < 0.5,
+        needsReview: finalNeedsReview,
       },
       include: { category: true, bankAccount: true },
     });

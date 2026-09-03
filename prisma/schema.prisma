@@ -253,6 +253,7 @@ model User {
   bankAccounts             BankAccount[]
   categories               Category[]
   transactions             NotableTransaction[]
+  transactionRules         TransactionRule[]
   budgets                  Budget[]
   goals                    Goal[]
   goalContributions        GoalContribution[]
@@ -714,6 +715,33 @@ model NotableTransaction {
   @@index([userId, occurredAt])
   @@index([userId, categoryId])
   @@index([userId, bankAccountId])
+}
+
+/// Tier 0 of the categorization pipeline (src/lib/categorization/
+/// rule-engine.ts) — user-defined deterministic rules evaluated BEFORE
+/// the existing 4-tier cascade, on both CSV import and manual entry.
+/// `conditions`/`actions` are `Json`, not a normalized table: validated
+/// by Zod at the API boundary (RuleCondition[]/RuleAction[] in
+/// rule-engine.ts), not by the DB — same "keep the schema stable while
+/// the rule vocabulary grows" call TransactionRule's own design doc
+/// makes, matching how MonteCarlo/tax UserSettings already store
+/// structured preferences as Json rather than one column per field.
+/// `priority`: lower runs first (ties broken by `createdAt`, oldest
+/// first) — `applyRules` in rule-engine.ts is what actually enforces
+/// this order, not a DB `ORDER BY` the DAL happens to use.
+model TransactionRule {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  priority   Int      @default(0)
+  isActive   Boolean  @default(true)
+  conditions Json
+  actions    Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId, priority])
 }
 
 /// One row per (user, category) — the current monthly limit. Utilization

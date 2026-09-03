@@ -1,10 +1,12 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { categorizeTransaction } from "../../lib/categorization/cascade";
+import { applyRules, type TransactionRuleData } from "../../lib/categorization/rule-engine";
 import type { PastOccurrence } from "../../lib/categorization/types";
 import type { CanonicalImportRow } from "../../lib/csv-import/types";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { withUserScope } from "../db/with-user-scope";
+import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
 /** Bulk imports write row-by-row (see with-user-scope.ts) — well above Prisma's 5s default. */
 const IMPORT_TRANSACTION_TIMEOUT_MS = 120_000;
@@ -82,6 +84,10 @@ export type ImportTransactionsInput = {
  * Runs in a single transaction: a statement import is all-or-nothing, so
  * a failure halfway through can't leave a half-imported month behind for
  * the user to reconcile by hand.
+ *
+ * Categorization now runs a Tier 0 pass first (`rule-engine.ts`, user-
+ * defined deterministic rules) ahead of the existing Tiers 1-2 — see the
+ * per-row Tier 0 block below for exactly what bypasses what.
  */
 export async function importTransactions(
   userId: string,
@@ -100,6 +106,15 @@ export async function importTransactions(
       if (!uncategorized) throw new Error(`User ${userId} has no uncategorized category`);
 
       const categoryIdBySlug = new Map(categories.map((category) => [category.slug, category.id]));
+
+      // Tier 0 of the categorization pipeline (rule-engine.ts) — fetched
+      // once for the whole import, same reasoning `categories`/`priorRows`
+      // are fetched once above rather than per row. Uses the ALREADY-OPEN
+      // `tx` from this withUserScope block (fetchActiveRulesForEvaluation,
+      // not listActiveTransactionRulesForEvaluation) — opening a second,
+      // nested scoped transaction here would grab a second connection
+      // from the pool mid-import for no reason.
+      const activeRules = await fetchActiveRulesForEvaluation(tx, userId);
 
       // Tier 1 of the cascade learns from what this user has already
       // categorized, so imported rows inherit prior manual corrections
@@ -145,19 +160,51 @@ export async function importTransactions(
         }
 
         const merchantText = row.merchantName ?? row.description;
-        const suggestion = await categorizeTransaction({
-          merchantText,
-          pastOccurrences: pastByMerchant.get(normalizeMerchantKey(merchantText)) ?? [],
-          resolveCategoryIdBySlug: (slug) => categoryIdBySlug.get(slug),
-          uncategorizedCategoryId: uncategorized.id,
-          // Tiers 3 and 4 are deliberately not wired in here: Tier 3
-          // needs the embedding sidecar and Tier 4 needs a live Anthropic
-          // call, neither of which should sit in the critical path of a
-          // bulk file upload (a 300-row statement would mean 300 network
-          // round-trips). Anything the deterministic tiers can't place
-          // lands in the review queue below, which is exactly what that
-          // queue is for.
-        });
+
+        // Tier 0: user-defined deterministic rules, evaluated BEFORE the
+        // cascade below. Rename/flag actions always apply regardless of
+        // whether a rule also set a category; a resolved `categorySlug`
+        // BYPASSES Tiers 1-4 entirely for this row (a rule matching a
+        // slug this user has no category for falls through to the
+        // cascade instead of erroring, same reasoning Tier 2's own
+        // slug-resolution failure already falls through in cascade.ts).
+        const tier0Input: TransactionRuleData = {
+          merchantName: row.merchantName,
+          description: row.description,
+          amountAgorot: row.amountAgorot,
+        };
+        const tier0 = applyRules(tier0Input, activeRules);
+        const tier0CategoryId = tier0.categorySlug ? categoryIdBySlug.get(tier0.categorySlug) : undefined;
+
+        let categoryId: string;
+        let confidence: number;
+        if (tier0CategoryId) {
+          categoryId = tier0CategoryId;
+          // A matched, deterministic, user-authored rule is treated as
+          // fully confident — at least as confident as Tier 2's app-default
+          // keyword rules (0.9), since a user's own explicit rule
+          // outranks a generic default.
+          confidence = 1;
+        } else {
+          const suggestion = await categorizeTransaction({
+            merchantText,
+            pastOccurrences: pastByMerchant.get(normalizeMerchantKey(merchantText)) ?? [],
+            resolveCategoryIdBySlug: (slug) => categoryIdBySlug.get(slug),
+            uncategorizedCategoryId: uncategorized.id,
+            // Tiers 3 and 4 are deliberately not wired in here: Tier 3
+            // needs the embedding sidecar and Tier 4 needs a live Anthropic
+            // call, neither of which should sit in the critical path of a
+            // bulk file upload (a 300-row statement would mean 300 network
+            // round-trips). Anything the deterministic tiers can't place
+            // lands in the review queue below, which is exactly what that
+            // queue is for.
+          });
+          categoryId = suggestion.categoryId;
+          confidence = suggestion.confidence;
+        }
+
+        const finalMerchantName = tier0.renamedMerchantName ?? row.merchantName;
+        const finalNeedsReview = tier0.forceNeedsReview ?? confidence < 0.5;
 
         let createdId: string;
         try {
@@ -165,7 +212,7 @@ export async function importTransactions(
             data: {
               userId,
               bankAccountId: input.bankAccountId,
-              categoryId: suggestion.categoryId,
+              categoryId,
               providerTransactionId,
               occurredAt: row.occurredAt,
               amount: BigInt(row.amountAgorot),
@@ -178,11 +225,14 @@ export async function importTransactions(
               currency: "ILS",
               nativeAmount: BigInt(row.amountAgorot),
               description: row.description,
-              merchantName: row.merchantName,
+              // A Tier 0 `rename` action overrides the imported merchant
+              // name; otherwise unchanged.
+              merchantName: finalMerchantName,
               isManual: false,
-              // Anything the cascade couldn't confidently place is flagged
-              // for the user rather than silently filed somewhere wrong.
-              needsReview: suggestion.confidence < 0.5,
+              // Anything the cascade couldn't confidently place is
+              // flagged for the user, UNLESS a Tier 0 `flag` action
+              // explicitly forced this one way or the other.
+              needsReview: finalNeedsReview,
             },
             select: { id: true },
           });
@@ -211,7 +261,7 @@ export async function importTransactions(
         // history and re-derive the same answer 40 times.
         const key = normalizeMerchantKey(merchantText);
         const bucket = pastByMerchant.get(key) ?? [];
-        bucket.push({ categoryId: suggestion.categoryId, isManual: false });
+        bucket.push({ categoryId, isManual: false });
         pastByMerchant.set(key, bucket);
       }
 
