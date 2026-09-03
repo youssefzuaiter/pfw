@@ -45,3 +45,31 @@ export function toPgVectorLiteral(embedding: readonly number[]): string {
   }
   return `[${embedding.join(",")}]`;
 }
+
+/**
+ * Inverse of `toPgVectorLiteral` — parses pgvector's `[0.1,0.2,...]` text
+ * form back into a plain number array. Needed by the Local RAG export
+ * path (`listSearchEmbeddingsForExport`, AGENTS.md §3cc), the one place
+ * this app reads a stored embedding's VALUE back out of Postgres rather
+ * than only ranking by it server-side — `$queryRaw` against a
+ * `vector`-typed column returns node-postgres's default untyped text
+ * representation (no type parser is registered for the extension type),
+ * so this is the one place that text needs turning back into numbers.
+ */
+export function parsePgVectorLiteral(literal: string): number[] {
+  const trimmed = literal.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) {
+    throw new RangeError(`Not a valid pgvector literal: ${literal}`);
+  }
+
+  const inner = trimmed.slice(1, -1);
+  if (inner.length === 0) return [];
+
+  return inner.split(",").map((part) => {
+    const value = Number(part);
+    if (!Number.isFinite(value)) {
+      throw new RangeError(`Not a valid pgvector literal: ${literal}`);
+    }
+    return value;
+  });
+}

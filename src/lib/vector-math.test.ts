@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cosineSimilarity, toPgVectorLiteral } from "./vector-math";
+import { cosineSimilarity, parsePgVectorLiteral, toPgVectorLiteral } from "./vector-math";
 
 describe("cosineSimilarity()", () => {
   it("returns 1 for identical vectors", () => {
@@ -62,5 +62,35 @@ describe("toPgVectorLiteral()", () => {
     const vector = [1.5, -2.25, 0, 1e21, -1e-21];
     const literal = toPgVectorLiteral(vector);
     expect(literal).toMatch(/^\[[0-9.eE+,-]*\]$/);
+  });
+});
+
+describe("parsePgVectorLiteral()", () => {
+  it("round-trips a simple vector through toPgVectorLiteral", () => {
+    const vector = [0.1, 0.2, 0.3, -1, 0];
+    expect(parsePgVectorLiteral(toPgVectorLiteral(vector))).toEqual(vector);
+  });
+
+  it("round-trips a realistic 384-dimension vector", () => {
+    const vector = Array.from({ length: 384 }, (_, i) => Math.sin(i) * 0.01);
+    const parsed = parsePgVectorLiteral(toPgVectorLiteral(vector));
+    expect(parsed).toHaveLength(384);
+    parsed.forEach((value, i) => expect(value).toBeCloseTo(vector[i], 10));
+  });
+
+  it("parses an empty vector", () => {
+    expect(parsePgVectorLiteral("[]")).toEqual([]);
+  });
+
+  it("tolerates surrounding whitespace", () => {
+    expect(parsePgVectorLiteral("  [1,2,3]  ")).toEqual([1, 2, 3]);
+  });
+
+  it("rejects a string with no brackets", () => {
+    expect(() => parsePgVectorLiteral("1,2,3")).toThrow(RangeError);
+  });
+
+  it("rejects a non-numeric element", () => {
+    expect(() => parsePgVectorLiteral("[1,not-a-number,3]")).toThrow(RangeError);
   });
 });

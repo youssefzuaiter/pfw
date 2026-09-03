@@ -6,7 +6,7 @@ import type { PastOccurrence } from "../../lib/categorization/types";
 import { neutralizeFormulaInjection } from "../../lib/csv-import/formula-injection";
 import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model";
 import { normalizeMerchantKey } from "../../lib/text-matching";
-import { toPgVectorLiteral } from "../../lib/vector-math";
+import { parsePgVectorLiteral, toPgVectorLiteral } from "../../lib/vector-math";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 import { BankAccountNotFoundError } from "./transaction-import";
 
@@ -158,6 +158,55 @@ export async function searchTransactionsSemantic(
     const rowById = new Map(rows.map((row) => [row.id, row]));
     return ranked.map((r) => rowById.get(r.id)).filter((row): row is (typeof rows)[number] => row !== undefined);
   });
+}
+
+export type SearchEmbeddingExportRow = { transactionId: string; embedding: number[] };
+
+/**
+ * Full export of this user's search-embedding vectors — the server-side
+ * half of the Local RAG retrieval pipeline (client-side plan doc): the
+ * browser caches these vectors in IndexedDB and runs KNN entirely
+ * client-side against them, so answering a copilot question never needs
+ * to send a raw transaction description to the server just to find
+ * which transactions are relevant. Raw SQL is required, same reason
+ * `searchTransactionsSemantic` above already needs it — `searchEmbedding`
+ * is `Unsupported("vector(384)")`, with no typed Prisma read path — but
+ * unlike that function, this one's whole point IS to return the vector
+ * itself, not just rank by it. There's no equivalent "$queryRaw bypasses
+ * the encryption extension" trap to route around here: nothing this
+ * function selects (`id`, the vector) is an encrypted column.
+ */
+export async function listSearchEmbeddingsForExport(userId: string): Promise<SearchEmbeddingExportRow[]> {
+  return withUserScope(userId, async (tx) => {
+    const rows = await tx.$queryRaw<{ id: string; vector: string }[]>`
+      SELECT "id", "searchEmbedding"::text AS "vector"
+      FROM "NotableTransaction"
+      WHERE "userId" = ${userId} AND "searchEmbedding" IS NOT NULL
+    `;
+    return rows.map((row) => ({ transactionId: row.id, embedding: parsePgVectorLiteral(row.vector) }));
+  });
+}
+
+/**
+ * Hydrates a client-supplied list of transaction ids into full rows —
+ * the server-side half of injecting the browser's local KNN retrieval
+ * (Local RAG plan) into a copilot request. The ids come from the
+ * browser's own IndexedDB vector cache, itself populated for this exact
+ * user by `listSearchEmbeddingsForExport` above, but they still cross a
+ * trust boundary as untrusted client input like any other request field
+ * — `where: { userId }` (plus RLS underneath, via `withUserScope`) is
+ * what actually enforces that: any id that isn't this user's own is
+ * silently excluded from the result, never leaked, never an error, same
+ * IDOR-safe convention every DAL function in this app already follows.
+ */
+export async function listTransactionsByIds(userId: string, ids: readonly string[]) {
+  if (ids.length === 0) return [];
+  return withUserScope(userId, (tx) =>
+    tx.notableTransaction.findMany({
+      where: { id: { in: [...ids] }, userId },
+      include: { category: true, bankAccount: true },
+    }),
+  );
 }
 
 export type UpdateTransactionCategoryResult = Awaited<ReturnType<typeof getTransactionById>>;

@@ -1,5 +1,6 @@
 import "server-only";
 import { ADVISOR_TOOLS, executeAdvisorTool } from "../advisor/tools";
+import { buildRelevantTransactionsMessage } from "./relevant-transactions";
 import { buildCopilotSystemPrompt } from "./system-prompt";
 import { toOllamaTools, type OllamaMessage, type OllamaTool } from "./ollama-client";
 
@@ -43,15 +44,29 @@ const TOOL_DEFINITIONS = toOllamaTools(ADVISOR_TOOLS);
  * answer (once the model stops requesting tools) is returned, once, in
  * full — a deliberate simplicity-over-polish trade-off, not an
  * oversight.
+ *
+ * `relevantTransactionIds` (Local RAG plan) is optional and additive —
+ * appended after `onToolCall` rather than folded into an options object,
+ * so every existing call site (the route, `tests/integration/
+ * copilot-tools.test.ts`) keeps working unchanged. When present, the
+ * ids are hydrated (`buildRelevantTransactionsMessage`, itself
+ * RLS/ownership-scoped) into ONE `role: "tool"` message inserted right
+ * after the system prompt, before the conversation history — available
+ * as context for the whole tool-use loop below, not re-injected per
+ * round.
  */
 export async function runCopilotConversation(
   chat: OllamaChatFn,
   userId: string,
   history: ConversationMessage[],
   onToolCall?: (activity: CopilotToolActivity) => void,
+  relevantTransactionIds?: readonly string[],
 ): Promise<string> {
+  const relevantTransactionsMessage = await buildRelevantTransactionsMessage(userId, relevantTransactionIds);
+
   const messages: OllamaMessage[] = [
     { role: "system", content: buildCopilotSystemPrompt() },
+    ...(relevantTransactionsMessage ? [relevantTransactionsMessage] : []),
     ...history.map((message): OllamaMessage => ({ role: message.role, content: message.content })),
   ];
 

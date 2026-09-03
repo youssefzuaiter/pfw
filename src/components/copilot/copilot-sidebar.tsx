@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { retrieveRelevantTransactionIds } from "../../lib/rag/local-retrieval";
+import { syncLocalVectorStore } from "../../lib/rag/local-vector-store";
 import { Badge } from "../badge/badge";
 import { Spinner } from "../spinner/spinner";
 
@@ -49,6 +51,12 @@ export function CopilotSidebar() {
   // re-render, and using state here would call setState synchronously at
   // the top of the effect body (react-hooks/set-state-in-effect).
   const hasCheckedAvailabilityRef = useRef(false);
+  // Same reasoning, for the Local RAG vector cache: sync once per open,
+  // not on every render. Best-effort — a failed/slow sync just means
+  // this session's queries fall back to the un-augmented prompt
+  // (`retrieveRelevantTransactionIds` degrades to `[]` on its own), never
+  // something the user needs to see or retry.
+  const hasSyncedVectorStoreRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen || hasCheckedAvailabilityRef.current) return;
@@ -67,6 +75,14 @@ export function CopilotSidebar() {
   }, [isOpen]);
 
   useEffect(() => {
+    if (!isOpen || hasSyncedVectorStoreRef.current) return;
+    hasSyncedVectorStoreRef.current = true;
+    syncLocalVectorStore().catch(() => {
+      // Deliberately silent — see the ref's own comment above.
+    });
+  }, [isOpen]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "nearest" });
   }, [messages, isSending]);
 
@@ -81,10 +97,22 @@ export function CopilotSidebar() {
     setError(null);
 
     try {
+      // Local RAG plan: embed the question and rank it against the
+      // IndexedDB-cached transaction vectors entirely client-side —
+      // `retrieveRelevantTransactionIds` never throws (an empty/
+      // uninitialized cache, a slow/unavailable embedder, or a
+      // genuinely empty result all resolve to `[]`), so an empty array
+      // here is exactly the graceful "fall back to the standard,
+      // un-augmented prompt" case, not an error to handle specially.
+      const relevantTransactionIds = await retrieveRelevantTransactionIds(trimmed);
+
       const response = await fetch("/api/copilot/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({
+          messages: nextMessages,
+          ...(relevantTransactionIds.length > 0 ? { relevantTransactionIds } : {}),
+        }),
       });
       const body = await response.json().catch(() => ({}));
 

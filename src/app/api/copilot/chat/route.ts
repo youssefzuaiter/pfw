@@ -7,6 +7,8 @@ import { runCopilotConversation } from "../../../../server/copilot/run-conversat
 
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_LENGTH = 4_000;
+/** Mirrors `relevant-transactions.ts`'s own `MAX_RELEVANT_TRANSACTIONS` ceiling — validated here too so an oversized array 400s at the request boundary rather than being silently truncated deep inside the conversation loop. */
+const MAX_RELEVANT_TRANSACTION_IDS = 10;
 
 const MessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -15,6 +17,13 @@ const MessageSchema = z.object({
 
 const BodySchema = z.object({
   messages: z.array(MessageSchema).min(1).max(MAX_MESSAGES),
+  // Local RAG plan: transaction ids the browser's own local KNN search
+  // (over its IndexedDB-cached embedding vectors) resolved as relevant
+  // to the user's question — never the vectors or the query text
+  // itself. Untrusted client input like any other request field;
+  // `run-conversation.ts` re-validates ownership via the DAL before
+  // using any of it.
+  relevantTransactionIds: z.array(z.string().min(1)).max(MAX_RELEVANT_TRANSACTION_IDS).optional(),
 });
 
 /**
@@ -54,7 +63,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const reply = await runCopilotConversation(callOllamaChat, user.id, parsed.data.messages);
+    const reply = await runCopilotConversation(
+      callOllamaChat,
+      user.id,
+      parsed.data.messages,
+      undefined,
+      parsed.data.relevantTransactionIds,
+    );
     return NextResponse.json({ ok: true, reply });
   } catch (error) {
     console.error("POST /api/copilot/chat failed", error);

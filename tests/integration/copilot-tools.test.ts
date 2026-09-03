@@ -20,6 +20,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("cop
   let admin: ReturnType<typeof createAdminClient>;
   let userA: { id: string };
   let userB: { id: string };
+  let transactionA: { id: string };
 
   beforeAll(async () => {
     admin = createAdminClient();
@@ -42,7 +43,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("cop
         nativeBalance: 500_00n,
       },
     });
-    await admin.notableTransaction.create({
+    transactionA = await admin.notableTransaction.create({
       data: {
         userId: userA.id,
         bankAccountId: accountA.id,
@@ -200,5 +201,77 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("cop
     expect(reply).toBe(
       "I wasn't able to finish looking that up within this session's limits — try asking a narrower question.",
     );
+  });
+
+  // Local RAG plan: `relevantTransactionIds` are the ids the BROWSER's
+  // own local KNN search resolved and sent along with the request — an
+  // untrusted client input, no different in kind from a tool-call
+  // argument. These cases prove the server-side hydration
+  // (`buildRelevantTransactionsMessage`) both injects real data
+  // correctly AND re-enforces per-user ownership independently of
+  // whatever the browser claims, the same IDOR property the tool-calling
+  // tests above already prove for `executeAdvisorTool`.
+
+  it("injects the browser's locally-retrieved transaction as a tool-shaped message, before the user's own message", async () => {
+    const { chat, calls } = scriptedChat([{ content: "That was dinner at User A's Restaurant, ₪12.34." }]);
+
+    const reply = await runCopilotConversation(
+      chat,
+      userA.id,
+      [{ role: "user", content: "What was that transaction about?" }],
+      undefined,
+      [transactionA.id],
+    );
+
+    expect(reply).toBe("That was dinner at User A's Restaurant, ₪12.34.");
+
+    const firstCallMessages = calls[0] as { role: string; content: string }[];
+    // [system, relevant-transactions tool message, user message] — the
+    // injected message sits between the system prompt and the actual
+    // conversation history, not folded into either.
+    expect(firstCallMessages[0].role).toBe("system");
+    expect(firstCallMessages[1].role).toBe("tool");
+    expect(firstCallMessages[1].content).toContain("User A's Restaurant");
+    expect(firstCallMessages[1].content).toContain("₪12.34");
+    expect(firstCallMessages[2]).toEqual({ role: "user", content: "What was that transaction about?" });
+  });
+
+  it("never hydrates another user's transaction even when the client supplies its id — cross-user IDOR check", async () => {
+    const { chat, calls } = scriptedChat([{ content: "I don't have a transaction matching that." }]);
+
+    // userB's request claims userA's transaction id — exactly what a
+    // tampered or buggy client could send, since the server has no way
+    // to verify the browser's local KNN search actually ran correctly.
+    const reply = await runCopilotConversation(
+      chat,
+      userB.id,
+      [{ role: "user", content: "What was that transaction about?" }],
+      undefined,
+      [transactionA.id],
+    );
+
+    expect(reply).toBe("I don't have a transaction matching that.");
+
+    const firstCallMessages = calls[0] as { role: string; content: string }[];
+    // No tool message was injected at all — `listTransactionsByIds`
+    // correctly found zero rows for userB matching that id, so
+    // `buildRelevantTransactionsMessage` returned `null` rather than
+    // hydrating User A's data into User B's conversation.
+    expect(firstCallMessages.some((m) => m.role === "tool")).toBe(false);
+    expect(JSON.stringify(firstCallMessages)).not.toContain("User A's Restaurant");
+    expect(firstCallMessages[0].role).toBe("system");
+    expect(firstCallMessages[1]).toEqual({ role: "user", content: "What was that transaction about?" });
+  });
+
+  it("with no relevantTransactionIds supplied, injects nothing (the un-augmented prompt)", async () => {
+    const { chat, calls } = scriptedChat([{ content: "Sure, happy to help." }]);
+
+    await runCopilotConversation(chat, userA.id, [{ role: "user", content: "Hi" }]);
+
+    const firstCallMessages = calls[0] as { role: string; content: string }[];
+    expect(firstCallMessages).toEqual([
+      { role: "system", content: firstCallMessages[0].content },
+      { role: "user", content: "Hi" },
+    ]);
   });
 });
