@@ -5176,6 +5176,178 @@ with a standard bootstrap-CI tiered threshold on top.
   a later day's check comes back NORMAL) — an explicit dismiss action
   was not part of the task's own scope.
 
+## 3mm. Cryptographic Ledger Versioning (ad hoc)
+
+Explicit user request, originally specified as a hash-chained ledger
+WITH a rollback engine (`POST /api/transactions/rollback`, reversing
+JSONB patches to restore prior state). Flagged before writing any code —
+the same "check the premise before building" discipline this session
+already applied twice (§3ll's NeuroLink framing, and this same request's
+own first draft): as specified, `LedgerCommit` was just an ordinary
+table, so the "cryptographic" hash chain provided no real tamper-
+evidence (anyone able to alter a transaction could just as easily
+rewrite the chain to match); and a rollback that rewrites committed
+`NotableTransaction` rows directly conflicts with this app's own
+consistent "historical facts are frozen once recorded" law, applied
+everywhere else (`Trade` amounts, `Dividend` payout fields,
+`exchangeRateAtEntry`) — every other feature (budgets, net worth
+snapshots, insights, the tax simulator, the subscription radar) reads
+`NotableTransaction` as ground truth with zero awareness of a
+patch-history layer, so a rollback would silently desync all of them.
+Presented three options; the user picked tamper-evidence only, no
+rollback — closer in spirit to `AuditLog` (§3a) than to source control.
+
+- **Schema** (`LedgerCommit`, migration
+  `20260904151850_ledger_commit_versioning`, generated via `prisma
+  migrate diff` against the live dev DB — `prisma migrate dev` refused
+  non-interactively for a NEW reason this time, a Postgres collation
+  version mismatch on `template1`, not the usual hand-edited-migration
+  checksum issue, but the same established workaround applies
+  regardless of the specific refusal reason): `id`, `userId`,
+  `transactionId`, `action` (`CREATE`/`UPDATE` — transactions are never
+  deleted in this app, so there's no `DELETE` case), `previousHash`
+  (null only for a transaction's first commit), `currentHash`,
+  `patchData` (a full state SNAPSHOT at commit time — category NAME
+  included, frozen as it was then, not a byte-level reversible diff,
+  since nothing here ever reverses it), `createdAt`.
+  - **Genuinely append-only, not append-only by convention** — the SAME
+    enforcement `AuditLog` already has (§3a): `REVOKE UPDATE, DELETE`
+    from `pfw_runtime` AND a `BEFORE UPDATE OR DELETE` trigger that
+    rejects mutation even for the superuser `pfw_app` role. Verified live
+    against real Postgres, not just written: a direct `UPDATE`/`DELETE`
+    via `psql` as `pfw_app` both correctly raised
+    `LedgerCommit is append-only: % is not permitted`.
+  - **Chain scoped PER TRANSACTION, not one global ledger-wide chain** —
+    a global chain would need a single serialized "head" pointer per
+    user that every concurrent create/update races to extend, real write
+    contention for zero benefit: verifying one transaction's own history
+    is exactly what "was this transaction's data silently altered"
+    requires, and nothing here needs to prove ordering ACROSS different
+    transactions.
+- **`src/lib/ledger-hash.ts`** (pure, `src/lib/` convention per §3b):
+  `computeLedgerCommitHash(previousHash, state)` =
+  `sha256((previousHash ?? "") + canonicalJson(state))`, with keys
+  explicitly sorted before serializing — "canonical" should mean
+  something, not just happen to work because of an incidental V8
+  object-key-ordering behavior.
+- **`src/server/dal/ledger-commits.ts`**: `appendLedgerCommit` takes the
+  CALLER's own `ScopedTransactionClient` and never opens a second
+  transaction — atomicity is the entire point, and it's a genuine
+  improvement over this app's existing `recordAuditLog`
+  (`src/server/dal/audit-log.ts`), which runs as a SEPARATE
+  `withUserScope` transaction called from the route layer, AFTER the DAL
+  mutation has already committed (confirmed by reading
+  `PATCH /api/transactions/[id]/route.ts` directly) — fine for
+  `AuditLog`'s compliance-trail purpose, but exactly the gap a
+  tamper-evidence chain can't tolerate: a transaction that committed with
+  no corresponding commit (or vice versa) would silently break the
+  chain's own guarantee. `verifyLedgerChain` recomputes every commit's
+  hash from its own stored `patchData`/`previousHash`, in order, and
+  confirms each commit's `previousHash` actually equals the prior
+  commit's `currentHash` — either check failing reports exactly which
+  commit broke the chain.
+  - Wired into `src/server/dal/transactions.ts`'s `createTransaction`
+    (the CREATE link, `previousHash: null`) and `updateTransactionCategory`
+    (each subsequent UPDATE link) — both inside their own existing
+    `withUserScope` transaction, one new line each.
+- **`GET /api/transactions/[id]/ledger`** (new route, no
+  `POST .../rollback` — read-only by design): same shape as
+  `GET /api/tax/simulate` (Section 2.4 — skips `guardMutation`'s CSRF
+  check since nothing changes state, keeps identity+rate-limiting
+  directly). "Not found" for both a nonexistent transaction and one
+  belonging to someone else (Section 2.2), verified live via `curl`
+  before checking the happy path.
+- **`src/app/transactions/_components/ledger-history-modal.tsx`**: a
+  per-row "History" button (desktop table AND mobile list) opening a
+  read-only timeline — chain-verified badge, each commit's action/
+  category/amount snapshot, and a truncated hash pair showing the chain
+  link. No rollback control anywhere in the UI; explicit copy states
+  this is read-only. Same focus-trap/Escape/focus-restore pattern as
+  `ReceiptScannerModal` (copied, not abstracted into a shared component —
+  matches this app's own precedent for this exact dialog shape).
+- **A real, load-bearing bug found only by actually running the full
+  test suite with the database live, not by reasoning about the schema
+  alone**: a cascading `DELETE FROM "User"` still fires the CHILD
+  table's own `BEFORE DELETE` trigger (Postgres implements
+  `ON DELETE CASCADE` as a real `DELETE` against the child table) — so
+  the instant `createTransaction`/`updateTransactionCategory` started
+  writing real `LedgerCommit` rows, FIVE pre-existing integration test
+  files (whose `afterAll` cleanup deletes their throwaway test users)
+  started failing with `LedgerCommit is append-only: DELETE is not
+  permitted`. This is the exact same consequence `AuditLog` already
+  documented for itself (§3a: "deleting a `User` row cascades toward
+  `AuditLog` and gets blocked by the trigger... has to disable the
+  trigger for that one operation, as `pfw_app`, on purpose") — just
+  newly triggered by a table nothing had cascaded through before. Fixed
+  with a shared `tests/integration/ledger-commit-test-helpers.ts`
+  (`deleteTestUsersWithLedgerCommits`), used by all 5 affected files.
+  - **A second, subtler bug in the FIRST version of that fix**: three
+    separate top-level calls (`DISABLE TRIGGER` / `deleteMany` /
+    `ENABLE TRIGGER`) intermittently still failed — traced to a genuine
+    concurrency race, not flakiness: `ALTER TABLE ... DISABLE/ENABLE
+    TRIGGER` is global database state, not connection- or
+    transaction-local, and Vitest runs integration test files in
+    PARALLEL worker processes — one file's `ENABLE` could land between
+    another file's `DISABLE` and `DELETE`. Fixed by wrapping all three
+    statements in ONE Prisma interactive transaction: `ALTER TABLE`
+    takes Postgres's own ACCESS EXCLUSIVE lock on the table for the
+    transaction's duration, so a concurrent caller's own `ALTER TABLE`
+    simply blocks until this transaction commits (at which point the
+    trigger is already correctly re-enabled) — ordinary Postgres locking
+    serializes every concurrent caller with no application-level
+    advisory lock needed, and a thrown error now rolls back the
+    `DISABLE` along with everything else, so a failed cleanup can never
+    leave the trigger stuck disabled.
+  - **A third instance of the identical root cause, found by actually
+    using the live app, not just the test suite**: creating a real
+    transaction through the running app against the demo account (part
+    of this feature's own live verification) gave that account real
+    `LedgerCommit` rows for the first time, and `prisma/seed/index.ts`'s
+    own reset step — which already disables `AuditLog`'s identical
+    trigger for its `user.deleteMany` — hit the exact same block. Fixed
+    the same way, in the seed script itself (its own sequential,
+    non-concurrent invocation didn't need the transaction-wrapping fix
+    above, just the same disable/enable bracketing `AuditLog` already
+    gets).
+- **Verified, not just written**: `npm run check` clean at every phase.
+  With the database genuinely live: 1207/1210 passing (3 skip, the
+  unrelated embedding sidecar) — a new 7-case integration suite
+  (`tests/integration/ledger-commit.test.ts`) proving a CREATE commit's
+  `previousHash` is null and its hash matches an independent
+  recomputation, a chain of 2-3 commits links correctly end to end, a
+  bogus commit inserted directly (simulating an attacker with only
+  INSERT rights — exactly what `pfw_runtime` actually has) is correctly
+  detected and its id correctly identified, the append-only trigger
+  rejects UPDATE/DELETE even for `pfw_app`, and cross-user RLS isolation
+  (a stranger's query returns an empty array, not another user's data).
+  A full live walkthrough against the running dev server and real
+  Postgres: registered/claimed the demo account, created a real
+  transaction via `POST /api/transactions` (`previousHash: null`,
+  confirmed against an independent hash computation), recategorized it
+  via `PATCH /api/transactions/[id]` (the new commit's `previousHash`
+  exactly matched the prior commit's `currentHash`, `chainValid: true`),
+  hit `GET .../ledger` for a nonexistent id (404), then inserted a
+  forged commit directly via `psql` and confirmed the SAME live route
+  immediately reported `chainValid: false` with the correct
+  `brokenAtCommitId` — proving tamper-detection end to end through the
+  real HTTP API, not just at the DAL level. All test/demo residue
+  (including the seed-script bug's own fallout) was cleaned up and the
+  dev database re-seeded; a final full run confirmed zero leftover
+  `LedgerCommit` rows.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no UI/API surface for the deliberately-omitted rollback
+  capability — this is tamper-evidence only, by design; `patchData` only
+  ever grows going forward from this feature's ship date — pre-existing
+  transactions (seeded data, CSV-imported rows, anything created before
+  this pass) have no `LedgerCommit` history at all, the same "forward-
+  only coverage, not retroactively backfilled" honesty `MerchantEmbedding`
+  (§3u) and the semantic-search index (§3cc) already state for an
+  identical shape of gap; no automated route-level test for
+  `GET /api/transactions/[id]/ledger` itself — its DAL-level logic has
+  full integration coverage and its HTTP wiring was verified live via
+  `curl`, matching this app's existing precedent for several other thin
+  GET-route wrappers.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

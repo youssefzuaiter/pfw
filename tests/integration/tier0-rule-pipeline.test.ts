@@ -4,6 +4,7 @@ import { createAdminClient } from "../../src/server/db/admin-client";
 import { createTransactionRule } from "../../src/server/dal/transaction-rules";
 import { importTransactions } from "../../src/server/dal/transaction-import";
 import { createTransaction } from "../../src/server/dal/transactions";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 /**
  * End-to-end integration coverage proving Tier 0 (`rule-engine.ts`) is
@@ -37,7 +38,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Tie
   });
 
   afterAll(async () => {
-    await admin.user.deleteMany({ where: { id: userA.id } });
+    await deleteTestUsersWithLedgerCommits(admin, [userA.id]);
     await admin.$disconnect();
   });
 

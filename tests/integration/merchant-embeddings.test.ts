@@ -3,6 +3,7 @@ import { CURRENT_EMBEDDING_MODEL_ID } from "../../src/lib/embeddings/embedding-m
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { listEmbeddingCorrections, upsertMerchantEmbedding } from "../../src/server/dal/merchant-embeddings";
 import { createTransaction, updateTransactionCategory } from "../../src/server/dal/transactions";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 const DIMENSIONS = 384;
 
@@ -94,7 +95,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Sel
   });
 
   afterAll(async () => {
-    await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
+    await deleteTestUsersWithLedgerCommits(admin, [userA.id, userB.id]);
     await admin.$disconnect();
   });
 

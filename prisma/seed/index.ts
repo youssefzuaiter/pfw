@@ -79,10 +79,21 @@ async function main() {
   // and deleting a member cascades their own owned rows (categories,
   // budgets, bank accounts, their own GroupMember row) — see each
   // model's `onDelete` in schema.prisma.
+  // LedgerCommit (Cryptographic Ledger Versioning, ad hoc) has the exact
+  // same append-only trigger, and the same cascade-from-User problem —
+  // a real, hit-in-practice case, not theoretical: a demo account used
+  // through the actual app (createTransaction/updateTransactionCategory,
+  // e.g. manual entry or inline recategorization) genuinely accumulates
+  // LedgerCommit rows, so a reset MUST disable this trigger too, even
+  // though the seed script's own generated transactions never go through
+  // the DAL (it writes NotableTransaction rows directly, so they alone
+  // create no LedgerCommit rows).
   const seedEmails = [SEED_USER.email, HOUSEHOLD_MEMBERS.spouse.email, HOUSEHOLD_MEMBERS.roommate.email];
   await prisma.$executeRaw`ALTER TABLE "AuditLog" DISABLE TRIGGER audit_log_append_only`;
+  await prisma.$executeRaw`ALTER TABLE "LedgerCommit" DISABLE TRIGGER ledger_commit_append_only`;
   await prisma.user.deleteMany({ where: { email: { in: seedEmails } } });
   await prisma.$executeRaw`ALTER TABLE "AuditLog" ENABLE TRIGGER audit_log_append_only`;
+  await prisma.$executeRaw`ALTER TABLE "LedgerCommit" ENABLE TRIGGER ledger_commit_append_only`;
 
   const user = await prisma.user.create({
     data: { email: SEED_USER.email, displayName: SEED_USER.displayName },

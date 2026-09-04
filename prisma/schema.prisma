@@ -134,6 +134,14 @@ enum AuditAction {
   DELETE
 }
 
+/// LedgerCommit never records DELETE — transactions are never deleted in
+/// this app (no deleteTransaction DAL function exists), only created or
+/// recategorized, so there are only ever two link types in the chain.
+enum LedgerCommitAction {
+  CREATE
+  UPDATE
+}
+
 /// A SharedGroup member's standing. OWNER is exactly the group's creator
 /// (there is only ever one — see `createSharedGroup`'s doc comment) and
 /// always has implicit write access regardless of `permission`; every
@@ -267,6 +275,7 @@ model User {
   dividends                Dividend[]
   subscriptionTracking     SubscriptionTracking[]
   auditLogs                AuditLog[]
+  ledgerCommits            LedgerCommit[]
   sharedGroupsCreated      SharedGroup[]             @relation("SharedGroupsCreated")
   groupMemberships         GroupMember[]
   groupInvitesCreated      GroupInvite[]             @relation("GroupInvitesCreated")
@@ -710,6 +719,7 @@ model NotableTransaction {
   /// extended here to description text for the first time — flagged
   /// explicitly rather than silently introduced.
   searchEmbedding       Unsupported("vector(384)")?
+  ledgerCommits         LedgerCommit[]
 
   @@unique([userId, providerTransactionId])
   @@index([userId, occurredAt])
@@ -1361,4 +1371,57 @@ model AuditLog {
 
   @@index([userId, entityType, entityId])
   @@index([userId, occurredAt])
+}
+
+/// Cryptographic Ledger Versioning (ad hoc) — a per-transaction,
+/// hash-chained, append-only history for tamper-EVIDENCE only, not a
+/// mutation/rollback mechanism. Scoped down from an originally-requested
+/// rollback engine after a real architecture conflict was raised and
+/// confirmed with the user: this app's own established law (§1 "derived
+/// truth" + the consistent "historical facts are frozen once recorded"
+/// pattern every other feature follows — Trade amounts, Dividend payout
+/// fields, exchangeRateAtEntry) means a transaction, once committed, is
+/// never retroactively rewritten; every other feature (budgets, net
+/// worth snapshots, insights, the tax simulator, the subscription radar)
+/// reads NotableTransaction as ground truth with no awareness of a
+/// patch-history layer, so a rollback would silently desync all of them.
+///
+/// Genuinely append-only, not just append-only "by convention" the way a
+/// rollback-oriented design would need to be reversible — enforced
+/// identically to AuditLog (same REVOKE UPDATE, DELETE + rejection
+/// trigger, prisma/migrations/*_ledger_commit_append_only): nothing in
+/// this table can be silently rewritten to match a since-altered
+/// transaction, which is the entire point of a tamper-evidence chain.
+///
+/// The chain is scoped PER TRANSACTION (previousHash links to that same
+/// transactionId's prior commit), not one global ledger-wide chain
+/// across every transaction — a global chain would need a single
+/// serialized "head" pointer per user that every concurrent
+/// create/update would race to extend, real write contention for no
+/// benefit here: verifying one transaction's own history is exactly
+/// what "was this transaction's data silently altered" requires.
+///
+/// `patchData` is a full state SNAPSHOT at commit time (category name
+/// included, frozen as it was then — the same historical-fact treatment
+/// this app already gives Trade/Dividend fields), not a byte-level
+/// diff/patch — a true reversible patch is only useful if you intend to
+/// reverse it, which this feature deliberately does not do. The field is
+/// still named `patchData` to keep the schema close to the original
+/// request; it's read-only, display-only data for the audit timeline UI.
+model LedgerCommit {
+  id            String             @id @default(cuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactionId String
+  transaction   NotableTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  action        LedgerCommitAction
+  /// Null only for a transaction's very first (CREATE) commit.
+  previousHash  String?
+  /// SHA-256 hex digest of (previousHash ?? "") + a canonical JSON
+  /// serialization of `patchData` — see src/lib/ledger-hash.ts.
+  currentHash   String
+  patchData     Json
+  createdAt     DateTime           @default(now())
+
+  @@index([userId, transactionId, createdAt])
 }

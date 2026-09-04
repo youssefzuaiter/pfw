@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { createTransaction, searchTransactionsSemantic, updateTransactionCategory } from "../../src/server/dal/transactions";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 const DIMENSIONS = 384;
 
@@ -64,7 +65,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Sem
   });
 
   afterAll(async () => {
-    await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
+    await deleteTestUsersWithLedgerCommits(admin, [userA.id, userB.id]);
     await admin.$disconnect();
   });
 

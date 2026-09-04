@@ -10,6 +10,7 @@ import { agorot } from "../../lib/money";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { parsePgVectorLiteral, toPgVectorLiteral } from "../../lib/vector-math";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
+import { appendLedgerCommit, buildLedgerState } from "./ledger-commits";
 import { BankAccountNotFoundError } from "./transaction-import";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
@@ -281,6 +282,15 @@ export async function updateTransactionCategory(
       await setSearchEmbedding(tx, updated.id, embedding);
     }
 
+    // Cryptographic Ledger Versioning (ad hoc) — the next link in this
+    // transaction's hash chain, appended inside this SAME withUserScope
+    // transaction as the update it documents.
+    await appendLedgerCommit(tx, userId, {
+      transactionId: updated.id,
+      action: "UPDATE",
+      state: buildLedgerState({ ...updated, categoryName: updated.category.name }),
+    });
+
     return updated;
   });
 }
@@ -435,6 +445,17 @@ export async function createTransaction(userId: string, input: CreateTransaction
     if (input.embedding) {
       await setSearchEmbedding(tx, created.id, input.embedding);
     }
+
+    // Cryptographic Ledger Versioning (ad hoc) — the first (CREATE) link
+    // in this transaction's hash chain, appended inside this SAME
+    // withUserScope transaction as the row it documents (see
+    // appendLedgerCommit's own doc comment for why atomicity here isn't
+    // optional).
+    await appendLedgerCommit(tx, userId, {
+      transactionId: created.id,
+      action: "CREATE",
+      state: buildLedgerState({ ...created, categoryName: created.category.name }),
+    });
 
     return created;
   });

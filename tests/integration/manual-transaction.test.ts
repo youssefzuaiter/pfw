@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { BankAccountNotFoundError } from "../../src/server/dal/transaction-import";
 import { createTransaction } from "../../src/server/dal/transactions";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 /**
  * Integration coverage for manual transaction creation (AGENTS.md §3q) —
@@ -40,7 +41,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("cre
   });
 
   afterAll(async () => {
-    await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
+    await deleteTestUsersWithLedgerCommits(admin, [userA.id, userB.id]);
     await admin.$disconnect();
   });
 

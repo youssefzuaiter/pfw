@@ -1,5 +1,6 @@
 import { formatAgorot, type Agorot } from "../../../lib/money";
 import { CategorySelect } from "./category-select";
+import { LedgerHistoryModal } from "./ledger-history-modal";
 
 export type TransactionRow = {
   id: string;
@@ -51,6 +52,9 @@ export function TransactionsTable({
               <th scope="col" className="px-4 py-2 text-right font-medium">
                 Amount
               </th>
+              <th scope="col" className="px-4 py-2 font-medium">
+                <span className="sr-only">History</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -74,6 +78,9 @@ export function TransactionsTable({
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   <AmountCell amount={row.amount} />
                 </td>
+                <td className="whitespace-nowrap px-4 py-3 text-right">
+                  <LedgerHistoryModal transactionId={row.id} label={row.merchantName ?? row.description} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -91,13 +98,14 @@ export function TransactionsTable({
               <AmountCell amount={row.amount} />
             </div>
             {row.needsReview && <p className="mt-1 text-xs text-signature">Needs review</p>}
-            <div className="mt-2">
+            <div className="mt-2 flex items-center justify-between gap-2">
               <CategorySelect
                 transactionId={row.id}
                 categoryId={row.categoryId}
                 categories={categories}
                 merchantText={row.merchantName ?? row.description}
               />
+              <LedgerHistoryModal transactionId={row.id} label={row.merchantName ?? row.description} />
             </div>
           </li>
         ))}
