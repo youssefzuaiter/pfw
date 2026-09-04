@@ -1,9 +1,18 @@
 import "server-only";
 import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import type { AuthenticationResponseJSON, AuthenticatorDevice } from "@simplewebauthn/types";
+import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import { getAppUrl, getAuthSecret } from "../env";
 import { checkLoginRateLimit, checkTotpChallenge, verifyCredentials } from "./credentials";
 import { getCurrentTokenVersion } from "./token-version";
+import {
+  consumeAuthenticationChallenge,
+  findAuthenticationCandidate,
+  findAuthenticatorForVerification,
+  recordSuccessfulAuthentication,
+} from "./webauthn-admin-ops";
+import { base64UrlToUint8Array, getRelyingParty } from "./webauthn";
 
 /**
  * TOTP MFA (Punch List Tier 2, item 3) — two distinct `CredentialsSignin`
@@ -171,6 +180,96 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // both fall through to a normal successful sign-in.
 
         return { id: user.id, email: user.email, name: user.displayName, tokenVersion: user.tokenVersion };
+      },
+    }),
+    /**
+     * Device-Bound Biometrics via Passkeys (ad hoc) — a SECOND
+     * Credentials provider, not Auth.js's own built-in `WebAuthn`
+     * provider (see `webauthn.ts`'s doc comment for why: the official
+     * provider requires a database Adapter this app deliberately
+     * doesn't have, plus a new `Account`-shaped table). This provider's
+     * `authorize()` does the actual `@simplewebauthn/server` verification
+     * itself — the client has ALREADY completed the real WebAuthn
+     * ceremony (`navigator.credentials.get()`, via
+     * `@simplewebauthn/browser`'s `startAuthentication()`) against a
+     * challenge issued by `POST /api/auth/webauthn/authenticate-options`
+     * before ever calling `signIn("passkey", ...)` — this function only
+     * verifies the resulting signed assertion, exactly mirroring how the
+     * `credentials` provider above verifies a password (and how
+     * `checkTotpChallenge` verifies a TOTP code) inside `authorize()`
+     * rather than in a separate route.
+     *
+     * Rate-limited via the SAME `checkLoginRateLimit` bucket password
+     * login uses (keyed by email) — a deliberate choice, not an
+     * oversight: bounding total authentication attempts against one
+     * target account regardless of which method is being tried is more
+     * defensible than two independent, individually-generous budgets an
+     * attacker could exhaust separately.
+     *
+     * Every failure path returns `null` (never a distinguishing error) —
+     * unlike TOTP's required/invalid split, there is no legitimate
+     * "second step" here: a passkey assertion either verifies in one
+     * shot or the attempt failed, so there's nothing to tell the client
+     * to retry differently the way "enter your code" is.
+     */
+    Credentials({
+      id: "passkey",
+      name: "Passkey",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        challengeId: { label: "Challenge ID", type: "text" },
+        assertion: { label: "Assertion", type: "text" },
+      },
+      async authorize(credentials) {
+        const email = credentials?.email;
+        const challengeId = credentials?.challengeId;
+        const assertionJson = credentials?.assertion;
+        if (typeof email !== "string" || typeof challengeId !== "string" || typeof assertionJson !== "string") {
+          return null;
+        }
+
+        if (!checkLoginRateLimit(email)) throw new LoginRateLimitedError();
+
+        const candidate = await findAuthenticationCandidate(email);
+        if (!candidate) return null;
+
+        const expectedChallenge = await consumeAuthenticationChallenge(candidate.userId, challengeId);
+        if (!expectedChallenge) return null;
+
+        let assertion: AuthenticationResponseJSON;
+        try {
+          assertion = JSON.parse(assertionJson);
+        } catch {
+          return null;
+        }
+        if (typeof assertion.id !== "string") return null;
+
+        const stored = await findAuthenticatorForVerification(candidate.userId, assertion.id);
+        if (!stored) return null;
+
+        const rp = getRelyingParty();
+        let result;
+        try {
+          result = await verifyAuthenticationResponse({
+            response: assertion,
+            expectedChallenge,
+            expectedOrigin: rp.origin,
+            expectedRPID: rp.id,
+            authenticator: {
+              credentialID: base64UrlToUint8Array(assertion.id),
+              credentialPublicKey: stored.publicKey,
+              counter: Number(stored.counter),
+              transports: stored.transports as AuthenticatorDevice["transports"],
+            },
+          });
+        } catch {
+          return null;
+        }
+        if (!result.verified) return null;
+
+        await recordSuccessfulAuthentication(stored.id, BigInt(result.authenticationInfo.newCounter));
+
+        return { id: candidate.userId, email: candidate.email, name: candidate.displayName, tokenVersion: candidate.tokenVersion };
       },
     }),
   ],

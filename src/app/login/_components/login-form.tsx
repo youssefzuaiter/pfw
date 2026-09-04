@@ -7,6 +7,49 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
 
 /**
+ * Device-Bound Biometrics via Passkeys (ad hoc) — "Sign in with Passkey"
+ * triggers the browser's native biometric/PIN prompt
+ * (`@simplewebauthn/browser`'s `startAuthentication()`), then completes
+ * the sign-in through the SAME `signIn()` flow the password form below
+ * uses, just against the `passkey` Credentials provider
+ * (`src/server/auth/auth.ts`) instead of `credentials` — `authorize()`
+ * there does the actual cryptographic verification, so this component
+ * never sees or judges anything about it. Uses whichever email is
+ * currently typed into the form's own email field — no separate input.
+ */
+async function signInWithPasskey(email: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { startAuthentication } = await import("@simplewebauthn/browser");
+
+  const optionsResponse = await fetch("/api/auth/webauthn/authenticate-options", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!optionsResponse.ok) return { ok: false, message: "Something went wrong — try again." };
+  const { options, challengeId } = await optionsResponse.json();
+  if (!challengeId) return { ok: false, message: "No passkey found for this email." };
+
+  let assertion;
+  try {
+    assertion = await startAuthentication(options);
+  } catch {
+    return { ok: false, message: "Passkey sign-in was cancelled or failed." };
+  }
+
+  const result = await signIn("passkey", {
+    email,
+    challengeId,
+    assertion: JSON.stringify(assertion),
+    redirect: false,
+  });
+  if (!result || result.error) {
+    if (result?.code === "too_many_attempts") return { ok: false, message: "Too many attempts — wait a few minutes before trying again." };
+    return { ok: false, message: "Could not sign in with that passkey." };
+  }
+  return { ok: true };
+}
+
+/**
  * Same generic "Invalid email or password" message regardless of WHICH
  * of the three ways this can fail (unknown email, an unclaimed seeded
  * row with no password yet, or a wrong password) — matching
@@ -41,6 +84,26 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
   }
   function handleTotpCodeChange(event: ChangeEvent<HTMLInputElement>) {
     setTotpCode(event.target.value);
+  }
+
+  async function handlePasskeySignIn() {
+    if (!email.trim()) {
+      setError("Enter your email above, then choose Sign in with Passkey.");
+      return;
+    }
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const result = await signInWithPasskey(email.trim());
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      router.push(redirectTo);
+      router.refresh();
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -164,6 +227,20 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
       >
         {isSubmitting && <Spinner />}
         {isSubmitting ? "Signing in…" : "Sign in"}
+      </button>
+      <div className="flex items-center gap-2 text-xs text-muted">
+        <span className="h-px flex-1 bg-border" />
+        or
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      <button
+        type="button"
+        onClick={handlePasskeySignIn}
+        disabled={isSubmitting}
+        className="uv-btn-press flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+      >
+        {isSubmitting && <Spinner />}
+        Sign in with Passkey
       </button>
       {error && (
         <p role="alert" className="text-sm text-negative">

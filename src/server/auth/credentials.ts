@@ -33,10 +33,15 @@ const PRIMARY_DEMO_USER_EMAIL = "demo@pfw.local"; // matches current-user.ts's o
  * `authorize()`), so a locked-out account never even pays the Argon2id
  * hashing cost per attempt.
  */
-const LOGIN_RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxRequests: 10 };
+export const LOGIN_RATE_LIMIT = { windowMs: 15 * 60 * 1000, maxRequests: 10 };
+
+/** Key format shared with any caller that needs the full `checkRateLimit` result (e.g. a real HTTP 429 with a `Retry-After` header) rather than just this boolean — `POST /api/auth/webauthn/authenticate-options` calls `checkRateLimit(loginRateLimitKey(email), LOGIN_RATE_LIMIT)` directly for exactly that reason, reusing the SAME bucket rather than guessing at one. */
+export function loginRateLimitKey(email: string): string {
+  return `auth:login:${email.trim().toLowerCase()}`;
+}
 
 export function checkLoginRateLimit(email: string): boolean {
-  return checkRateLimit(`auth:login:${email.trim().toLowerCase()}`, LOGIN_RATE_LIMIT).allowed;
+  return checkRateLimit(loginRateLimitKey(email), LOGIN_RATE_LIMIT).allowed;
 }
 
 export type VerifiedUser = { id: string; email: string; displayName: string; tokenVersion: number };

@@ -3,6 +3,7 @@ import { getMfaStatus } from "../../server/dal/mfa";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
 import { EmailVerificationPanel } from "./_components/email-verification-panel";
 import { MfaPanel } from "./_components/mfa-panel";
+import { PasskeyPanel } from "./_components/passkey-panel";
 import { PreferencesForm, type PreferencesFormData } from "./_components/preferences-form";
 import { RevokeSessionsButton } from "./_components/revoke-sessions-button";
 
@@ -50,6 +51,7 @@ export default async function SettingsPage() {
         <div className="mt-2 flex flex-col gap-3">
           <EmailVerificationPanel initialVerified={user.emailVerified !== null} />
           <MfaPanel initialEnabled={mfaStatus.enabled} initialPending={mfaStatus.pending} />
+          <PasskeyPanel />
           <RevokeSessionsButton />
         </div>
       </div>

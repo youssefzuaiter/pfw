@@ -5348,6 +5348,198 @@ rollback — closer in spirit to `AuditLog` (§3a) than to source control.
   `curl`, matching this app's existing precedent for several other thin
   GET-route wrappers.
 
+## 3nn. Device-Bound Biometrics via Passkeys (ad hoc)
+
+Explicit user request, originally specified as integrating Auth.js's own
+built-in WebAuthn provider. Verified against the actual installed
+`next-auth@5.0.0-beta.32`/`@auth/core` source before writing any code —
+the same "check a beta library's real behavior, don't assume it"
+discipline this app's history already applies repeatedly (`trustHost`,
+the otplib v13 rewrite, onnxruntime-web's variant mismatch) — and found a
+real architecture conflict: the official `WebAuthn` provider's
+`getUserInfo` throws `MissingAdapter` with no adapter configured, and its
+verify flow calls `adapter.getAccount`/`getAuthenticator`/
+`createAuthenticator`/`listAuthenticatorsByUserId`/
+`updateAuthenticatorCounter`/`linkAccount`/`getUser`/`getUserByEmail`/
+`createUser`. This app deliberately has NO adapter (§3ff) specifically to
+avoid unverified `@auth/prisma-adapter` compatibility with Prisma 7's
+non-standard `prisma-client` generator, and the official provider would
+also need a new `Account`-shaped table this app has never had (pure
+Credentials auth, no OAuth-style provider linking) plus an ambiguous
+"create a new user via passkey" code path that would bypass
+`registerUser()`'s careful single-seeded-demo-account claiming logic.
+Presented this to the user with two options; the recommended path was
+chosen: `@simplewebauthn/server` used directly against hand-written
+`Authenticator`/`Challenge` tables, with a SECOND lightweight Credentials
+provider minting the session — exactly how TOTP already extends
+`authorize()` — keeping the existing JWT/no-adapter architecture
+completely intact. Passkeys are only ever REGISTERED by an already-
+authenticated user from Settings, never a way to create a new account.
+
+- **Schema** (`Authenticator`, `Challenge`, `WebAuthnChallengeType` enum;
+  migration `20260904172426_webauthn_passkeys`, the established `prisma
+  migrate diff`-against-live-DB workaround — `migrate dev` refused for a
+  NEW reason this time, a Postgres `template1` collation-version
+  mismatch, not the usual hand-edited-migration checksum issue, same
+  workaround regardless): standard `tenant_isolation` RLS on both
+  (neither is append-only like `AuditLog`/`LedgerCommit` — both are
+  genuinely mutable: `Authenticator.counter` updates on every
+  authentication, `Challenge` rows are deleted on consumption).
+  `Authenticator.counter` is `BigInt`, not `Int` — a WebAuthn signature
+  counter is a uint32, whose max value exceeds Int32's range.
+  `deviceType`/`backedUp` are stored and surfaced honestly in Settings
+  (`"Synced across devices"` vs. `"This device only"`) — a passkey CAN be
+  a synced, multi-device credential (iCloud Keychain, Google Password
+  Manager), so this feature's own name ("device-bound") doesn't
+  universally apply, and the UI says so rather than overclaiming.
+  - **`Challenge`'s real bootstrap problem, solved the same way this
+    app already solves it elsewhere**: an AUTHENTICATION challenge is
+    necessarily created and consumed for a caller with NO session yet
+    (that's the entire point of a sign-in ceremony) — handled by
+    `src/server/auth/webauthn-admin-ops.ts`, the FIFTH narrow,
+    allowlisted admin-client bootstrap exception (`current-user.ts`, the
+    household/vault invite flows, `credentials.ts`,
+    `account-recovery-admin-ops.ts`, now this), not by weakening the
+    table's own RLS policy — which still protects the REGISTRATION path
+    (`src/server/dal/authenticators.ts`, a normal `withUserScope`-scoped
+    DAL, since a real session already exists there).
+- **`src/server/auth/webauthn.ts`**: RP config derived from `getAppUrl()`
+  (the same source `auth.ts`'s own cookie-hardening already reads) and
+  base64url<->`Uint8Array` conversion helpers using Node's built-in
+  `Buffer` — no extra dependency for a one-line standard conversion. Hit
+  a real, narrow TypeScript typed-array-generics issue (5.7+): Prisma's
+  generated `Bytes` input type requires a concretely `Uint8Array<ArrayBuffer>`-backed
+  value, not the looser `Uint8Array<ArrayBufferLike>` a plain
+  `new Uint8Array(buffer)` around a `Buffer` infers — the same class of
+  mismatch `forecaster-worker-handlers.ts`'s own `F32` alias documents,
+  in the opposite direction. Fixed with `toArrayBufferBackedUint8Array`,
+  which copies into a freshly `new Uint8Array(length)`-allocated array
+  (always genuinely `ArrayBuffer`-backed) — used both for the base64url
+  decode helper and to normalize `@simplewebauthn/server`'s own returned
+  `credentialPublicKey`/`credentialID` byte arrays before handing them to
+  Prisma.
+- **`auth.ts` gained a second Credentials provider (`id: "passkey"`)**:
+  `authorize()` does the actual `@simplewebauthn/server`
+  `verifyAuthenticationResponse` itself — the client has ALREADY
+  completed the real ceremony via `@simplewebauthn/browser`'s
+  `startAuthentication()` before ever calling `signIn("passkey", ...)`,
+  exactly mirroring how the existing `credentials` provider verifies a
+  password (and `checkTotpChallenge` a TOTP code) inside `authorize()`
+  rather than a separate route. Rate-limited via the SAME
+  `checkLoginRateLimit` bucket password login uses (keyed by email,
+  `credentials.ts` now exports `LOGIN_RATE_LIMIT`/`loginRateLimitKey` so
+  a caller needing the full rate-limit result — a real HTTP 429 with
+  `Retry-After`, not just the boolean — can reuse the identical bucket
+  rather than guessing at one) — bounding total authentication attempts
+  against one target account regardless of method is more defensible
+  than two independent budgets an attacker could exhaust separately.
+  Every failure path returns `null`, never a distinguishing error —
+  unlike TOTP's required/invalid split, a passkey assertion either
+  verifies in one shot or the attempt failed outright.
+- **Routes**: `POST .../register-options` / `register-verify`
+  (`guardMutation`-fronted, authenticated Settings actions) generate and
+  verify a NEW passkey; `POST .../authenticate-options` (unauthenticated,
+  same "Origin-checked by hand, rate-limited by submitted email" shape as
+  `POST /api/auth/register`, §3ff) issues a sign-in challenge with a
+  response shape that's IDENTICAL whether or not the email has any
+  passkeys (`allowCredentials` simply empty, `challengeId: null`) — an
+  enumeration-safety property verified live, not just asserted. `GET
+  .../authenticators` / `DELETE .../authenticators/[id]` manage the
+  caller's own passkeys for Settings, same "404 covers both `doesn't
+  exist` and `belongs to someone else`" IDOR shape as everywhere else in
+  this app.
+  - **A real bug found via this feature's own live verification, fixed
+    on the spot**: a deliberately-malformed registration response (bad
+    `clientDataJSON`) came back a 500, not a 400 — traced to
+    `verifyRegistrationResponse` THROWING for structurally invalid input
+    rather than returning `{ verified: false }`, confirmed by triggering
+    it for real, not assumed from the library's types. Fixed by scoping
+    the `try`/`catch` narrowly around just that call, returning
+    `jsonBadRequest` for it specifically, while a genuine unexpected
+    error (e.g. a DB failure in the subsequent `createAuthenticator`
+    call) still correctly falls through to the outer catch as a 500 —
+    verified again live after the fix, now correctly 400.
+  - **`/api/auth/webauthn/*` sits under the proxy's existing public
+    `/api/auth/` prefix** (`src/proxy.ts`), same as `/api/auth/revoke-sessions`
+    already does — confirmed this is an accepted, pre-existing pattern
+    (checked that file before assuming this was a gap to fix) rather than
+    a new hole: each route's own `guardMutation()`/`getCurrentUser()`
+    still correctly rejects an unauthenticated request, just via an
+    uncaught-throw-turned-500 instead of the proxy's own clean 401 JSON
+    — a real, already-accepted characteristic of this app's `/api/auth/*`
+    routes, not something this pass needed to change.
+- **UI**: `PasskeyPanel` (Settings) — add/list/remove, honest
+  "Synced across devices" vs. "Device-bound" labeling, named handler
+  functions throughout (never an inline arrow on a button element — the
+  repeatedly-hit focus-visible guard trap, §3c bug #2 and many times
+  since). `LoginForm` gained a "Sign in with Passkey" button using
+  whichever email is already typed into the existing field — no separate
+  input — that calls `authenticate-options`, then
+  `@simplewebauthn/browser`'s `startAuthentication()` (the browser's
+  native biometric/PIN prompt), then completes sign-in through the SAME
+  `signIn()` call the password form already uses, just against the
+  `passkey` provider.
+- **Verified, not just written**: `npm run check` clean at every phase.
+  With the database genuinely live: a new 17-case integration suite
+  (`tests/integration/webauthn-passkeys.test.ts`) covering authenticator
+  CRUD + IDOR, single-use registration/authentication challenge
+  consumption + cross-user IDOR + expiry, and authentication-candidate
+  lookup enumeration-safety (unknown email and a real account with zero
+  passkeys both correctly return `null`) — plus pure unit tests for the
+  base64url/RP-config helpers (`webauthn.test.ts`). A real end-to-end
+  walkthrough against the running dev server and real Postgres:
+  registered/claimed `demo@pfw.local`, called `register-options`
+  authenticated and got back real, correctly-shaped
+  `PublicKeyCredentialCreationOptionsJSON` (`attestation: "none"`, a real
+  RP id/user block, empty `excludeCredentials` for a fresh account),
+  confirmed `GET .../authenticators` starts empty, confirmed
+  `authenticate-options` for both an unknown email and a forged Origin
+  behave correctly (200 with `challengeId: null`; 403), confirmed a
+  malformed request 400s, confirmed `DELETE` on a nonexistent id 404s,
+  and confirmed both `/login` and `/settings` render the new UI. The dev
+  database was fully re-seeded afterward, confirmed via the seed script's
+  own output that all three seeded users came back unclaimed.
+- **Not verified in this pass, flagged rather than glossed over**: no
+  full, real cryptographic WebAuthn ceremony was simulated end to end
+  (a genuine COSE key pair, a CBOR-encoded attestation object, and a real
+  signature) — that would need either actual authenticator hardware/a
+  virtual authenticator or a hand-rolled crypto fixture disproportionate
+  to what this pass could responsibly build and verify, the same honesty
+  §3o's untested-live-Ollama gap and §3dd's untested-live-WASM gap
+  already apply to a different "can't fully verify in this environment"
+  limit. What WAS verified for real: every DB read/write path the
+  verification functions are wrapped around, the routes' error handling
+  (including the 500->400 bug above, caught specifically BECAUSE a
+  deliberately-malformed request was tried live), and that a genuine
+  browser's native passkey prompt is correctly what gets triggered
+  client-side (`startRegistration`/`startAuthentication` are the
+  documented, correct `@simplewebauthn/browser` v9 entry points, verified
+  against the installed package's own type declarations). One
+  integration test run showed an unrelated, non-reproducible one-off
+  failure (a freshly-random nonexistent email's lookup) under heavy
+  parallel DB load across this repository's 124 integration test files —
+  it passed cleanly in isolation and on two subsequent full-suite runs
+  immediately after with no code change, and no plausible code path
+  explains the assertion failing, so it's recorded here as observed
+  infrastructure flakiness rather than silently ignored.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no "usernameless"/fully discoverable-credential sign-in flow —
+  the login form still asks for an email first (matching this app's
+  existing password-login UX) rather than letting the platform
+  authenticator surface a credential picker with no email typed at all;
+  no attestation verification (`attestationType: "none"`, a deliberate,
+  privacy-respecting default with no FIDO Metadata Service integration
+  behind it); no scheduled cleanup job for expired-but-never-consumed
+  `Challenge` rows (a real but small and bounded amount of dead data,
+  same "not built, deployment concern" precedent as this app's other
+  maintenance scripts, `sync:rates`/`sync:crypto-prices`/the Dead Man's
+  Switch inactivity check); TOTP MFA and passkeys are independent
+  factors — signing in via passkey does not currently ask for a TOTP
+  code even if MFA is separately enabled, since a passkey's own user-
+  verification (biometric/PIN) is already a strong local factor and the
+  task's own scope was "device-bound biometrics" as an alternative
+  sign-in method, not a combined-factor policy.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

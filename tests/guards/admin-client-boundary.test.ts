@@ -38,9 +38,15 @@ const SRC_ROOT = path.resolve(__dirname, "../../src");
 // src/server/auth/account-recovery-admin-ops.ts, the auth hardening
 // pass's own bootstrap exception (ad hoc, post-§3ff) — a password-reset
 // request/confirm or an email-verification confirm both run
-// UNAUTHENTICATED, the same shape as every exception above. Every other
-// file under src/ — the DAL, routes, Server Components — must always go
-// through src/server/db/client.ts instead.
+// UNAUTHENTICATED, the same shape as every exception above; and
+// src/server/auth/webauthn-admin-ops.ts, Device-Bound Biometrics via
+// Passkeys' own bootstrap exception (ad hoc) — a passkey SIGN-IN attempt
+// is by definition unauthenticated, the same shape as every exception
+// above (registering a NEW passkey, by contrast, is an authenticated
+// Settings action and goes through the normal withUserScope-scoped DAL,
+// src/server/dal/authenticators.ts). Every other file under src/ — the
+// DAL, routes, Server Components — must always go through
+// src/server/db/client.ts instead.
 const ADMIN_CLIENT_IMPORT = /from\s+["'].*\/admin-client["']/;
 
 describe("guard: nothing under src/ imports the admin DB client, except the auth bootstrap", () => {
@@ -53,6 +59,7 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       path.resolve(SRC_ROOT, "server", "dead-mans-switch", "inactivity-check.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "credentials.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "account-recovery-admin-ops.ts"),
+      path.resolve(SRC_ROOT, "server", "auth", "webauthn-admin-ops.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));
