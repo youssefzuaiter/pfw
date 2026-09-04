@@ -1,10 +1,10 @@
 import "server-only";
-import { createHash } from "node:crypto";
 import { categorizeTransaction } from "../../lib/categorization/cascade";
 import { applyRules, type TransactionRuleData } from "../../lib/categorization/rule-engine";
 import type { PastOccurrence } from "../../lib/categorization/types";
 import type { CanonicalImportRow } from "../../lib/csv-import/types";
 import { normalizeMerchantKey } from "../../lib/text-matching";
+import { buildProviderTransactionId as buildSharedProviderTransactionId } from "../../lib/transaction-dedupe";
 import { withUserScope } from "../db/with-user-scope";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
@@ -25,31 +25,16 @@ function isUniqueConstraintViolation(error: unknown): boolean {
 }
 
 /**
- * Builds the value stored in `NotableTransaction.providerTransactionId`,
- * which the schema's `@@unique([userId, providerTransactionId])` turns
- * into the actual replay guard.
- *
- * Namespaced by source so a bank's own reference `"12345"` can never
- * collide with an unrelated content hash that happens to be `"12345"`,
- * and so a future importer (a different bank, an API sync) can't collide
- * with CSV-imported rows either.
- *
- * The content-hash branch is the "content-hash fallback" docs/SECURITY.md
- * §3.3 calls for: without it, rows from a bank that supplies no
- * reference number would each get `providerTransactionId = null`, and
- * Postgres does **not** treat NULLs as equal in a unique index — so
- * every re-import would insert a full duplicate set of rows with no
- * constraint violation at all. That's the exact "re-importing the same
- * statement inflates balances" failure the guard exists to prevent, and
- * it fails silently, which is why the fallback is mandatory rather than
- * a nicety.
+ * CSV import's own call into the shared dedupe mechanism
+ * (`src/lib/transaction-dedupe.ts`, extracted for EU Open Banking PSD2
+ * Ingestion's sync path to reuse too) — `"csv"` as the source, the
+ * adapter id as the source id, producing byte-for-byte the same keys
+ * this app has always stored (`csv:${adapterId}:ref:...` /
+ * `csv:${adapterId}:hash:...`), so already-imported rows' meaning is
+ * completely unaffected by this refactor.
  */
-export function buildProviderTransactionId(row: CanonicalImportRow, adapterId: string): string {
-  if (row.providerReference) {
-    return `csv:${adapterId}:ref:${row.providerReference}`;
-  }
-  const digest = createHash("sha256").update(row.dedupeKeySource).digest("hex").slice(0, 32);
-  return `csv:${adapterId}:hash:${digest}`;
+export function buildProviderTransactionId(row: Parameters<typeof buildSharedProviderTransactionId>[0], adapterId: string): string {
+  return buildSharedProviderTransactionId(row, "csv", adapterId);
 }
 
 export type ImportSummary = {

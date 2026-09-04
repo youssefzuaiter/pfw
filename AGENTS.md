@@ -5540,6 +5540,148 @@ authenticated user from Settings, never a way to create a new account.
   task's own scope was "device-bound biometrics" as an alternative
   sign-in method, not a combined-factor policy.
 
+## 3oo. EU Open Banking PSD2 Ingestion (ad hoc)
+
+Explicit user request, specified in 4 phases (schema/RLS, a PSD2 adapter,
+event-driven ingestion, sync UI). Two things were flagged and resolved
+with the user before writing any code, the same "check the premise
+before building" discipline this session applies repeatedly (§3aa's
+Arduino/migration-gate request, §3bb's fabricated-scope search request,
+§3ll's NeuroLink framing, §3mm's rollback-vs-tamper-evidence framing):
+
+- **"PSD2" honestly means a mocked simulation here, not real regulated
+  connectivity** — the task's own wording asks for mocked network calls,
+  and this app has no eIDAS certificate, no licensed AISP/PISP status,
+  and no real bank relationship. Built the same way `mock-market-data.ts`
+  (§3c) already is: a realistic-shaped mock, loosely modeled on real
+  Berlin Group NextGenPSD2 API conventions for verisimilitude, with an
+  explicit "WHAT THIS IS / WHAT THIS IS NOT" doc comment stating plainly
+  that zero real regulatory compliance is implied or provided.
+- **Webhook vs. authenticated sync — a real architecture question, not a
+  style choice**: the task's "webhook/sync route to receive incoming
+  transactions" reads naturally as a public webhook, but a genuine public
+  endpoint here would need EITHER a fake signature-verification scheme
+  (security theater, since no real institution ever calls it) OR would be
+  a real, unauthenticated attack surface for injecting fake transactions
+  into a user's ledger. Presented via `AskUserQuestion`; the user chose
+  the recommended alternative — an authenticated, user-triggered "Sync
+  now" action, `guardMutation`-fronted like every other mutating route in
+  this app, not a standing public webhook.
+
+- **Schema** (`BankConnection`, `BankConnectionStatus` enum; migration
+  `20260904182946_psd2_bank_connections`, generated via `prisma migrate
+  diff` against the live dev DB — same established workaround as every
+  migration since §3p, since prior hand-edited migrations break `migrate
+  dev`'s shadow-database replay): one connection per `BankAccount`
+  (`@@unique` on `bankAccountId`), standard `tenant_isolation` RLS,
+  `accessToken` added to `encrypted-fields.ts`'s `ENCRYPTED_FIELDS` (the
+  mock OAuth-style token this app's own simulated institution "issues" is
+  exactly as sensitive as a real one would be, so it gets the identical
+  AES-256-GCM treatment as `BankAccount.last4`/`NotableTransaction.description`).
+- **`src/lib/banking/psd2-client.ts`** (new, pure/mocked, no DB access —
+  `src/lib/` convention per §3b): 5 fictional EU institutions
+  (`MOCK_INSTITUTIONS`), `connectToInstitution`/`fetchTransactions` with
+  simulated network latency and an ~8% simulated transient-failure rate
+  (`Psd2ApiError`) — genuinely exercising realistic failure handling, not
+  a network call that always succeeds. Deterministic per-institution mock
+  transaction history via `createSeededRandom` (reused from
+  `monte-carlo.ts`, §3n — not a second hand-rolled PRNG), anchored to
+  real "now" rather than a fixed historical date, which is what makes a
+  60-day rolling window always look current in a long-running demo.
+- **`src/lib/transaction-dedupe.ts`** (new): extracted the CSV import
+  pipeline's own dedup mechanism (§3j — content-hash + occurrence
+  ordinal, plus `buildProviderTransactionId`) into a shared module so the
+  new PSD2 sync path REUSES it rather than reimplementing it, exactly the
+  task's own "route through the existing idempotent duplicate detection"
+  ask. Deliberately namespaced separately per source (`"csv"` vs.
+  `"psd2"` prefixes on the provider-transaction-id) — true cross-source
+  content unification (recognizing a CSV-imported row and a later
+  PSD2-synced row as "the same real transaction") is an explicitly stated
+  non-goal, not an oversight: real financial aggregators struggle with
+  exactly this problem too, and attempting it here would risk silently
+  conflating two genuinely different transactions that merely look
+  similar. What's actually guaranteed is idempotent *repeated* syncs (and
+  repeated CSV imports) independently — verified by the sync-service's
+  own integration tests forcing a full history re-fetch and confirming
+  zero new imports the second time.
+  - `src/lib/csv-import/pipeline.ts` and
+    `src/server/dal/transaction-import.ts` were refactored to call the
+    shared module instead of their own private copies — verified
+    byte-for-byte identical behavior via the pre-existing 78-test CSV
+    import suite, not just assumed safe from reading the diff.
+- **`src/server/banking/sync-service.ts`**: `syncBankConnection(userId,
+  connectionId)` — fetches since `connection.lastSyncedAt ?? new
+  Date(0)`, converts incoming EUR/GBP to agorot via the existing
+  `convertNativeAmountToAgorot`/`getLatestRateTable` (§3l), runs the
+  Tier 1-2-only categorization cascade (same "no per-row network
+  round-trips inside a bulk/sync ingestion path" reasoning §3j's CSV
+  import and §3u's Tier 3 already establish), and persists via the
+  shared dedup mechanism.
+  - **A real bug caught before it ever ran**: the first draft used
+    `since = connection.lastSyncedAt ?? connection.createdAt`, which
+    would make the FIRST sync only pull ~today's transactions — the mock
+    client's history is anchored to real "now" regardless of when the
+    connection itself was created, so a brand-new connection's
+    `createdAt` (today) would exclude the 60 days of history that
+    actually exists. Caught by reasoning through the mock client's own
+    doc comment before writing the buggy version into a committed file,
+    fixed to `new Date(0)` instead.
+- **Routes** (`POST /api/banking/connections`,
+  `DELETE /api/banking/connections/[id]`,
+  `POST /api/banking/connections/[id]/sync`): all `guardMutation()`-
+  fronted, matching the user's own chosen architecture — no public
+  webhook exists anywhere in this feature. Unlinking a connection deletes
+  ONLY the `BankConnection` row, never the underlying `BankAccount` or its
+  transaction history — verified live (below), not just by design intent.
+- **UI**: a compact `OpenBankingSyncCard` on `/dashboard` (same
+  deliberately-small "glanceable status, not a second management UI"
+  pattern as `HouseholdSummary`/`DeadMansSwitchSummary`, §3s/§3t) and a
+  full connection-management screen at `/settings/open-banking` (connect/
+  sync/disconnect, cross-linked from `/settings`'s new "Connections"
+  section) — reachable by direct link only, deliberately not added to
+  `PRIMARY_NAV_ITEMS`/`MobileNav`, same "sub-view, not one of the spec's
+  9 primary destinations" pattern as `/vault`/`/analytics`/
+  `/trading/portfolio`.
+- **Verified live, not just by test**: `npm run check` clean at every
+  phase; with the database genuinely live, 1249/1252 passing (3 skip,
+  the unrelated embedding sidecar) — 11 unit tests for the mock PSD2
+  client, 10 for the shared dedup module, and 5 integration tests for the
+  sync service against real Postgres (including a `withRetryOnSimulatedFailure`
+  helper that retries up to 8 times on the mock client's own simulated
+  ~8% failure rate — deliberately NOT mocked away, framed as "the same
+  thing a real user clicking Sync now again would do," and a dedup test
+  that explicitly resets `lastSyncedAt` to force a full-history
+  re-fetch and asserts an exact `importedCount: 0` on the second sync,
+  rather than a vacuously-true "duplicates >= 0" assertion an earlier
+  draft had). A full live `curl` walkthrough against the running dev
+  server and real Postgres, authenticated as the real (post-§3ff)
+  claimed demo account: connected to a real mock institution (`Deutsche
+  Bank (Mock)`), synced (62 transactions imported), confirmed the
+  dashboard card and `/settings/open-banking` both reflect the new
+  connection and sync timestamp, re-synced (0 imported, 0 duplicates —
+  the incremental `since=lastSyncedAt` window correctly found nothing
+  new), unlinked (200), confirmed the connection list returned to empty
+  while the 62 imported transactions remained in the database
+  (`BankConnection` count 0, `NotableTransaction` count for that account
+  unchanged at 62) — proving unlink preserves history exactly as
+  designed. Error paths: an unknown institution id 400s, unlinking a
+  nonexistent connection 404s, a forged cross-origin `Origin` on sync
+  403s. Dev database fully re-seeded afterward, confirmed via the seed
+  script's own output that all three seeded users came back unclaimed.
+- **Known limitations, left as such rather than silently expanded
+  scope**: no real bank connectivity of any kind — see the opening
+  scoping note; no cross-source (CSV-vs-PSD2) content-level dedup, a
+  stated non-goal rather than a gap; no token-refresh flow for an
+  `EXPIRED` mock connection (the mock OAuth-style token simply expires
+  after 90 days per `connectToInstitution`'s own logic, and re-connecting
+  is the only path back to `ACTIVE` today — a real refresh-token flow
+  would be a reasonable next step, not built here); no scheduled/
+  automatic sync (this app's established "manual/cron entry point, real
+  scheduling is a deployment step" precedent, `sync:rates`/
+  `sync:crypto-prices`/the Dead Man's Switch inactivity check — a
+  "Sync now" button is the only trigger, by explicit design per the
+  webhook-vs-sync decision above, not an oversight).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

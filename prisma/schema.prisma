@@ -183,6 +183,13 @@ enum WebAuthnChallengeType {
   AUTHENTICATION
 }
 
+enum BankConnectionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  ERROR
+}
+
 /// `zk*` columns back the zero-knowledge vault for `GoalContribution.note`
 /// (AGENTS.md §3m) — none of them are secret. `zkSalt` and
 /// `zkKdfIterations` are PBKDF2 parameters (a salt's job is to be public;
@@ -283,6 +290,7 @@ model User {
   ledgerCommits            LedgerCommit[]
   authenticators           Authenticator[]
   webauthnChallenges       Challenge[]
+  bankConnections          BankConnection[]
   sharedGroupsCreated      SharedGroup[]             @relation("SharedGroupsCreated")
   groupMemberships         GroupMember[]
   groupInvitesCreated      GroupInvite[]             @relation("GroupInvitesCreated")
@@ -649,6 +657,7 @@ model BankAccount {
   updatedAt       DateTime        @updatedAt
 
   transactions NotableTransaction[]
+  bankConnection BankConnection?
 
   @@index([userId])
   @@index([sharedGroupId])
@@ -1508,4 +1517,43 @@ model Challenge {
   createdAt DateTime              @default(now())
 
   @@index([userId, type])
+}
+
+/// EU Open Banking PSD2 Ingestion (ad hoc) — a link to a MOCK, simulated
+/// European banking institution via a PSD2-shaped API. See
+/// src/lib/banking/psd2-client.ts's own doc comment for the honest scope:
+/// this models the SHAPE of a real Berlin Group NextGenPSD2-style
+/// integration (a consent/access-token flow, account and transaction
+/// endpoints, realistic error codes) for demonstration — there is no
+/// real regulatory licensing, eIDAS certificate, or bank connectivity
+/// behind it, and `institutionId` refers to one of `MOCK_INSTITUTIONS`,
+/// never a real bank.
+///
+/// One `BankConnection` maps to exactly one `BankAccount` — a real
+/// deliberate simplification: a genuine PSD2 consent can cover several
+/// accounts at one institution, but this app has no per-connection
+/// multi-account UI, and adding one wasn't part of this feature's actual
+/// ask. The `BankAccount` row is created at connect time (not lazily at
+/// first sync) so the connection has somewhere real to attach synced
+/// transactions to immediately.
+model BankConnection {
+  id            String               @id @default(cuid())
+  userId        String
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institutionId String
+  bankAccountId String               @unique
+  bankAccount   BankAccount          @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  /// Encrypted at rest — see file header. This mock token has no real
+  /// value (nothing real ever accepts it), but is deliberately given the
+  /// same at-rest protection a genuine PSD2 bearer token — a real
+  /// credential granting live access to a user's actual bank data —
+  /// would require, so this app's own code never demonstrates handling a
+  /// credential-shaped value more casually than production code should.
+  accessToken   String
+  expiresAt     DateTime
+  status        BankConnectionStatus @default(ACTIVE)
+  lastSyncedAt  DateTime?
+  createdAt     DateTime             @default(now())
+
+  @@index([userId])
 }

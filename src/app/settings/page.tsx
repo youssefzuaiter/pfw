@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getMfaStatus } from "../../server/dal/mfa";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
@@ -60,6 +61,18 @@ export default async function SettingsPage() {
         <h2 className="text-base font-semibold text-fg">Preferences</h2>
         <div className="mt-2">
           <PreferencesForm initial={initialPreferences} />
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-base font-semibold text-fg">Connections</h2>
+        <div className="mt-2">
+          <Link
+            href="/settings/open-banking"
+            className="inline-flex items-center rounded-md border border-border bg-bg px-3 py-2 text-sm font-medium text-fg hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Open Banking (EU) →
+          </Link>
         </div>
       </div>
     </div>

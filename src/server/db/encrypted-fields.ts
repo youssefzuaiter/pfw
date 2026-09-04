@@ -30,6 +30,11 @@ const ENCRYPTED_FIELDS = {
   // attacker with read access to the raw table could otherwise use
   // directly to generate valid codes).
   user: ["totpSecret"],
+  // EU Open Banking PSD2 Ingestion (ad hoc) — a mock PSD2 access token,
+  // given the same at-rest protection a genuine bearer credential would
+  // need, even though nothing real ever accepts this one (see
+  // BankConnection's own schema comment).
+  bankConnection: ["accessToken"],
 } as const;
 
 type EncryptedModelKey = keyof typeof ENCRYPTED_FIELDS;

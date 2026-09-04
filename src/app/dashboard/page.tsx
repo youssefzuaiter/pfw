@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { buildLiquidityRunwayData } from "../../server/analytics/build-liquidity-runway-data";
+import { buildOpenBankingSyncData } from "../../server/analytics/build-open-banking-sync-data";
 import { buildRunwayForecastData } from "../../server/analytics/build-runway-forecast-data";
 import { buildSpendingAnomalyData } from "../../server/analytics/build-spending-anomaly-data";
 import { buildDashboardData } from "../../server/dashboard/build-dashboard-data";
@@ -14,6 +15,7 @@ import { HouseholdSummary } from "./_components/household-summary";
 import { IncomeExpenseChart } from "./_components/income-expense-chart";
 import { LiquidityRunwayCard } from "./_components/liquidity-runway-card";
 import { NetWorthHero } from "./_components/net-worth-hero";
+import { OpenBankingSyncCard } from "./_components/open-banking-sync-card";
 import { RunwayForecastChart } from "./_components/runway-forecast-chart";
 import { SpendingAnomalyAlert } from "./_components/spending-anomaly-alert";
 
@@ -25,13 +27,14 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast, spendingAnomaly] = await Promise.all([
+  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast, spendingAnomaly, openBankingSync] = await Promise.all([
     buildDashboardData(user.id),
     listMyGroups(user.id),
     getVaultStatus(user.id),
     buildLiquidityRunwayData(user.id),
     buildRunwayForecastData(user.id),
     buildSpendingAnomalyData(user.id),
+    buildOpenBankingSyncData(user.id),
   ]);
 
   const households = await Promise.all(
@@ -80,6 +83,8 @@ export default async function DashboardPage() {
         <HouseholdSummary households={households} />
         <DeadMansSwitchSummary isSetUp={vaultStatus.isSetUp} status={vaultStatus.status} />
       </div>
+
+      <OpenBankingSyncCard data={openBankingSync} />
 
       <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="cash-flow-heading">
         <h2 id="cash-flow-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
