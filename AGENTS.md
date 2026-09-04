@@ -4973,6 +4973,209 @@ verification of the color change itself.
   unchanged by any of this — still the deep money-green from earlier in
   this same session.
 
+## 3ll. Behavioral Spending Anomaly Detection (ad hoc)
+
+Explicit user request. Framed initially as "adapting the time-series
+autoencoder architecture from NeuroLink Analytics" — flagged before
+building anything, the same "verify provenance before incorporating a
+third party's work" discipline this session already applied to the
+Arduino/migration-gate request (§3aa) and the fabricated "Phase 2"
+framing (§3bb). The referenced material turned out to be the user's own
+prior, unpublished work (a confidential AIN3002 coursework paper on
+keystroke-dynamics drift detection, unrelated in domain), and the user
+then asked for this feature to be built from scratch instead — no
+architecture, methodology, or documentation here references that other
+project. Built as a genuinely original LSTM autoencoder sized for this
+feature's actual input shape (a 30-day transaction-history sequence),
+with a standard bootstrap-CI tiered threshold on top.
+
+- **`ml-pipeline/`** (new, repo root — a separate Python toolchain, same
+  "own .venv, own README, never linted as this app's JS/TS" precedent as
+  `sidecar/` and `scripts/train-forecaster.py`; excluded from
+  `eslint.config.mjs` for the same reason those are, since its `.venv`
+  vendors torch's own bundled JS viewer, which otherwise fails lint with
+  real errors unrelated to this app's source).
+  - **`synthesize_ledger.py`**: generates two independent synthetic
+    household pools — 160 entirely-normal households (TRAIN) and 60
+    households each carrying exactly one injected anomaly (VAL):
+    `subscription_creep` (a recurring subscription's price hiked 2.5x-4x)
+    or `micro_burst` (20-50 tiny transactions crammed into a 2-3 hour
+    window). Per-day feature vector: `total_spend_agorot`,
+    `transaction_count`, `max_3h_burst_count` (the busiest 3-hour
+    window's transaction count — the velocity signal), and 7
+    category-bucket totals (groceries/dining/subscriptions/shopping/
+    transport/entertainment/other). Every household also gets a
+    per-CATEGORY weekly rhythm (groceries peak Saturday, dining peaks
+    weekends, etc.) — added after an initial flat-Poisson-rate draft left
+    almost nothing temporally learnable for an LSTM to compress (see
+    below). Every monetary figure is a plain Python int (agorot), matching
+    `src/lib/money.ts`'s money law even though this is a standalone
+    Python pipeline with no dependency on the app's own TS helpers.
+  - **`train_autoencoder.py`**: a small seq2seq LSTM autoencoder
+    (`LSTM(10->40) -> Linear(40->12) Tanh bottleneck -> LSTM(12->40) ->
+    Linear(40->10)`), fit exclusively on the normal-only TRAIN pool with
+    plain MSE loss. Exports `public/models/spending_anomaly.onnx` with a
+    **fixed** `(1, 30, 10)` input shape (no dynamic batch axis, unlike
+    `train-forecaster.py` — this feature only ever evaluates one user's
+    one window at a time) and `public/models/spending_anomaly.meta.json`
+    (feature order, normalization method, thresholds, all read directly
+    by `src/lib/ml/anomaly-worker-handlers.ts`, hardcoded there with a
+    "must match" comment per this repo's existing convention rather than
+    fetched at runtime).
+  - **Anomaly-threshold methodology**: bootstrap-CI tiered classification
+    — 2,000 resamples of the training reconstruction-error distribution,
+    each resample's own mean+2*std threshold, and the 2.5th/97.5th
+    percentiles of THOSE resampled thresholds define `theta_lo`/`theta_hi`.
+    Three tiers: HIGH (>= theta_hi), MARGINAL (between), NORMAL (below) —
+    a standard statistical technique, not tied to any external work.
+  - **Three real, verified bugs found and fixed while actually training
+    this, not assumed correct from a first successful export**:
+    1. **A global StandardScaler conflated cross-household variance with
+       real anomalies.** The first full run (global scaler fit across all
+       160 households) produced holdout MSE ~0.87 (barely better than
+       predicting the mean) and `subscription_creep` recall of ~1% while
+       `micro_burst` recall was 100% — population-level std was so
+       dominated by "household A spends more than household B" that a
+       single household's real deviation barely moved its z-score, unless
+       it was already large in absolute terms (a burst). Fixed by
+       switching to PER-WINDOW normalization using each window's own
+       leading days as a baseline reference — the same principle
+       `scripts/train-forecaster.py` already applies to its own
+       per-series normalization, and additionally a real
+       production-robustness concern (a global scaler fit on synthetic
+       data has no reason to match a real user's actual spending scale).
+    2. **Raw agorot values blew up the per-window baseline z-score.**
+       Naively z-scoring raw values (no log transform) produced MSE
+       ~40,000 and near-zero recall on BOTH anomaly types: several
+       features (subscriptions/entertainment/other) sit at exactly zero
+       on most days, so an all-zero baseline's std gets floored to 1.0 —
+       dimensionally meaningless against a raw agorot scale that can run
+       into the thousands, so a single nonzero occurrence produced a
+       value in the thousands sitting next to otherwise-normal features
+       near [-2, 2], dominating the reconstruction error by itself. Fixed
+       with `log1p` before z-scoring (`normalize_windows()`'s own
+       docstring documents this in detail) — compresses "usually 0,
+       occasionally thousands" into "usually 0, occasionally ~8-9," where
+       the same 1.0 floor is finally sensible.
+    3. **A 27-day baseline was 1 day short of a 28-day billing cycle.**
+       Extending the baseline from 23 to 27 days (to try to capture a
+       prior subscription billing occurrence) counter-intuitively drove
+       `subscription_creep` recall to exactly 0% — traced to an
+       off-by-one: the prior (correctly-priced) billing needed as a
+       comparison reference sits EXACTLY 28 days before a hiked one,
+       landing 1 day outside a 27-day baseline every single time. Fixed
+       by using a 29-day baseline (guaranteeing that occurrence always
+       falls inside it) and evaluating the anomaly signal on only the
+       single most recent day (not an average over several recent days,
+       which independently diluted a single-day event's signal across
+       unaffected neighbors) — together these took `subscription_creep`
+       recall from 0% to 76.7% and overall recall to 88.3%
+       (`micro_burst` stayed at 100%), verified by an actual training run,
+       not assumed from the reasoning alone.
+  - **Final validated numbers** (60 VAL households, 12,660 windows, 60
+    labeled anomalous): precision 0.095, recall 0.883 (0.767 on
+    `subscription_creep`, 1.000 on `micro_burst`). Precision is honestly
+    modest — documented as a known limitation below, not tuned further,
+    the same "ship a working, honestly-scoped feature" line this
+    session's other synthetic-data-trained features (Monte Carlo,
+    cash-flow forecaster) already draw.
+- **`src/lib/ml/`** (new directory, the path the task itself named):
+  - **`anomaly-worker-handlers.ts`**: reproduces `train_autoencoder.py`'s
+    exact preprocessing in TypeScript — `buildDailyFeatureMatrix`
+    (dense 30-day aggregation from raw transactions, including the same
+    3-hour sliding-window burst-count algorithm as
+    `synthesize_ledger.py`'s `_max_burst_count`) and `normalizeWindow`
+    (log1p + 29-day baseline z-score, byte-for-byte matching the Python
+    training script). A `CATEGORY_SLUG_TO_BUCKET` table maps this app's
+    real `Category.slug` values onto the model's 7 synthetic buckets —
+    `rent` deliberately maps to `subscriptions`, not `other`: both are a
+    fixed-price RECURRING charge, exactly the pattern the model was
+    trained to catch a hike on; any unrecognized slug (including a user's
+    own custom category) falls back to `other` rather than throwing.
+    `createAnomalyDetectionHandlers()` runs the ONNX model
+    (self-hosted `.asyncify` WASM pair under `public/onnx-runtime/`,
+    same asset this app's other ONNX-in-Worker features already vendor —
+    no new WASM payload needed), computes the anomaly signal from ONLY
+    the final day's reconstruction error (not a whole-window average —
+    the same fix that resolved bug #3 above), and reports which single
+    feature contributed most to that error (`topFeature`/`topCategory`),
+    which is what drives the dashboard alert's wording.
+  - **`anomaly-worker.ts`** / **`anomaly-client.ts`**: same
+    one-line-Worker-entry / one-shot-instantiate-run-terminate shape as
+    `forecaster.worker.ts`/`forecaster-client.ts` — this check runs once
+    per dashboard load, never kept warm.
+  - Enforced client-only by `tests/guards/anomaly-worker-client-only.test.ts`
+    (same import-graph-guard pattern as every other client-only ML/crypto
+    module in this app) — no file under `src/server/**` may import these.
+- **`src/server/dal/transactions.ts`** gained
+  `getRecentExpenseTransactionsForAnomalyDetection` — expense-only
+  (`amount < 0`), `withUserScope`-scoped like every other DAL function,
+  returning individual transaction rows (not a pre-aggregated matrix —
+  aggregation into the model's exact feature shape is the client Worker's
+  job, so this function's only responsibility is the RLS-enforced fetch).
+  `amount`/`nativeAmount` `bigint` fields are converted to plain `number`
+  here, once, before crossing the Server->Client prop boundary — the same
+  `NextResponse.json()`-can't-serialize-bigint bug class §3d already
+  documents, applied here to React props via `build-spending-anomaly-data.ts`
+  instead of a JSON response body.
+- **`src/server/analytics/build-spending-anomaly-data.ts`** (new,
+  `cache()`-wrapped like every other `build-*-data.ts` aggregator, §3c):
+  fetches the trailing 30-day expense history and today's date key.
+  Deliberately runs no detection itself — like
+  `build-runway-forecast-data.ts`, the actual inference only ever runs
+  client-side, so this function's whole job is fetching and shaping real
+  data.
+- **`src/app/dashboard/_components/spending-anomaly-alert.tsx`** (new):
+  runs the check silently on mount (no loading UI at all, per the task's
+  own "invoke... silently in the background" ask) and renders NOTHING for
+  a NORMAL result or a failed/unsupported check — the only visible output
+  is the alert card itself, and only when the model's own threshold is
+  actually crossed. HIGH gets a pulsing critical badge; MARGINAL a softer
+  warning badge — the model's own three-tier design treats MARGINAL as
+  "within the threshold's statistical uncertainty band," not a confident
+  anomaly. Alert copy is built from `topCategory`/`topFeature` (e.g.
+  "Unusual velocity detected in your Subscriptions category over the last
+  48 hours" when a category feature dominates the error, or a
+  velocity/count-specific message for the two non-category features).
+  Placed at the top of `/dashboard`, right after the header — a
+  high-priority alert that, correctly, has zero visual footprint when
+  nothing is wrong.
+- **Verified, not just written**: `npm run check` clean throughout all
+  four phases (988/1198 with no DB, 1195/1198 with the DB live, 3 skip
+  for the unrelated embedding sidecar). A real end-to-end auth + render
+  walkthrough against the running dev server and real Postgres: claimed
+  `demo@pfw.local` via the real registration flow, established a real
+  session, `GET /dashboard` returned 200 with no server-side error (the
+  new DAL query and aggregator run cleanly against real data) — the dev
+  database was fully re-seeded afterward, confirmed via the seed script's
+  own output that all three seeded users came back unclaimed.
+- **Not verified in this pass, flagged rather than glossed over**: no
+  real browser was driven to confirm the Worker actually loads the WASM
+  runtime, runs real inference, and renders a real HIGH/MARGINAL alert
+  end to end against a live account's real data — this session had no
+  interactive browser tool available for it, the same honesty §3dd's
+  own cash-flow-forecaster entry already gives an identical gap. What
+  WAS verified: the preprocessing pipeline (aggregation, log1p, baseline
+  z-scoring, burst-count) against a mocked ONNX session, the exported
+  model's own correctness (a real training run producing the recall
+  numbers above, plus PyTorch-vs-ONNX numerical equivalence), and that
+  the server-side wiring renders with no error against real data.
+- **Known limitations, left as such rather than silently expanded
+  scope**: precision is modest (~9.5% at the HIGH tier on synthetic
+  validation data) — a real deployment would see some false alarms,
+  documented plainly rather than tuned indefinitely past what this
+  synthetic-data pass could responsibly validate; the model is trained
+  entirely on synthetic data with no real transaction history, the same
+  honest caveat every other synthetic-data-trained feature in this app
+  carries (Monte Carlo, the cash-flow forecaster); `CATEGORY_SLUG_TO_BUCKET`
+  is a fixed table covering this app's own seeded category slugs — a
+  household with entirely custom categories would see everything bucketed
+  into `other`, still functional (the burst/velocity/total-spend features
+  are category-independent) but with less category-specific signal; no
+  UI to dismiss/acknowledge a flagged alert (it simply stops showing once
+  a later day's check comes back NORMAL) — an explicit dismiss action
+  was not part of the task's own scope.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,

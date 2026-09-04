@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { buildLiquidityRunwayData } from "../../server/analytics/build-liquidity-runway-data";
 import { buildRunwayForecastData } from "../../server/analytics/build-runway-forecast-data";
+import { buildSpendingAnomalyData } from "../../server/analytics/build-spending-anomaly-data";
 import { buildDashboardData } from "../../server/dashboard/build-dashboard-data";
 import { getVaultStatus } from "../../server/dal/dead-mans-switch";
 import { getSharedGroupData, listMyGroups } from "../../server/dal/shared-groups";
@@ -14,6 +15,7 @@ import { IncomeExpenseChart } from "./_components/income-expense-chart";
 import { LiquidityRunwayCard } from "./_components/liquidity-runway-card";
 import { NetWorthHero } from "./_components/net-worth-hero";
 import { RunwayForecastChart } from "./_components/runway-forecast-chart";
+import { SpendingAnomalyAlert } from "./_components/spending-anomaly-alert";
 
 // This screen is entirely live, per-user financial data — never a
 // candidate for static prerendering or cross-request caching (see
@@ -23,12 +25,13 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast] = await Promise.all([
+  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast, spendingAnomaly] = await Promise.all([
     buildDashboardData(user.id),
     listMyGroups(user.id),
     getVaultStatus(user.id),
     buildLiquidityRunwayData(user.id),
     buildRunwayForecastData(user.id),
+    buildSpendingAnomalyData(user.id),
   ]);
 
   const households = await Promise.all(
@@ -56,6 +59,8 @@ export default async function DashboardPage() {
           Retirement analytics →
         </Link>
       </div>
+
+      <SpendingAnomalyAlert transactions={spendingAnomaly.transactions} windowEndDateKey={spendingAnomaly.windowEndDateKey} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <NetWorthHero netWorth={data.netWorth} history={data.netWorthHistory} />

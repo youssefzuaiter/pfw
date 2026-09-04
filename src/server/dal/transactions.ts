@@ -540,6 +540,52 @@ export async function getDailyNetCashFlow(userId: string, from: Date, to: Date):
   return days;
 }
 
+export type SpendingAnomalyTransactionRow = {
+  /** Full ISO 8601 timestamp — the time-of-day component feeds the client-side burst/velocity feature (src/lib/ml/anomaly-worker-handlers.ts). */
+  occurredAtIso: string;
+  /** Positive magnitude of an EXPENSE, in agorot. */
+  amountAgorot: number;
+  categorySlug: string;
+};
+
+/**
+ * Raw expense-only transaction rows for the client-side spending-anomaly
+ * detector (src/lib/ml/anomaly-worker.ts — "Behavioral Spending Anomaly
+ * Detection"). Deliberately returns individual transaction rows, not a
+ * pre-aggregated daily/category matrix — the aggregation into the
+ * model's exact 10-feature shape is the client Worker's job (it has to
+ * reproduce ml-pipeline/synthesize_ledger.py's feature definitions
+ * exactly), so this function's only responsibility is the RLS-enforced
+ * fetch itself. Only negative (expense) amounts are included — income
+ * plays no role in a spending-anomaly signal, and is excluded here
+ * rather than left for the Worker to filter, so bigint income amounts
+ * never need to cross the Server->Client boundary at all.
+ *
+ * `amount`/`nativeAmount` are `bigint` and cannot cross a Server->Client
+ * Component prop boundary any more than they can cross
+ * `NextResponse.json()` (AGENTS.md §3d's documented bug class) — the
+ * conversion to a plain `number` happens here, in the DAL, once, rather
+ * than at every call site.
+ */
+export async function getRecentExpenseTransactionsForAnomalyDetection(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<SpendingAnomalyTransactionRow[]> {
+  const rows = await withUserScope(userId, (tx) =>
+    tx.notableTransaction.findMany({
+      where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n } },
+      select: { occurredAt: true, amount: true, category: { select: { slug: true } } },
+    }),
+  );
+
+  return rows.map((row) => ({
+    occurredAtIso: row.occurredAt.toISOString(),
+    amountAgorot: Number(-row.amount),
+    categorySlug: row.category.slug,
+  }));
+}
+
 export type MerchantOccurrenceRow = {
   merchantKey: string;
   /** The original-cased merchant/description string, for display — merchantKey is normalized (trimmed, lowercased) and isn't fit to show a user. */

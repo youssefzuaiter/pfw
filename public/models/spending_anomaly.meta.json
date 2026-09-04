@@ -1,0 +1,54 @@
+{
+  "windowDays": 30,
+  "numFeatures": 10,
+  "featureNames": [
+    "total_spend_agorot",
+    "transaction_count",
+    "max_3h_burst_count",
+    "cat_groceries_agorot",
+    "cat_dining_agorot",
+    "cat_subscriptions_agorot",
+    "cat_shopping_agorot",
+    "cat_transport_agorot",
+    "cat_entertainment_agorot",
+    "cat_other_agorot"
+  ],
+  "categories": [
+    "groceries",
+    "dining",
+    "subscriptions",
+    "shopping",
+    "transport",
+    "entertainment",
+    "other"
+  ],
+  "hiddenSize": 40,
+  "bottleneckDim": 12,
+  "opsetVersion": 18,
+  "inputNames": [
+    "input"
+  ],
+  "outputNames": [
+    "reconstruction"
+  ],
+  "normalization": {
+    "method": "log1p, then per-window baseline z-score \u2014 NOT a precomputed/shipped scaler",
+    "baselineDays": 29,
+    "recentDays": 1,
+    "description": "Step 1: apply log1p (natural log of 1+x) to EVERY raw value in the windowDays x numFeatures window \u2014 every feature here is a non-negative count or agorot amount, so log1p is defined everywhere and log1p(0)=0. This step is not optional: skipping it reproduces a real bug this pipeline hit (see train_autoencoder.py's normalize_windows() docstring) where a rarely-nonzero raw-agorot feature could blow up the reconstruction error by itself. Step 2: on the log1p-transformed window, compute mean/std per feature over ONLY the first baselineDays days (std floored at 1.0 if < 1e-6), then z-score all windowDays days (baseline days AND the trailing recentDays days) using that mean/std. Must be recomputed live for every user, every inference call \u2014 there is no global scaler to load."
+  },
+  "anomalySignal": {
+    "recentEvalDays": 1,
+    "description": "Run the normalized (windowDays x numFeatures) tensor through the ONNX model to get a same-shaped reconstruction. Compute squared error per day (mean over the feature dimension only), then take the mean of just the LAST recentEvalDays day(s) of that per-day error \u2014 never the whole window's average error, which dilutes a single anomalous day's signal across every unaffected day and was empirically much less sensitive (see recent_reconstruction_error()'s docstring in train_autoencoder.py). Compare that single number against thresholds.thetaHi/thetaLo below."
+  },
+  "thresholds": {
+    "thetaLo": 1.0396369874477387,
+    "thetaHi": 1.2275562047958375,
+    "pointThreshold": 1.1161890029907227,
+    "tiers": "HIGH if signal >= thetaHi; MARGINAL if thetaLo <= signal < thetaHi; NORMAL if signal < thetaLo"
+  },
+  "thresholdMethodology": "Bootstrap-CI tiered classification (2000 resamples of the training reconstruction-error distribution; theta_lo/theta_hi are the 2.5th/97.5th percentiles of each resample's own mean+2*std threshold).",
+  "trainedOn": "synthetic data only (see ml-pipeline/synthesize_ledger.py) \u2014 not real financial transaction data",
+  "seed": 20260904,
+  "moneyUnit": "agorot (integer minor units of ILS)"
+}

@@ -22,6 +22,13 @@ const eslintConfig = defineConfig([
     // The Python sidecar has its own tooling (see sidecar/README.md);
     // its .venv especially must never be linted as JS/TS.
     "sidecar/**",
+    // The spending-anomaly ML pipeline (ml-pipeline/README.md) is a
+    // separate Python toolchain, same "own .venv, never linted as JS/TS"
+    // treatment — its .venv vendors torch's own bundled JS viewer
+    // (model_dump/*.js), which otherwise fails lint with real errors
+    // (@typescript-eslint/no-this-alias) that have nothing to do with
+    // this app's own source.
+    "ml-pipeline/**",
     // Vendored, pre-minified Tesseract.js worker/WASM-glue assets
     // (AGENTS.md §3q) — self-hosted static files, not hand-authored code.
     "public/tesseract/**",
