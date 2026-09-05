@@ -266,6 +266,28 @@ model User {
   /// exactly what's needed for it "for free," so there's no reason not
   /// to.
   totpLastUsedTimeStep Int?
+  /// Account lockout (Phase 3, Security & Recovery). Counts CONSECUTIVE
+  /// failed authentications — a wrong password, a wrong TOTP code (after
+  /// the password was already correct), or a failed passkey assertion —
+  /// reset to 0 on any fully successful sign-in, OR on a successful
+  /// recovery-code redemption / password reset (see `accountLockedAt`).
+  /// Never decremented one at a time; only ever reset to 0 or incremented.
+  failedLoginAttempts Int @default(0)
+  /// Non-null once `failedLoginAttempts` reaches `LOCKOUT_THRESHOLD`
+  /// (src/server/auth/account-lockout.ts) — a real, load-bearing lock,
+  /// not a time-based cooldown: it persists until the account is
+  /// explicitly unlocked by a successful recovery-code redemption
+  /// (the "recovery-code" Credentials provider, auth.ts) or a completed
+  /// password reset (`confirmPasswordReset`), never by the passage of
+  /// time alone or by a subsequent correct password on its own. Checked
+  /// BEFORE password verification even runs (`verifyCredentials`) — a
+  /// deliberate, accepted trade-off: this necessarily reveals that a
+  /// LOCKED account exists (a nonexistent email can never be locked),
+  /// the same class of trade-off `checkTotpChallenge`'s required/invalid
+  /// split already accepts once a password has been proven correct — but
+  /// a lockout that produced no observable effect at all would defeat
+  /// the feature's purpose.
+  accountLockedAt      DateTime?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -303,6 +325,7 @@ model User {
   passwordResetTokens      PasswordResetToken[]
   emailVerificationTokens  EmailVerificationToken[]
   notifications            Notification[]
+  recoveryCodes            RecoveryCode[]
 }
 
 /// Time-limited, single-use password reset tokens (auth hardening pass,
@@ -1577,4 +1600,25 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId, read])
+}
+
+/// MFA backup codes (Phase 3, Security & Recovery). Only `codeHash`
+/// (SHA-256 of the raw code — src/server/auth/recovery-codes.ts) is ever
+/// persisted, the same "hash it, never store the secret" rule already
+/// established for `PasswordResetToken.tokenHash`/`GroupInvite.tokenHash`/
+/// `Beneficiary.shareHash`. The raw code exists only in the one-time
+/// setup response the client is expected to save; a database dump reveals
+/// no usable code. `used` (not a `usedAt` timestamp) is deliberately all
+/// this model tracks beyond that — the task's own stated field list, and
+/// there's no feature here that needs to know WHEN a code was redeemed,
+/// only whether it still can be.
+model RecoveryCode {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String   @unique
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, used])
 }

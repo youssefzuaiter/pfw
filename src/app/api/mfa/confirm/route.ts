@@ -3,6 +3,7 @@ import { z } from "zod";
 import { guardMutation } from "../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonServerError } from "../../../../server/api/responses";
 import { confirmTotpSetup } from "../../../../server/dal/mfa";
+import { ensureRecoveryCodes } from "../../../../server/dal/recovery-codes";
 
 const RATE_LIMIT = { windowMs: 60_000, maxRequests: 10 };
 
@@ -35,7 +36,13 @@ export async function POST(request: NextRequest) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    return NextResponse.json({ ok: true });
+
+    // Phase 3, Security & Recovery — see the identical call in
+    // POST /api/auth/webauthn/register-verify for why this only
+    // sometimes actually returns codes.
+    const recoveryCodes = await ensureRecoveryCodes(user.id);
+
+    return NextResponse.json({ ok: true, ...(recoveryCodes ? { recoveryCodes } : {}) });
   } catch (error) {
     console.error("POST /api/mfa/confirm failed", error);
     return jsonServerError();

@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import argon2 from "argon2";
 import { getAppUrl } from "../env";
 import { sendPasswordResetEmail } from "../email/auth-emails";
+import { resetFailedLoginAttempts } from "./account-lockout";
 import { verifyTotpCode } from "./totp";
 import {
   adminConsumePasswordResetToken,
@@ -88,5 +89,13 @@ export async function confirmPasswordReset(
 
   const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
   await adminConsumePasswordResetToken(record.id, user.id, passwordHash);
+  // A completed password reset is one of the two ways to clear a real
+  // account lock (Phase 3, Security & Recovery — the other is a
+  // successful recovery-code redemption, auth.ts's "recovery-code"
+  // provider) — proving a new password via a token only the account
+  // owner could have received by email is exactly the kind of positive
+  // proof `User.accountLockedAt`'s own schema doc comment says is
+  // required, unlike the mere passage of time.
+  await resetFailedLoginAttempts(user.id);
   return { ok: true };
 }

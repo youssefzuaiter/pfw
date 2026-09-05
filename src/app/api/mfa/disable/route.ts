@@ -12,7 +12,11 @@ import { disableTotp } from "../../../../server/dal/mfa";
  * re-confirmation instinct a real password-change flow would apply if
  * this app had one. `disableTotp` itself also bumps tokenVersion,
  * invalidating every OTHER outstanding session — see its own doc
- * comment.
+ * comment. `verification.outcome === "locked"` (Phase 3, Security &
+ * Recovery) is treated the same as "invalid" here — an edge case (this
+ * session is by definition still live, so a lock would only exist from a
+ * concurrent, separate failed-login sequence), not worth a distinct
+ * error message.
  */
 const RATE_LIMIT = { windowMs: 60_000, maxRequests: 10 };
 
@@ -36,8 +40,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const verified = await verifyCredentials(user.email, parsed.data.password);
-    if (!verified) {
+    const verification = await verifyCredentials(user.email, parsed.data.password);
+    if (verification.outcome !== "valid") {
       return NextResponse.json({ error: "Incorrect password" }, { status: 400 });
     }
 

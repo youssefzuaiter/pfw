@@ -44,9 +44,18 @@ const SRC_ROOT = path.resolve(__dirname, "../../src");
 // is by definition unauthenticated, the same shape as every exception
 // above (registering a NEW passkey, by contrast, is an authenticated
 // Settings action and goes through the normal withUserScope-scoped DAL,
-// src/server/dal/authenticators.ts). Every other file under src/ — the
-// DAL, routes, Server Components — must always go through
-// src/server/db/client.ts instead.
+// src/server/dal/authenticators.ts); and
+// src/server/auth/recovery-code-admin-ops.ts, MFA backup-code redemption's
+// own bootstrap exception (Phase 3, Security & Recovery) — the same
+// shape as webauthn-admin-ops.ts, since redeeming a recovery code is
+// also by definition unauthenticated (generating codes, by contrast, is
+// an authenticated MFA-enrollment action and goes through the normal
+// withUserScope-scoped DAL, src/server/dal/recovery-codes.ts); and
+// src/server/auth/account-lockout.ts, the account-lockout mechanism's own
+// bootstrap exception (Phase 3) — every call happens from inside
+// authorize() itself, before any session exists, for the same reason as
+// credentials.ts. Every other file under src/ — the DAL, routes, Server
+// Components — must always go through src/server/db/client.ts instead.
 const ADMIN_CLIENT_IMPORT = /from\s+["'].*\/admin-client["']/;
 
 describe("guard: nothing under src/ imports the admin DB client, except the auth bootstrap", () => {
@@ -60,6 +69,8 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       path.resolve(SRC_ROOT, "server", "auth", "credentials.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "account-recovery-admin-ops.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "webauthn-admin-ops.ts"),
+      path.resolve(SRC_ROOT, "server", "auth", "recovery-code-admin-ops.ts"),
+      path.resolve(SRC_ROOT, "server", "auth", "account-lockout.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

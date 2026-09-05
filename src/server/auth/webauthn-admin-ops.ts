@@ -21,6 +21,8 @@ export type AuthenticationCandidate = {
   email: string;
   displayName: string;
   tokenVersion: number;
+  /** Phase 3, Security & Recovery — checked by auth.ts's passkey provider before attempting assertion verification at all. */
+  accountLockedAt: Date | null;
   credentials: { credentialId: string; transports: string[] }[];
 };
 
@@ -39,6 +41,7 @@ export async function findAuthenticationCandidate(email: string): Promise<Authen
       email: true,
       displayName: true,
       tokenVersion: true,
+      accountLockedAt: true,
       authenticators: { select: { credentialId: true, transports: true } },
     },
   });
@@ -49,6 +52,7 @@ export async function findAuthenticationCandidate(email: string): Promise<Authen
     email: user.email,
     displayName: user.displayName,
     tokenVersion: user.tokenVersion,
+    accountLockedAt: user.accountLockedAt,
     credentials: user.authenticators,
   };
 }

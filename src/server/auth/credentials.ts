@@ -3,6 +3,7 @@ import argon2 from "argon2";
 import { createAdminClient } from "../db/admin-client";
 import { checkRateLimit } from "../api/rate-limit";
 import { verifyTotpCode } from "./totp";
+import { recordFailedLoginAttempt } from "./account-lockout";
 
 /**
  * Login and registration (AGENTS.md §3ff) — the credential-verification
@@ -47,24 +48,44 @@ export function checkLoginRateLimit(email: string): boolean {
 export type VerifiedUser = { id: string; email: string; displayName: string; tokenVersion: number };
 
 /**
- * Returns `null` on ANY failure (unknown email, no password set yet —
- * i.e. an unclaimed seeded row, or a wrong password) — deliberately the
- * same shape of response for all three, so a login form can't be used to
- * enumerate which emails exist in the system. `argon2.verify` is
- * constant-time by construction (it's comparing against a real
- * Argon2id hash, not a plaintext), so no separate timing-safe-compare
- * step is needed the way `isTrustedOrigin` (§3g) needed one for a
- * different kind of value.
+ * Account lockout (Phase 3, Security & Recovery): `"locked"` is checked
+ * BEFORE password verification even runs — see `User.accountLockedAt`'s
+ * own schema doc comment for the enumeration trade-off this accepts.
+ * `"invalid"` still covers the same three cases uniformly as before
+ * (unknown email, an unclaimed seeded row, a wrong password) — a login
+ * form still can't distinguish those three from each other.
  */
-export async function verifyCredentials(email: string, password: string): Promise<VerifiedUser | null> {
+export type VerifyCredentialsResult =
+  | { outcome: "valid"; user: VerifiedUser }
+  | { outcome: "invalid" }
+  | { outcome: "locked" };
+
+/**
+ * `argon2.verify` is constant-time by construction (it's comparing
+ * against a real Argon2id hash, not a plaintext), so no separate
+ * timing-safe-compare step is needed the way `isTrustedOrigin` (§3g)
+ * needed one for a different kind of value. A wrong password increments
+ * the account-lockout counter (`recordFailedLoginAttempt`) — but only
+ * once a real user row with a real password hash was found, so a
+ * nonexistent email never writes anything (nothing to lock).
+ */
+export async function verifyCredentials(email: string, password: string): Promise<VerifyCredentialsResult> {
   const admin = createAdminClient();
   const user = await admin.user.findUnique({ where: { email } });
-  if (!user || !user.passwordHash) return null;
+  if (!user || !user.passwordHash) return { outcome: "invalid" };
+
+  if (user.accountLockedAt) return { outcome: "locked" };
 
   const valid = await argon2.verify(user.passwordHash, password).catch(() => false);
-  if (!valid) return null;
+  if (!valid) {
+    await recordFailedLoginAttempt(user.id);
+    return { outcome: "invalid" };
+  }
 
-  return { id: user.id, email: user.email, displayName: user.displayName, tokenVersion: user.tokenVersion };
+  return {
+    outcome: "valid",
+    user: { id: user.id, email: user.email, displayName: user.displayName, tokenVersion: user.tokenVersion },
+  };
 }
 
 export type TotpChallengeResult = "not_required" | "required" | "invalid" | "valid";

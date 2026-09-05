@@ -4,6 +4,7 @@ import { startRegistration } from "@simplewebauthn/browser";
 import { useEffect, useState, type ChangeEvent, type FormEvent, type MouseEvent } from "react";
 import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
+import { RecoveryCodesReveal } from "./recovery-codes-reveal";
 
 type AuthenticatorSummary = {
   id: string;
@@ -39,6 +40,11 @@ export function PasskeyPanel() {
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+
+  function handleAcknowledgeRecoveryCodes() {
+    setRecoveryCodes(null);
+  }
 
   useEffect(() => {
     void (async () => {
@@ -103,10 +109,12 @@ export function PasskeyPanel() {
         const body = await verifyResponse.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to add passkey");
       }
+      const verifyBody = await verifyResponse.json().catch(() => ({}));
 
       setStatusMessage("Passkey added.");
       setNewLabel("");
       setIsAdding(false);
+      if (Array.isArray(verifyBody.recoveryCodes)) setRecoveryCodes(verifyBody.recoveryCodes);
       await loadAuthenticators();
     } catch (err) {
       // A user dismissing the native prompt throws too — worth a plain
@@ -199,6 +207,7 @@ export function PasskeyPanel() {
 
       {statusMessage && <p className="mt-2 text-xs text-positive">{statusMessage}</p>}
       {error && <p className="mt-2 text-xs text-negative">{error}</p>}
+      {recoveryCodes && <RecoveryCodesReveal codes={recoveryCodes} onAcknowledge={handleAcknowledgeRecoveryCodes} />}
 
       <ul className="mt-3 flex flex-col gap-2">
         {authenticators === null && <li className="text-xs text-muted">Loading…</li>}

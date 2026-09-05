@@ -133,19 +133,20 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Rea
     await registerUser(email, "correcthorsebattery", "Verify Test");
 
     const correct = await verifyCredentials(email, "correcthorsebattery");
-    expect(correct?.email).toBe(email);
+    expect(correct.outcome).toBe("valid");
+    expect(correct.outcome === "valid" && correct.user.email).toBe(email);
 
     const wrongPassword = await verifyCredentials(email, "totallywrongpassword");
-    expect(wrongPassword).toBeNull();
+    expect(wrongPassword.outcome).toBe("invalid");
 
     const unknownEmail = await verifyCredentials("nobody-real@pfw.local", "whatever12345");
-    expect(unknownEmail).toBeNull();
+    expect(unknownEmail.outcome).toBe("invalid");
   });
 
-  it("verifyCredentials returns null for an unclaimed row (no password set yet), never a false accept", async () => {
+  it("verifyCredentials returns invalid for an unclaimed row (no password set yet), never a false accept", async () => {
     const spouse = await admin.user.findUnique({ where: { email: "dana@pfw.local" } });
     if (!spouse) return;
     const result = await verifyCredentials("dana@pfw.local", "anything-at-all");
-    expect(result).toBeNull();
+    expect(result.outcome).toBe("invalid");
   });
 });

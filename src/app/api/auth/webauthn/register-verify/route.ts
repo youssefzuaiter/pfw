@@ -5,6 +5,7 @@ import type { RegistrationResponseJSON } from "@simplewebauthn/types";
 import { guardMutation } from "../../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonServerError } from "../../../../../server/api/responses";
 import { consumeRegistrationChallenge, createAuthenticator } from "../../../../../server/dal/authenticators";
+import { ensureRecoveryCodes } from "../../../../../server/dal/recovery-codes";
 import { getRelyingParty, toArrayBufferBackedUint8Array, uint8ArrayToBase64Url } from "../../../../../server/auth/webauthn";
 
 /**
@@ -84,7 +85,16 @@ export async function POST(request: NextRequest) {
       deviceLabel: parsed.data.deviceLabel,
     });
 
-    return NextResponse.json({ ok: true });
+    // Phase 3, Security & Recovery: "upon successful MFA setup, generate
+    // a set of 8 ... backup codes." Only actually generates a fresh
+    // batch when none are already unused (`ensureRecoveryCodes`'s own
+    // doc comment) — a SECOND passkey registration finds the first
+    // registration's still-unused codes and returns `null`, so this
+    // response's `recoveryCodes` field is simply absent that time rather
+    // than silently invalidating codes the user already saved.
+    const recoveryCodes = await ensureRecoveryCodes(user.id);
+
+    return NextResponse.json({ ok: true, ...(recoveryCodes ? { recoveryCodes } : {}) });
   } catch (error) {
     console.error("POST /api/auth/webauthn/register-verify failed", error);
     return jsonServerError();

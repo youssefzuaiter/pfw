@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
+import { RecoveryCodesReveal } from "./recovery-codes-reveal";
 
 type Props = { initialEnabled: boolean; initialPending: boolean };
 
@@ -29,6 +30,11 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+
+  function handleAcknowledgeRecoveryCodes() {
+    setRecoveryCodes(null);
+  }
 
   async function handleBeginSetup() {
     setIsBusy(true);
@@ -60,11 +66,13 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error === "invalid_code" ? "Incorrect code — try again" : "Failed to confirm setup");
       }
+      const body = await response.json().catch(() => ({}));
       setEnabled(true);
       setMode("idle");
       setSetupData(null);
       setCode("");
       setStatusMessage("Two-factor authentication enabled.");
+      if (Array.isArray(body.recoveryCodes)) setRecoveryCodes(body.recoveryCodes);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to confirm setup");
@@ -118,6 +126,15 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
 
   function handlePasswordChange(event: ChangeEvent<HTMLInputElement>) {
     setPassword(event.target.value);
+  }
+
+  if (recoveryCodes) {
+    return (
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h3 className="text-sm font-semibold text-fg">Two-factor authentication enabled</h3>
+        <RecoveryCodesReveal codes={recoveryCodes} onAcknowledge={handleAcknowledgeRecoveryCodes} />
+      </section>
+    );
   }
 
   if (mode === "setup") {
