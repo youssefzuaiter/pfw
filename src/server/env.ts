@@ -110,6 +110,18 @@ const REQUIRED_SECRET_SCHEMAS = {
   // same "throws only when actually used" posture ANTHROPIC_API_KEY
   // already has for the advisor.
   RESEND_API_KEY: nonEmptyString("RESEND_API_KEY"),
+  // Vercel Cron & Notifications Engine (ad hoc) — Vercel automatically
+  // sends `Authorization: Bearer <CRON_SECRET>` on a Cron-triggered
+  // request when this env var is set on the project (Vercel's own
+  // documented convention); `src/app/api/cron/route.ts` compares it in
+  // constant time. Only ever read by that one route, lazily, same
+  // "throws only when actually used" posture RESEND_API_KEY already has
+  // — an environment that never receives a cron invocation (every local/
+  // CI run today) never needs this set.
+  CRON_SECRET: nonEmptyString("CRON_SECRET").min(
+    16,
+    "CRON_SECRET must be at least 16 characters — this is what proves a request actually came from Vercel Cron, not an arbitrary caller",
+  ),
 } as const;
 
 type RequiredSecretEnvVar = keyof typeof REQUIRED_SECRET_SCHEMAS;
@@ -184,6 +196,10 @@ export function getAuthSecret(): string {
 
 export function getResendApiKey(): string {
   return readRequiredEnv("RESEND_API_KEY");
+}
+
+export function getCronSecret(): string {
+  return readRequiredEnv("CRON_SECRET");
 }
 
 /**

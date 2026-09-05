@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { NotificationBell } from "../notifications/notification-bell";
 import { ThemeToggle } from "../theme/theme-toggle";
 import { isNavItemActive, PRIMARY_NAV_ITEMS } from "./nav-items";
 import { SignOutButton } from "./sign-out-button";
@@ -43,6 +44,7 @@ export function TopNav() {
         >
           Settings
         </Link>
+        <NotificationBell />
         <SignOutButton />
         <ThemeToggle />
       </nav>

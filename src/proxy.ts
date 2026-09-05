@@ -22,6 +22,11 @@ import { auth } from "./server/auth/auth";
  * session and must never be redirected to `/login` — a probe that
  * receives a 307 instead of a 200 reads as "unhealthy" to Kubernetes,
  * which would then repeatedly restart an app pod that was actually fine.
+ *
+ * `/api/cron` (Vercel Cron & Notifications Engine, ad hoc): a
+ * Vercel-Cron-triggered request carries no session either — its own
+ * trust boundary is the `CRON_SECRET` bearer token it checks internally
+ * (src/app/api/cron/route.ts), not this proxy's auth gate.
  */
 // "/forgot-password", "/reset-password/[token]", "/verify-email/[token]"
 // (auth hardening pass, ad hoc post-§3ff) — same reasoning as the
@@ -38,6 +43,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/forgot-password",
   "/api/health",
   "/api/health/ready",
+  "/api/cron",
 ]);
 const PUBLIC_PATH_PREFIXES = [
   "/api/auth/",

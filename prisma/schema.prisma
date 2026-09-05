@@ -302,6 +302,7 @@ model User {
   cryptoWallets            CryptoWallet[]
   passwordResetTokens      PasswordResetToken[]
   emailVerificationTokens  EmailVerificationToken[]
+  notifications            Notification[]
 }
 
 /// Time-limited, single-use password reset tokens (auth hardening pass,
@@ -1556,4 +1557,24 @@ model BankConnection {
   createdAt     DateTime             @default(now())
 
   @@index([userId])
+}
+
+/// Vercel Cron & Notifications Engine (ad hoc) — durable, dismissable
+/// alerts surfaced in the dashboard header's notification bell.
+/// `type` is a plain string (not an enum) rather than a fixed catalog,
+/// since the two scheduled jobs that could plausibly write here today
+/// (`src/app/api/cron/route.ts`'s FX/crypto sync and Dead Man's Switch
+/// checks) don't yet create rows here themselves — this pass builds the
+/// read/dismiss surface the task asked for, not a producer wired to every
+/// possible event source; see that route's own doc comment for why.
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
 }
