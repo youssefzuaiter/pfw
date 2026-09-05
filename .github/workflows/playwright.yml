@@ -1,0 +1,102 @@
+name: Playwright E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Mirrors ci.yml's Postgres service and throwaway secrets exactly (same
+# db name, same two roles/passwords pfw_app/pfw_runtime — see that
+# file's own comment for why there are two, and AGENTS.md §3a/
+# docs/SECURITY.md for the underlying RLS reasoning). This workflow
+# needs a real database of its own because tests/e2e/global-setup.ts
+# claims the seeded demo@pfw.local row via a real Auth.js registration +
+# credentials sign-in before any spec runs (AGENTS.md §3kk) — there is
+# no way to run this suite against a mocked/stubbed backend.
+env:
+  DATABASE_URL: postgresql://pfw_app:pfw_local_dev_password@localhost:5433/pfw_local?schema=public
+  APP_DATABASE_URL: postgresql://pfw_runtime:pfw_runtime_dev_password@localhost:5433/pfw_local?schema=public
+  ENCRYPTION_KEY: 3KPfiH4Mh3e8dtp5gwC6WWCMJr0YYk0k0r8UCnA9V8U=
+  AUTH_SECRET: MB753LAcz/vL1D9qR3NNvhuHvhJoejgFPNGokQVQBVc=
+
+jobs:
+  e2e:
+    name: Playwright e2e (accessibility, keyboard nav, security)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: pfw_local
+          POSTGRES_USER: pfw_app
+          POSTGRES_PASSWORD: pfw_local_dev_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U pfw_app -d pfw_local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 5s
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `migrate deploy`, not `migrate dev` — same reasoning ci.yml's own
+      # identical step gives: non-interactive, and this is what creates
+      # the pfw_runtime role and its RLS policies the whole app (and
+      # every e2e spec touching real data) depends on.
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      # tests/e2e/global-setup.ts claims THIS exact seeded row
+      # (demo@pfw.local) via a real registration + credentials sign-in —
+      # it has to exist, unclaimed, before any spec runs. global-teardown.ts
+      # restores it to unclaimed afterward, so a re-run of this job
+      # against the same ephemeral database would still work, though in
+      # practice each CI run gets a brand-new Postgres service container.
+      - name: Seed deterministic mock data
+        run: npm run db:seed
+
+      # A bare GitHub-hosted runner has neither a Chromium binary nor the
+      # OS-level shared libraries it needs — --with-deps installs both.
+      - name: Install Playwright's Chromium browser
+        run: npx playwright install --with-deps chromium
+
+      # playwright.config.ts's own `webServer` block already runs
+      # `npm run build && npm run start -- -p 3100` before any spec
+      # executes, and `reuseExistingServer: !process.env.CI` means it
+      # always does its own fresh build+start on a CI runner (`CI` is set
+      # by GitHub Actions automatically) — so this workflow deliberately
+      # does NOT add a separate, standalone `npm run build` step first.
+      # Doing so would just repeat the exact same build a second time for
+      # no benefit: a build failure still fails this one step, and its
+      # output is still fully visible in this step's own log, exactly as
+      # it would be in a dedicated step.
+      - name: Run Playwright e2e suite (builds + starts the app itself)
+        run: npm run test:e2e
+
+      # Retained only on failure (`trace: "retain-on-failure"` in
+      # playwright.config.ts writes these under the default `test-results/`
+      # output dir, gitignored locally same as playwright-report/) — a
+      # downloadable trace is what actually shows WHAT broke, since this
+      # job's own red status only proves THAT something did.
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v7.0.1
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 14

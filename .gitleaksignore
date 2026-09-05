@@ -17,3 +17,11 @@
 # throwaway value that only ever signs/encrypts session JWTs for the
 # lifetime of this job's ephemeral process, never a real secret.
 .github/workflows/ci.yml:generic-api-key:24
+# .github/workflows/playwright.yml (AGENTS.md §3z-adjacent, added for the
+# e2e-in-CI pass) reuses the IDENTICAL two throwaway values above, for
+# the identical reason — its own ephemeral Postgres service and Auth.js
+# session signing, destroyed when the job ends. Same fingerprint-breaks-
+# on-move safety property: if either line moves, Gitleaks re-flags it
+# until this file is updated to match.
+.github/workflows/playwright.yml:generic-api-key:20
+.github/workflows/playwright.yml:generic-api-key:21

@@ -5682,6 +5682,413 @@ Arduino/migration-gate request, §3bb's fabricated-scope search request,
   "Sync now" button is the only trigger, by explicit design per the
   webhook-vs-sync decision above, not an oversight).
 
+## 3pp. Vercel Production Deployment (backfilled — commits 9ba80f3, ed7d238, a172379)
+
+**This section documents work already shipped by an earlier session that
+never wrote it up.** A repository-hygiene pass (explicit user request:
+"formally document the current repository state") found this app had
+been live on Vercel for several days with zero mention of it anywhere in
+AGENTS.md. Written from the real commit diffs and the current state of
+`next.config.ts`/`package.json`, re-verified against the live local
+checkout during this pass (below) — not a fresh build, a backfill.
+
+- **Vercel, not the Docker/Kubernetes path, is the actual live
+  deployment target.** `future-infra/README.md` (a separate, later
+  commit) explains why directly: this app is a single-user personal
+  tool today, so a managed Postgres provider is a better fit than
+  self-hosting a highly-available CNPG cluster — the K8s design is
+  preserved for later, not deleted, but it was never the thing actually
+  running in production. Vercel's GitHub integration deploys on every
+  push to `main` automatically; `9ba80f3` itself is an empty commit
+  whose only job was to trigger the very first deploy once
+  `APP_DATABASE_URL`/`ENCRYPTION_KEY`/`AUTH_SECRET` were set in the
+  Vercel project's environment variables (a managed Postgres instance
+  backs `APP_DATABASE_URL` there — which provider isn't recorded
+  anywhere in this repo's history, so it isn't claimed here either).
+  No `vercel.json` exists — Vercel's standard Next.js framework
+  detection is sufficient, no custom build/output configuration needed
+  beyond what's already in `next.config.ts`.
+- **Two real, verified deploy-breaking bugs, both found by watching an
+  actual Vercel build fail, not by inspection**:
+  1. **`output: "standalone"` is incompatible with Vercel's builder.**
+     `next.config.ts` had unconditionally set `output: "standalone"`
+     for the Docker deployment path (§3 of this file: tracing only the
+     files each route needs into `.next/standalone`, letting a
+     container runner skip installing `node_modules`). A real Vercel
+     deploy compiled, typechecked, and generated all 59 pages
+     successfully, then failed at Vercel's own "onBuildComplete" step
+     with `ENOENT .next/next-server.js.nft.json` — standalone mode
+     replaces that normal trace file with the self-contained
+     `.next/standalone/` directory instead, and Vercel's builder
+     (`@vercel/next`) does its own function bundling from the standard
+     trace file and never looks for `.next/standalone` at all. Fixed by
+     gating it behind `process.env.VERCEL` (Vercel's own always-set
+     build-env flag): `output: process.env.VERCEL ? undefined :
+     "standalone"` — verified both paths locally afterward, not just
+     assumed from the fix's logic (`VERCEL=1 npx next build` produces
+     `next-server.js.nft.json` with no `standalone/` directory; a normal
+     build still produces `.next/standalone/server.js` unchanged).
+  2. **A genuinely clean checkout has no generated Prisma client at
+     all.** `src/generated/prisma/` is gitignored by design (Prisma 7's
+     TS-source generator output, §3a) — on every local machine this
+     session has ever run on, it existed only because someone had run
+     `prisma generate` by hand at some point during local dev. The first
+     real Vercel deploy (a genuinely fresh `npm ci` with no prior local
+     state to inherit from) failed with `Module not found: Can't
+     resolve '../../generated/prisma/client'` across every DAL/DB entry
+     point — a real gap this app's own `npm run check` never exercised,
+     since every local/CI run to that point had an already-generated
+     client sitting in the working tree. Fixed with a `"postinstall":
+     "prisma generate"` script in `package.json` — runs on every fresh
+     `npm install`/`npm ci`, requires no live database connection (schema
+     generation, unlike migration, needs only `prisma/schema.prisma`
+     on disk).
+- **Re-verified during this backfill pass, not merely trusted from the
+  original commit messages**: `grep -n "output:" next.config.ts` and
+  `grep -n "postinstall" package.json` both confirm the fixes are still
+  present and unmodified in the current working tree. No live Vercel
+  deployment access was available in this pass's environment, so the
+  actual production URL's current health was NOT re-checked here — only
+  the local repository state that determines what the next push would
+  deploy.
+- **Known limitations, stated plainly**: no `vercel.json` means no
+  custom cron, redirects, or region pinning are configured — none has
+  been needed yet. Environment variable values live only in the Vercel
+  project dashboard, not in this repository (correctly — see §1 law #6
+  and `docs/SECURITY-CHECKLIST.md`'s secret-storage tiers), which means
+  they are unverifiable from source alone; a deploy failing due to a
+  missing/rotated env var would not be caught by anything in this repo's
+  own CI. No smoke test runs against the live production URL after a
+  deploy — a regression that passes `npm run check` locally could still
+  break the actual live site (e.g., an env-var-dependent code path) with
+  nothing in this pipeline to catch it.
+
+## 3qq. Local RAG for the Copilot Sidebar (backfilled — commit 0efcb60)
+
+**Backfilled documentation** for an already-shipped feature (same
+caveat as §3pp: written from the real diff and current source, then
+re-verified — 12 test files / 117 tests covering this area re-run clean
+during this pass, and `/transactions/rules` and `/budgets`-adjacent live
+pages checked against the running app — not a fresh build).
+
+Adds a fully client-side retrieval pipeline in front of the existing
+local-LLM copilot (§3o) so a copilot question gets automatically
+grounded in the user's own relevant transactions, without the server
+ever needing the raw question text to find them.
+
+- **The pipeline, end to end**: `src/lib/rag/local-vector-store.ts`
+  caches the user's `NotableTransaction.searchEmbedding` vectors (§3cc)
+  in IndexedDB, synced from a new read-only `GET /api/embeddings/export`
+  — a full replace-on-sync, not an incremental diff (this app's real
+  scale is a personal ledger, the same trade-off `MerchantEmbedding`'s
+  own KNN scan already makes, §3c/§3u), skipping the write entirely when
+  the server-reported count already matches what's cached
+  (`needsResync`, exported specifically so this decision is unit-
+  testable with no IndexedDB involved). `src/lib/rag/local-vector-search.ts`
+  is a pure, dependency-free cosine-similarity KNN ranker — no browser
+  API at all, so unlike its two siblings it needs no client-only guard,
+  the same reasoning `tier3-knn.ts` already gives its own KNN engine.
+  Its `DEFAULT_MIN_SIMILARITY = 0.75` deliberately matches the two other
+  KNN-shaped thresholds already established elsewhere in this app
+  (`tier3-knn.ts`'s own default, and `MAX_COSINE_DISTANCE = 0.25` in
+  `transactions.ts`'s server-side semantic search) rather than picking a
+  third, independent number. `src/lib/rag/local-retrieval.ts` ties the
+  two together — embeds the question via the existing client-side
+  embedder (§3u/§3bb), ranks it against the cached vectors, and returns
+  only the top-K transaction IDs; on ANY failure (empty cache, a slow or
+  unavailable embedder, a genuinely empty result) it resolves to `[]`
+  rather than throwing, so the copilot sidebar has exactly one case to
+  handle: "no local context" falls back to the standard, un-augmented
+  prompt.
+- **The security-relevant design choice**: only transaction IDs cross
+  from client to server (`POST /api/copilot/chat`'s new optional
+  `relevantTransactionIds` field) — never the vectors, never the query
+  text, never the matched transactions' own text. The server hydrates
+  those IDs back into full rows via `listTransactionsByIds`
+  (`src/server/dal/transactions.ts`, new) with a plain `where: { id: {
+  in: [...] }, userId }` — the client-supplied ID list is still treated
+  as untrusted input crossing a trust boundary like any other request
+  field (this app's standing rule), so any ID that isn't this user's own
+  is silently excluded, never leaked, never an error, the same IDOR-safe
+  convention every DAL function in this app already follows.
+  `buildRelevantTransactionsMessage` (`src/server/copilot/relevant-transactions.ts`)
+  injects the hydrated rows as a `role: "tool"` message — deliberately
+  the SAME shape a real `executeAdvisorTool` result already arrives in,
+  which is what puts free-text fields (`merchantName`/`description`)
+  under the copilot's existing, already-battle-tested
+  `<untrusted_data_boundary>` prompt defense (§3o) rather than inventing
+  a second one. Every monetary figure is pre-formatted via
+  `formatAgorot`, the same rule every advisor/copilot tool result
+  already follows.
+- **`listSearchEmbeddingsForExport`** needs raw SQL for the same reason
+  `searchTransactionsSemantic` does (§3cc: `searchEmbedding` is
+  `Unsupported("vector(384)")`, no typed Prisma read path) — but unlike
+  that function, this one's whole point IS to return the vector itself,
+  so there's no "`$queryRaw` bypasses the field-encryption extension"
+  trap to route around here: nothing this function selects is an
+  encrypted column.
+- **The Ollama connection itself is unchanged** — still loopback-
+  restricted and entirely server-mediated (§3o's `OLLAMA_BASE_URL`
+  RFC1918/loopback allowlist). This feature only changes what CONTEXT
+  gets assembled into the prompt before the existing server-side
+  Ollama call happens; it adds no new network boundary of its own.
+- **Client-only guards**: `local-vector-store.ts` (wraps `indexedDB`,
+  which doesn't exist under Node — a server import would throw, not
+  merely be redundant) and `local-retrieval.ts` (transitively client-
+  only via its two dependencies) both have dedicated import-graph guard
+  tests, the same pattern as every other browser-only module in this
+  app (`zk-crypto.ts`, `receipt-ocr.ts`, `local-embedder.ts`).
+- **Re-verified during this backfill pass**: `local-vector-search.test.ts`,
+  `local-vector-store.test.ts`, `vector-math.test.ts`,
+  `local-vector-store-client-only.test.ts`,
+  `local-retrieval-client-only.test.ts`, and `copilot-tools.test.ts` all
+  re-run clean against the current working tree (part of the 117/117
+  combined result under §3qq/§3rr/§3ss's shared verification run).
+- **Not built / known limitations**: no UI indicator showing the user
+  when a reply was actually grounded by local retrieval vs. answered
+  from the standard prompt alone — the sidebar's existing typing
+  indicator is the only feedback shown either way; the sync is best-
+  effort and silent (a failed `syncLocalVectorStore()` call is swallowed,
+  by design — see the ref's own comment in `copilot-sidebar.tsx`), so a
+  user on a device where sync has never succeeded gets no explanation
+  for why grounding never seems to kick in.
+
+## 3rr. Tier-0 Deterministic Rule Engine (backfilled — commit 142ec63)
+
+**Backfilled documentation** (same caveat as §3pp/§3qq — written from
+the real diff and current source, re-verified via the existing test
+suite and a live render of `/transactions/rules` during this pass, not
+freshly built here).
+
+Adds user-defined deterministic rules that run BEFORE the existing
+4-tier categorization cascade (§3b) on both CSV import and manual
+transaction entry — closing a real, previously-unaddressed gap: every
+prior categorization mechanism in this app was either a fixed app-
+default (Tier 2's keyword list) or learned automatically (Tiers 1/3/4);
+nothing let a user say "always put Starbucks in Coffee" as an explicit,
+inspectable, editable rule of their own.
+
+- **Schema**: `TransactionRule` (migration
+  `20260904000000_transaction_rules`), user-scoped, standard
+  `tenant_isolation` RLS. `conditions`/`actions` are `Json`, not
+  normalized columns/tables — validated by Zod at the API boundary
+  (`RuleConditionSchema`/`RuleActionSchema` in `rule-engine.ts`), not by
+  the database, the same "keep the schema stable while the rule
+  vocabulary grows" trade-off `UserSettings`'s own structured
+  preferences already make (§3hh) rather than one column per
+  condition/action shape. `priority` (lower runs first, ties broken by
+  `createdAt` ascending) is enforced entirely by `applyRules`' own
+  in-memory sort, never a DB `ORDER BY` the DAL happens to lean on.
+- **`src/lib/categorization/rule-engine.ts`** (pure, `src/lib/`
+  convention per §3b — no DAL/DB access, directly testable with plain
+  object literals): three condition types (`merchantName`/`description`
+  text conditions with `equals`/`contains` operators, an `amount`
+  condition with `equals`/`greaterThan`/`lessThan` against the
+  transaction's own SIGNED agorot amount) and three action types
+  (`categorize`, `rename`, `flag`). A rule matches only when EVERY
+  condition matches (AND semantics only — no OR/grouping in this v1, a
+  stated, deliberate scope limit, not an oversight).
+  - **Reuses this app's existing correctness-critical primitives rather
+    than re-deriving them**: `contains` goes through
+    `text-matching.ts`'s Unicode-aware whole-word matcher (the same one
+    Tier 2's keyword rules use) — law #4's Hebrew `\b`-boundary bug
+    applies just as much to a user-authored rule condition as to an
+    app-default keyword list, and a hand-rolled substring check here
+    would have silently reintroduced it. An `amount` condition's
+    `value` is a shekel-string ("125.50"), the same wire convention
+    every other money-bearing input in this app uses, parsed via
+    `money.ts`'s own `parseShekelsToAgorot` and validated eagerly at
+    the schema level (`.refine(isValidShekelString)`) so a malformed
+    amount condition can never be stored and only fail later, mid-
+    evaluation. A `categorize` action's target is a category SLUG, not
+    a raw database ID — the same permanent-slugs law Tier 2's own
+    `DEFAULT_CATEGORY_RULES` already follow, so a rule keeps working
+    after the user renames the category it points to.
+  - **"First matching rule wins" per action kind**, not last-write-wins
+    or a compounding rule — `categorySlug`/`renamedMerchantName`/
+    `forceNeedsReview` are each set by the FIRST matching rule
+    (evaluated in priority order) that includes that kind of action; a
+    later, lower-priority rule's conflicting action is simply never
+    applied. The same "first confident tier wins" convention the
+    surrounding 4-tier cascade already follows (§3b), extended one tier
+    earlier.
+- **Pipeline wiring**: both `createTransaction` (manual entry) and
+  `importTransactions` (CSV bulk import) now run Tier 0 first, using
+  `fetchActiveRulesForEvaluation` against the ALREADY-OPEN
+  `withUserScope` transaction client rather than opening a second,
+  nested one — the same reasoning this app's other in-transaction reads
+  already follow (avoiding grabbing a second connection from the pool
+  mid-write for no reason). A resolved `categorize` action's category ID
+  BYPASSES Tiers 1-4 entirely for that row and is treated as fully
+  confident (`confidence = 1`, at least as confident as Tier 2's
+  app-default keyword rules at 0.9, since a user's own explicit rule
+  outranks a generic default) — `rename`/`flag` actions always apply
+  regardless of whether a category was also set. A rule matching a slug
+  the user has no category for falls through to the normal cascade
+  instead of erroring, the same "slug-resolution failure falls through"
+  behavior Tier 2 itself already has in `cascade.ts`.
+- **UI**: a new `/transactions/rules` management screen (create/edit/
+  delete, priority reordering) cross-linked from `/transactions`,
+  following the same sub-view pattern as every other secondary screen in
+  this app.
+- **Testing**: `rule-engine.test.ts` (18 unit tests — condition/action
+  matching, priority ordering, the Hebrew whole-word-matching reuse, the
+  shekel-string validation), a 9-case `tier0-rule-pipeline.test.ts`
+  integration suite proving the actual bypass/fallthrough behavior
+  against real Postgres for BOTH manual entry and CSV import (a
+  categorize action bypassing the cascade entirely, a rename action
+  applying even when no category is set, a flag action forcing
+  `needsReview` even when Tier 0 also confidently categorizes, priority
+  ordering when two rules both match, an inactive rule never applying,
+  and the normal-cascade-fallback case for a non-matching transaction),
+  and a 10-case `transaction-rules.test.ts` integration suite for the
+  CRUD DAL/routes themselves (including IDOR — an update/delete against
+  another user's rule ID returns `not_found`, never leaking existence).
+- **Re-verified during this backfill pass**: `rule-engine.test.ts`,
+  `tier0-rule-pipeline.test.ts`, and `transaction-rules.test.ts` all
+  re-run clean against the current working tree (117/117 combined with
+  §3qq/§3ss's tests); `/transactions/rules` confirmed live via `curl`
+  against the running app (200, rendering "Create rule"/"priority" UI
+  chrome) with a real authenticated session.
+- **Known limitations**: no OR/grouping logic (AND-only conditions, a
+  stated v1 scope limit); no rule-testing/preview UI (you save a rule
+  and see its effect on the next real transaction, not a dry-run against
+  existing history); no rule import/export or sharing across the
+  household-spaces feature (§3s) — rules are strictly personal, matching
+  categories' own general per-user scoping before sharing was layered on
+  top of specific resources.
+
+## 3ss. Zero-Sum Rolling-Balance Envelope Budgeting (backfilled — commit 4b85f2f)
+
+**Backfilled documentation** (same caveat as the three sections above —
+written from the real diff and current source, re-verified via the
+existing test suite and a live render of `/budgets` during this pass).
+
+Replaces the original stateless `Budget` model (one row per (user,
+category), a flat monthly limit compared against that month's spend,
+§3d) with `EnvelopeAllocation` — a genuine envelope-budgeting system
+where unspent funds carry forward between months and overspending
+carries a real deficit forward too, rather than each month resetting
+independently. This is a bigger conceptual change than a schema tweak:
+"is this category over budget" stopped being a single-month ratio
+question and became a running-balance question.
+
+- **Schema**: `EnvelopeAllocation` (migration
+  `20260904000000_envelope_allocations`), one row per (user, category,
+  **month**) — `@@unique([userId, categoryId, month])` — an AMOUNT
+  ALLOCATED to that category for that specific month, never a running
+  balance column. The rolling balance itself is computed live
+  (`src/server/dal/envelopes.ts`), the same "derived truth" law (§1 law
+  #5) `Budget`'s own utilization percentage already followed, just
+  applied to a genuinely cumulative figure instead of a calendar-reset
+  one. `month` is a plain `YYYY-MM` STRING, not a `DateTime` — deliberately,
+  to avoid any timezone-boundary ambiguity about which calendar month a
+  given instant belongs to (a `DateTime` at a month boundary is exactly
+  the kind of value that reads as a different month depending on which
+  timezone asks); comparing/summing "up to month X" is then a plain
+  string comparison, safe specifically because `YYYY-MM` sorts
+  identically to its own chronological order (`src/lib/date-month.ts`'s
+  `compareMonthKeys`, new, UTC-anchored to match `prisma/seed/rng.ts`'s
+  own `monthKeyFor`).
+  - **Household sharing (§3s) preserved, re-keyed for a multi-row
+    model**: the same 4-way per-command RLS policy split `Budget` had
+    (needed because a fellow member's WRITE-permission access is a
+    different rule than the true owner's own access, which no single
+    ALL-commands policy can express) carries over unchanged. Sharing
+    itself is still conceptually a per-CATEGORY decision, not a
+    per-allocation-row one — `setResourceSharing`'s "budget" case sets
+    `sharedGroupId` on every existing allocation row for a (user,
+    category), and `allocateToEnvelope` makes a BRAND NEW month's row
+    for an already-shared category inherit that same `sharedGroupId`
+    automatically (by looking up the category's most recent PRIOR
+    allocation) — the practical equivalent of "sharing was a
+    per-category decision" that `Budget`'s old one-row-per-category
+    shape made trivial, reconstructed here for a model with many rows
+    per category over time.
+- **`src/lib/envelope-math.ts`** (pure, `src/lib/` convention per §3b):
+  `computeRollingBalance` — every allocation up to and including a
+  target month, minus every expense up to and including that month, as
+  ONE cumulative sum. Carry-forward and overspend-deduction are not
+  separate code paths; both fall out of the same running total (a month
+  that spent more than it was allocated simply contributes a negative
+  delta, which the next month's balance inherits exactly like a
+  positive delta would). `computeAvailableToBudget` — real income
+  received up to and including a month, minus every allocation made up
+  to and including that month, across every envelope — is the "ready to
+  assign" figure the Zero-Sum Rule is checked against.
+- **The Zero-Sum Rule, enforced at the API layer, not the DAL**:
+  `POST`/`PATCH /api/envelopes/allocate` computes the DELTA a request
+  would introduce (the new amount minus whatever was already allocated
+  to that category for that exact month) and rejects it if the delta
+  would exceed `getAvailableToBudget` — checking the delta rather than
+  the raw new total is what makes REDUCING an existing allocation, or
+  leaving it unchanged, always valid regardless of how tight "available"
+  already is. `allocateToEnvelope` itself (`src/server/dal/envelopes.ts`)
+  is a plain, unvalidated set-not-increment upsert on the
+  `@@unique([userId, categoryId, month])` constraint — the same division
+  of responsibility (DAL writes, route validates) `upsertBudget` used to
+  have.
+- **The budget-breach insight generator was rewritten, not just
+  re-pointed at new data** (`src/lib/insights/budget-breaches.ts`): the
+  old "spent >= 100% of this month's limit" framing doesn't even apply
+  in a system where a category can go whole months with no NEW
+  allocation, coasting purely on carried-forward surplus. "Breach"
+  (critical) is now: the envelope's rolling balance is negative — it
+  has, in total, spent more than has EVER been allocated to it, which is
+  exactly as meaningful for a category with zero activity this month (a
+  deficit carried forward from an earlier month) as for one with fresh
+  overspending this month. "Warning" only fires when something was
+  actually spent this month AND that spend has eaten the balance down to
+  zero or below — an inactive envelope never warns, since it has nothing
+  new to flag. This closes a real gap the old ratio check would have
+  left open: an envelope coasting on carry-forward with no fresh
+  allocation that month would never have tripped a monthly-utilization
+  check at all, no matter how deep its accumulated deficit.
+- **`/budgets` rewritten around allocate/balance/spend per envelope**
+  (`envelope-row.tsx`, new — replaces `budget-form.tsx`/
+  `delete-budget-button.tsx`) — every active category shown, not just
+  ones ever allocated to (the same "show every category, not just
+  budgeted ones" convention the old page's "unbudgeted categories"
+  section already established), each with its rolling balance, this
+  month's own allocation, and this month's own spend as three distinct,
+  clearly-labeled figures rather than one conflated number. The
+  dashboard's `HouseholdSummary` card and the advisor's
+  `list_budgets_with_utilization` tool were both updated to read
+  envelope balances instead of the old ratio (the advisor tool's pacing
+  calculation now only applies when `allocatedThisMonthAgorot > 0` — the
+  same reasoning the rewritten insight generator's warning condition
+  uses, since pacing against a non-existent "this month's limit" makes
+  no sense for a category coasting on carry-forward).
+- **Testing**: `envelope-math.test.ts` (13 tests) and `date-month.test.ts`
+  (a new module, thoroughly tested — month-key validation, UTC-anchored
+  derivation, string-comparison correctness at month/year boundaries,
+  the inclusive-start/exclusive-end date-range helpers), plus updated
+  `budget-breaches.test.ts`/`generate-insights.test.ts` and a 169-line
+  `tests/integration/envelopes.test.ts` (real Postgres — allocation
+  create/update-in-place, rolling balance across multiple months
+  including a deficit month followed by a recovery month, the Zero-Sum
+  Rule's delta-based rejection, and household-sharing inheritance for a
+  brand-new month's allocation). `shared-groups.test.ts` was updated for
+  the re-keyed sharing model, not left to silently test against a model
+  that no longer exists.
+- **Re-verified during this backfill pass**: `envelope-math.test.ts` and
+  the rest of the envelope-related suite re-run clean against the
+  current working tree (117/117 combined with §3qq/§3rr's tests);
+  `/budgets` confirmed live via `curl` against the running app (200,
+  rendering "Available to budget"/"Envelope" UI chrome) with a real
+  authenticated session.
+- **Known limitations**: no UI to view a specific PAST month's envelope
+  state directly (the screen always shows the current calendar month;
+  the rolling-balance math itself has no such restriction, so a
+  dedicated month picker is a real, buildable next step, not a
+  structural gap); no negative-allocation support (an envelope can go
+  negative from overspending, but you cannot allocate a negative amount
+  to deliberately "borrow" from a category ahead of time — a plain input
+  validation choice, not a math limitation); goal/debt/asset budgeting
+  is untouched by this migration — only `Budget`/`Category`-linked
+  spending categories moved to the envelope model, matching the original
+  `Budget` model's own scope.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
