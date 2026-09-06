@@ -2,7 +2,7 @@ import "server-only";
 import { multiplyAgorot, agorot, type Agorot } from "../../lib/money";
 import { multiplyNativeAmount, nativeAmount, type CurrencyCode, type NativeAmount } from "../../lib/currency";
 import { applyBuy, applySell, type HoldingPosition } from "../../lib/portfolio-math";
-import { withUserScope } from "../db/with-user-scope";
+import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
 export async function listPortfolioHoldings(userId: string) {
   return withUserScope(userId, (tx) => tx.portfolioHolding.findMany({ where: { userId }, orderBy: { symbol: "asc" } }));
@@ -40,6 +40,84 @@ export type ExecuteTradeResult =
   | { ok: true; trade: NonNullable<Awaited<ReturnType<typeof listTrades>>>[number]; holding: NonNullable<Awaited<ReturnType<typeof listPortfolioHoldings>>>[number] }
   | { ok: false; error: "insufficient_shares" };
 
+type AppliedTrade = {
+  holding: NonNullable<Awaited<ReturnType<typeof listPortfolioHoldings>>>[number];
+  totalAgorot: Agorot;
+  nativeTotalAmount: NativeAmount;
+  realizedPnlAgorot: Agorot | null;
+  nativeRealizedPnl: NativeAmount | null;
+};
+
+type ApplyTradeResult = { ok: true } & AppliedTrade | { ok: false; error: "insufficient_shares" };
+
+/**
+ * Finds-or-creates the holding for `input.symbol` and applies this
+ * trade's weighted-average cost-basis delta to it — the part of
+ * `executeTradeInTransaction` that's genuinely shared with the two-phase
+ * paper-trading settlement path (`settlePaperTradeReceipt`, which needs
+ * to apply cost basis to an ALREADY-EXISTING pending Trade's holding
+ * using the real settled price, not create a brand-new Trade row the way
+ * this function's own caller below does). Never touches the `Trade`
+ * table itself — that split is exactly what lets both callers reuse this
+ * one piece of math.
+ */
+async function applyTradeToHolding(
+  tx: ScopedTransactionClient,
+  userId: string,
+  input: Pick<ExecuteTradeInput, "symbol" | "side" | "quantity" | "priceAgorot" | "nativePriceAmount" | "currency">,
+): Promise<ApplyTradeResult> {
+  const existingHolding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol } });
+  const totalAgorot = multiplyAgorot(input.priceAgorot, input.quantity);
+  const nativeTotalAmount = multiplyNativeAmount(input.nativePriceAmount, input.quantity);
+
+  const currentPosition: HoldingPosition = existingHolding
+    ? {
+        quantity: existingHolding.quantity.toNumber(),
+        currency: input.currency,
+        totalCostBasis: agorot(Number(existingHolding.totalCostBasis)),
+        nativeCostBasis: nativeAmount(Number(existingHolding.nativeCostBasis)),
+      }
+    : { quantity: 0, currency: input.currency, totalCostBasis: agorot(0), nativeCostBasis: nativeAmount(0) };
+
+  let nextPosition: HoldingPosition;
+  let realizedPnlAgorot: Agorot | null = null;
+  let nativeRealizedPnl: NativeAmount | null = null;
+
+  if (input.side === "BUY") {
+    nextPosition = applyBuy(currentPosition, input.quantity, totalAgorot, nativeTotalAmount);
+  } else {
+    if (input.quantity > currentPosition.quantity) {
+      return { ok: false, error: "insufficient_shares" };
+    }
+    const sellResult = applySell(currentPosition, input.quantity, input.priceAgorot, input.nativePriceAmount);
+    nextPosition = sellResult.position;
+    realizedPnlAgorot = sellResult.realizedPnl;
+    nativeRealizedPnl = sellResult.nativeRealizedPnl;
+  }
+
+  const holding = existingHolding
+    ? await tx.portfolioHolding.update({
+        where: { id: existingHolding.id },
+        data: {
+          quantity: nextPosition.quantity.toString(),
+          totalCostBasis: BigInt(nextPosition.totalCostBasis),
+          nativeCostBasis: BigInt(nextPosition.nativeCostBasis),
+        },
+      })
+    : await tx.portfolioHolding.create({
+        data: {
+          userId,
+          symbol: input.symbol,
+          currency: input.currency,
+          quantity: nextPosition.quantity.toString(),
+          totalCostBasis: BigInt(nextPosition.totalCostBasis),
+          nativeCostBasis: BigInt(nextPosition.nativeCostBasis),
+        },
+      });
+
+  return { ok: true, holding, totalAgorot, nativeTotalAmount, realizedPnlAgorot, nativeRealizedPnl };
+}
+
 /**
  * Executes a simulated order: updates the holding's weighted-average
  * cost basis (src/lib/portfolio-math.ts) and appends an immutable Trade
@@ -47,78 +125,153 @@ export type ExecuteTradeResult =
  * rather than deleted — deleting it would cascade-delete every historical
  * Trade against it (schema.prisma's `onDelete: Cascade` on
  * Trade.portfolioHolding), destroying the blotter for that symbol.
+ *
+ * Always books `status: "SETTLED"` immediately — every caller of this
+ * function (the authenticated `/api/trades` route, the seed script) is a
+ * SYNCHRONOUS execution with a known-final price at creation time, unlike
+ * the async paper-trading-agent webhook path, which has a genuine
+ * PENDING-then-SETTLED lifecycle and therefore does NOT call this
+ * function for its initial (pending) receipt — see
+ * `recordPendingPaperTrade`/`settlePaperTradeReceipt` in paper-trades.ts.
+ */
+export async function executeTradeInTransaction(
+  tx: ScopedTransactionClient,
+  userId: string,
+  input: ExecuteTradeInput,
+): Promise<ExecuteTradeResult> {
+  const applied = await applyTradeToHolding(tx, userId, input);
+  if (!applied.ok) return applied;
+
+  const trade = await tx.trade.create({
+    data: {
+      userId,
+      portfolioHoldingId: applied.holding.id,
+      symbol: input.symbol,
+      side: input.side,
+      currency: input.currency,
+      quantity: input.quantity.toString(),
+      priceAgorot: BigInt(input.priceAgorot),
+      totalAgorot: BigInt(applied.totalAgorot),
+      realizedPnlAgorot: applied.realizedPnlAgorot !== null ? BigInt(applied.realizedPnlAgorot) : undefined,
+      nativePriceAmount: BigInt(input.nativePriceAmount),
+      nativeTotalAmount: BigInt(applied.nativeTotalAmount),
+      nativeRealizedPnl: applied.nativeRealizedPnl !== null ? BigInt(applied.nativeRealizedPnl) : undefined,
+      exchangeRateAtEntry: input.exchangeRate.toString(),
+      executedAt: input.executedAt,
+      idempotencyKey: input.idempotencyKey,
+      status: "SETTLED",
+    },
+  });
+
+  return { ok: true, trade, holding: applied.holding };
+}
+
+export type PendingTradeInput = Pick<
+  ExecuteTradeInput,
+  "symbol" | "side" | "quantity" | "priceAgorot" | "nativePriceAmount" | "currency" | "exchangeRate" | "executedAt" | "idempotencyKey"
+>;
+
+/**
+ * Creates a PENDING Trade row with NO cost-basis impact at all — the
+ * holding is found-or-created (a brand-new symbol needs a row to attach
+ * the Trade to, per `Trade.portfolioHoldingId`'s NOT NULL constraint) but
+ * its quantity/cost-basis are left completely untouched until settlement.
+ *
+ * This is a deliberate design choice the task itself didn't spell out:
+ * the whole point of a pending/settled split is that the ORIGINAL limit
+ * price is provisional (may differ from the real fill), and this app's
+ * weighted-average cost-basis math has no clean way to "correct" itself
+ * after the fact (AGENTS.md's own tax-lot module docstring: a cost basis
+ * "isn't reconstructable later without replaying the full trade
+ * history"). Applying it twice — once provisionally, once for real at
+ * settlement — would either double-count or require an ad hoc reversal.
+ * Deferring the ENTIRE cost-basis effect to settlement, where the real
+ * price is finally known, avoids that class of bug entirely.
+ */
+export async function createPendingTrade(
+  tx: ScopedTransactionClient,
+  userId: string,
+  input: PendingTradeInput,
+) {
+  let holding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol } });
+  if (!holding) {
+    holding = await tx.portfolioHolding.create({
+      data: { userId, symbol: input.symbol, currency: input.currency, quantity: "0", totalCostBasis: 0n, nativeCostBasis: 0n },
+    });
+  }
+
+  const totalAgorot = multiplyAgorot(input.priceAgorot, input.quantity);
+  const nativeTotalAmount = multiplyNativeAmount(input.nativePriceAmount, input.quantity);
+
+  return tx.trade.create({
+    data: {
+      userId,
+      portfolioHoldingId: holding.id,
+      symbol: input.symbol,
+      side: input.side,
+      currency: input.currency,
+      quantity: input.quantity.toString(),
+      priceAgorot: BigInt(input.priceAgorot),
+      totalAgorot: BigInt(totalAgorot),
+      nativePriceAmount: BigInt(input.nativePriceAmount),
+      nativeTotalAmount: BigInt(nativeTotalAmount),
+      exchangeRateAtEntry: input.exchangeRate.toString(),
+      executedAt: input.executedAt,
+      idempotencyKey: input.idempotencyKey,
+      status: "PENDING",
+    },
+  });
+}
+
+export type SettleTradeInput = Pick<ExecuteTradeInput, "symbol" | "side" | "quantity" | "currency" | "exchangeRate"> & {
+  /** The REAL fill price/total — not the original pending order's limit price. */
+  priceAgorot: Agorot;
+  nativePriceAmount: NativeAmount;
+  settledAt: Date;
+};
+
+/**
+ * Applies the real, settled cost-basis effect to an existing PENDING
+ * `Trade` row and flips it to SETTLED — used by `settlePaperTradeReceipt`
+ * once a `Trade` created via `createPendingTrade` above is known.
+ */
+export async function settleExistingTrade(
+  tx: ScopedTransactionClient,
+  userId: string,
+  tradeId: string,
+  input: SettleTradeInput,
+): Promise<ExecuteTradeResult> {
+  const applied = await applyTradeToHolding(tx, userId, input);
+  if (!applied.ok) return applied;
+
+  const trade = await tx.trade.update({
+    where: { id: tradeId },
+    data: {
+      priceAgorot: BigInt(input.priceAgorot),
+      totalAgorot: BigInt(applied.totalAgorot),
+      realizedPnlAgorot: applied.realizedPnlAgorot !== null ? BigInt(applied.realizedPnlAgorot) : undefined,
+      nativePriceAmount: BigInt(input.nativePriceAmount),
+      nativeTotalAmount: BigInt(applied.nativeTotalAmount),
+      nativeRealizedPnl: applied.nativeRealizedPnl !== null ? BigInt(applied.nativeRealizedPnl) : undefined,
+      executedAt: input.settledAt,
+      status: "SETTLED",
+    },
+  });
+
+  return { ok: true, trade, holding: applied.holding };
+}
+
+/**
+ * The `withUserScope`-wrapping form, for callers that have no
+ * transaction of their own open (the authenticated `/api/trades`
+ * route). A caller that DOES already hold one — the signed-receipt
+ * webhook, which must write the Trade, the ledger row, and the
+ * ledger-commit link atomically or not at all — calls
+ * `executeTradeInTransaction` directly instead, rather than nesting a
+ * second scoped transaction inside the first. Same split, for the same
+ * reason, as `fetchActiveRulesForEvaluation` vs.
+ * `listActiveTransactionRulesForEvaluation` (AGENTS.md §3rr).
  */
 export async function executeTrade(userId: string, input: ExecuteTradeInput): Promise<ExecuteTradeResult> {
-  return withUserScope(userId, async (tx) => {
-    const existingHolding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol } });
-    const totalAgorot = multiplyAgorot(input.priceAgorot, input.quantity);
-    const nativeTotalAmount = multiplyNativeAmount(input.nativePriceAmount, input.quantity);
-
-    const currentPosition: HoldingPosition = existingHolding
-      ? {
-          quantity: existingHolding.quantity.toNumber(),
-          currency: input.currency,
-          totalCostBasis: agorot(Number(existingHolding.totalCostBasis)),
-          nativeCostBasis: nativeAmount(Number(existingHolding.nativeCostBasis)),
-        }
-      : { quantity: 0, currency: input.currency, totalCostBasis: agorot(0), nativeCostBasis: nativeAmount(0) };
-
-    let nextPosition: HoldingPosition;
-    let realizedPnl: Agorot | null = null;
-    let nativeRealizedPnl: NativeAmount | null = null;
-
-    if (input.side === "BUY") {
-      nextPosition = applyBuy(currentPosition, input.quantity, totalAgorot, nativeTotalAmount);
-    } else {
-      if (input.quantity > currentPosition.quantity) {
-        return { ok: false, error: "insufficient_shares" };
-      }
-      const sellResult = applySell(currentPosition, input.quantity, input.priceAgorot, input.nativePriceAmount);
-      nextPosition = sellResult.position;
-      realizedPnl = sellResult.realizedPnl;
-      nativeRealizedPnl = sellResult.nativeRealizedPnl;
-    }
-
-    const holding = existingHolding
-      ? await tx.portfolioHolding.update({
-          where: { id: existingHolding.id },
-          data: {
-            quantity: nextPosition.quantity.toString(),
-            totalCostBasis: BigInt(nextPosition.totalCostBasis),
-            nativeCostBasis: BigInt(nextPosition.nativeCostBasis),
-          },
-        })
-      : await tx.portfolioHolding.create({
-          data: {
-            userId,
-            symbol: input.symbol,
-            currency: input.currency,
-            quantity: nextPosition.quantity.toString(),
-            totalCostBasis: BigInt(nextPosition.totalCostBasis),
-            nativeCostBasis: BigInt(nextPosition.nativeCostBasis),
-          },
-        });
-
-    const trade = await tx.trade.create({
-      data: {
-        userId,
-        portfolioHoldingId: holding.id,
-        symbol: input.symbol,
-        side: input.side,
-        currency: input.currency,
-        quantity: input.quantity.toString(),
-        priceAgorot: BigInt(input.priceAgorot),
-        totalAgorot: BigInt(totalAgorot),
-        realizedPnlAgorot: realizedPnl !== null ? BigInt(realizedPnl) : undefined,
-        nativePriceAmount: BigInt(input.nativePriceAmount),
-        nativeTotalAmount: BigInt(nativeTotalAmount),
-        nativeRealizedPnl: nativeRealizedPnl !== null ? BigInt(nativeRealizedPnl) : undefined,
-        exchangeRateAtEntry: input.exchangeRate.toString(),
-        executedAt: input.executedAt,
-        idempotencyKey: input.idempotencyKey,
-      },
-    });
-
-    return { ok: true, trade, holding };
-  });
+  return withUserScope(userId, (tx) => executeTradeInTransaction(tx, userId, input));
 }

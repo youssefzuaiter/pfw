@@ -27,6 +27,25 @@ import { auth } from "./server/auth/auth";
  * Vercel-Cron-triggered request carries no session either — its own
  * trust boundary is the `CRON_SECRET` bearer token it checks internally
  * (src/app/api/cron/route.ts), not this proxy's auth gate.
+ *
+ * `/api/webhooks/trades` (Tier-0 paper-trading agent, ad hoc): same
+ * shape as `/api/cron`. The caller is a separate local process with no
+ * cookies, and its trust boundary is the HMAC-SHA256 signature it checks
+ * internally over the raw request body (src/app/api/webhooks/trades/route.ts),
+ * not this proxy's auth gate. Note this is NOT a reversal of §3oo's
+ * decision to refuse a public PSD2 webhook: that endpoint had no real
+ * caller, so its only options were a fake signature scheme or a genuinely
+ * unauthenticated ledger write. This one has a real caller holding a real
+ * shared secret, which is the exact condition §3oo found missing.
+ *
+ * `/api/webhooks/metrics` (Tier-0 agent's structured strategy telemetry,
+ * ad hoc Phase 4): identical shape and identical trust boundary as
+ * `/api/webhooks/trades` above — same caller, same shared
+ * WEBHOOK_SECRET, same internal HMAC check
+ * (src/app/api/webhooks/metrics/route.ts). A separate endpoint from the
+ * trades one because it writes a different table (ScenarioMetrics) for a
+ * different purpose (AI-strategy analytics, not the financial ledger),
+ * not because it needs a different security posture.
  */
 // "/forgot-password", "/reset-password/[token]", "/verify-email/[token]"
 // (auth hardening pass, ad hoc post-§3ff) — same reasoning as the
@@ -44,6 +63,8 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/api/health",
   "/api/health/ready",
   "/api/cron",
+  "/api/webhooks/trades",
+  "/api/webhooks/metrics",
 ]);
 const PUBLIC_PATH_PREFIXES = [
   "/api/auth/",
@@ -187,6 +208,17 @@ export const proxy = auth((request) => {
   // touches; every exception here is independently justified, narrow (no
   // wildcard broader than one documented CDN subdomain shape per entry),
   // and audited together rather than one being addressed in isolation.
+  //
+  // http://127.0.0.1:8000 / http://localhost:8000 (Agent Telemetry
+  // Dashboard, /trading/agent): the Tier-0 paper-trading agent's own
+  // FastAPI service, running as a SEPARATE LOCAL PROCESS on the same
+  // developer machine — not a third-party host. A plain browser fetch()
+  // is blocked by connect-src regardless of that service's own CORS
+  // headers (CORS and CSP are independent, both-must-allow checks), so
+  // both are needed for AgentTelemetryTerminal's client-side polling to
+  // work at all. Deliberately plain http:// (this local agent has no
+  // TLS story — a real deployment wouldn't have this second process
+  // reachable at all, so this exception only ever matters in local dev).
   const csp = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';
@@ -194,7 +226,7 @@ export const proxy = auth((request) => {
     style-src 'self' 'nonce-${nonce}';
     img-src 'self' blob: data:;
     font-src 'self';
-    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co;
+    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co http://127.0.0.1:8000 http://localhost:8000;
     object-src 'none';
     base-uri 'self';
     form-action 'self';

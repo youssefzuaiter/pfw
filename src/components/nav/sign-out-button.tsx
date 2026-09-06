@@ -1,5 +1,6 @@
 "use client";
 
+import { LogOut } from "lucide-react";
 import { signOut } from "next-auth/react";
 
 /**
@@ -24,11 +25,25 @@ function handleSignOut() {
  * `??` fallback expression, so a genuinely-safe button rendered via a
  * dynamic className was flagged as a false positive (the guard's own
  * header comment already says this exact shape — a reusable wrapper
- * component — is out of scope for it). Two literal render branches, one
+ * component — is out of scope for it). Literal render branches, one
  * button element each, sidesteps that rather than fighting the regex or
- * adding an allowlist entry for a component this small.
+ * adding an allowlist entry for a component this small. `"icon"` is the
+ * collapsed sidebar's own icon-only rail variant.
  */
-export function SignOutButton({ variant = "nav" }: { variant?: "nav" | "drawer" }) {
+export function SignOutButton({ variant = "nav" }: { variant?: "nav" | "drawer" | "icon" }) {
+  if (variant === "icon") {
+    return (
+      <button
+        type="button"
+        onClick={handleSignOut}
+        aria-label="Sign out"
+        className="uv-btn-press flex items-center justify-center rounded-md border border-border p-2 text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <LogOut className="h-4 w-4" aria-hidden="true" />
+      </button>
+    );
+  }
+
   if (variant === "drawer") {
     return (
       <button

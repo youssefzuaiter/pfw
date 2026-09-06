@@ -11,7 +11,7 @@ import { SignOutButton } from "./sign-out-button";
 // so it doesn't need to handle every ARIA-focusable edge case.
 const FOCUSABLE_SELECTOR = "a[href], button:not([disabled])";
 
-/** Mobile-only (hidden at the `md:` breakpoint and up) — see TopNav for desktop. */
+/** Mobile-only (hidden at the `md:` breakpoint and up) — see Sidebar for desktop. */
 export function MobileNav() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -68,6 +68,12 @@ export function MobileNav() {
   }
 
   const moreActive = MOBILE_MORE_ITEMS.some((item) => isNavItemActive(pathname, item.href));
+
+  // `/trading` renders its own dedicated dark/monospace shell
+  // (`src/app/trading/layout.tsx`) with its own icon-based navigation —
+  // the standard mobile tab bar would visually clash with it and would
+  // also duplicate the trading desk's own view-switching tabs.
+  if (pathname?.startsWith("/trading")) return null;
 
   return (
     <>

@@ -1,5 +1,6 @@
 "use client";
 
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 type ThemePreference = "system" | "light" | "dark";
@@ -7,6 +8,7 @@ type ThemePreference = "system" | "light" | "dark";
 const STORAGE_KEY = "pfw-theme";
 const ORDER: readonly ThemePreference[] = ["system", "light", "dark"];
 const LABEL: Record<ThemePreference, string> = { system: "System", light: "Light", dark: "Dark" };
+const ICON: Record<ThemePreference, typeof Monitor> = { system: Monitor, light: Sun, dark: Moon };
 
 // A same-tab pub/sub for the toggle's own change: `localStorage`'s native
 // `storage` event only fires in *other* tabs/windows, never the one that
@@ -50,8 +52,13 @@ function getServerSnapshot(): ThemePreference {
  * this problem at all: theme-init-script.tsx applies the stored theme
  * before first paint, blocking-script style — this component only needs
  * to reflect the current preference in its own label.
+ *
+ * `compact` (the collapsed sidebar's own icon-only rail) swaps the text
+ * label for the matching Monitor/Sun/Moon icon — same `cycle()` behavior
+ * and the same `aria-label`, so a screen reader gets identical
+ * information either way.
  */
-export function ThemeToggle() {
+export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const preference = useSyncExternalStore(subscribe, readStoredPreference, getServerSnapshot);
 
   function cycle() {
@@ -59,6 +66,20 @@ export function ThemeToggle() {
     window.localStorage.setItem(STORAGE_KEY, next);
     applyTheme(next);
     emitter.dispatchEvent(new Event(CHANGE_EVENT));
+  }
+
+  if (compact) {
+    const Icon = ICON[preference];
+    return (
+      <button
+        type="button"
+        onClick={cycle}
+        className="uv-btn-press flex items-center justify-center rounded-md border border-border p-2 text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Theme: ${LABEL[preference]}. Click to change.`}
+      >
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </button>
+    );
   }
 
   return (

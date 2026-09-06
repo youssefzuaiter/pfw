@@ -20,7 +20,7 @@ import { listTransactions, searchTransactionsSemantic } from "../../../../server
  * `embedTextWithTimeout`'s 3s budget, §3u) still gets a real answer via
  * `listTransactions`'s existing substring match, rather than an error.
  * This is the one place the two search implementations meet: the UI
- * (`src/app/transactions/_components/semantic-search.tsx`) always calls
+ * (`src/app/(finance)/transactions/_components/semantic-search.tsx`) always calls
  * THIS endpoint, never `listTransactions` directly, so it never has to
  * know which path actually served a given response.
  */

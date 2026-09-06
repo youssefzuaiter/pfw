@@ -14,7 +14,7 @@ export const instant = false;
  * Account settings (Punch List Tier 2): global preferences
  * (`UserSettings`, item 1), two-factor authentication (`MfaPanel`, item
  * 3), and server-side session revocation (`RevokeSessionsButton`, item
- * 2) — one screen, reachable via a direct link from `TopNav`/`MobileNav`
+ * 2) — one screen, reachable via a direct link from `Sidebar`/`MobileNav`
  * next to `SignOutButton` (account-level functionality, same placement
  * reasoning as sign-out itself) rather than `PRIMARY_NAV_ITEMS`, matching
  * this app's "sub-view, not one of the spec's 9 primary destinations"

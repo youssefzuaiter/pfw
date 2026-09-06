@@ -143,6 +143,19 @@ body {
   font-feature-settings: "tnum" 1;
 }
 
+/*
+ * `CommandPalette`'s overlay (`@radix-ui/react-dialog`'s `Overlay`, which
+ * cmdk's `CommandDialog` renders with a `cmdk-overlay` attribute) sets
+ * `pointerEvents: "auto"` via React's `style` prop — an inline `style=`
+ * attribute this app's strict CSP (no `style-src 'unsafe-inline'`)
+ * silently drops, the same class of bug §3x's own Recharts
+ * `ResponsiveContainer` finding already documents. Applied here as a real
+ * stylesheet rule instead, which CSP doesn't touch.
+ */
+[cmdk-overlay] {
+  pointer-events: auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

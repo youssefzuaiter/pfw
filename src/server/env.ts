@@ -122,6 +122,20 @@ const REQUIRED_SECRET_SCHEMAS = {
     16,
     "CRON_SECRET must be at least 16 characters — this is what proves a request actually came from Vercel Cron, not an arbitrary caller",
   ),
+  // Tier-0 paper-trading agent (ad hoc) — the shared secret the local
+  // FastAPI trading service signs its trade receipts with, verified in
+  // constant time by `src/app/api/webhooks/trades/route.ts`. Only ever
+  // read by that one route, lazily, same "throws only when actually
+  // used" posture CRON_SECRET already has: an environment that never
+  // receives a receipt never needs this set. The 32-char floor is the
+  // same minimum-entropy reasoning as AUTH_SECRET's — this value is the
+  // ENTIRE trust boundary for a route that writes to a user's ledger
+  // with no session, so a short one is not merely weak, it's the whole
+  // door.
+  WEBHOOK_SECRET: nonEmptyString("WEBHOOK_SECRET").min(
+    32,
+    "WEBHOOK_SECRET must be at least 32 characters — it is the only thing standing between an unauthenticated caller and a write to a user's ledger",
+  ),
 } as const;
 
 type RequiredSecretEnvVar = keyof typeof REQUIRED_SECRET_SCHEMAS;
@@ -200,6 +214,42 @@ export function getResendApiKey(): string {
 
 export function getCronSecret(): string {
   return readRequiredEnv("CRON_SECRET");
+}
+
+export function getWebhookSecret(): string {
+  return readRequiredEnv("WEBHOOK_SECRET");
+}
+
+/**
+ * Which user a signed trade receipt is booked against. Not a secret — a
+ * user id grants nothing on its own, and the receipt's HMAC is what
+ * actually authorizes the write — so this is a plain getter that returns
+ * `null` when unset rather than throwing at import time.
+ *
+ * Deliberately NOT taken from the receipt body, for the same reason
+ * `getAppUrl()` above refuses to derive itself from the incoming Host
+ * header: the target of a write is exactly the kind of value that must
+ * come from something THIS server controls, not from request input. A
+ * body-supplied `userId` would turn one leaked secret into a write
+ * primitive against every account in the database instead of one.
+ */
+export function getPaperTradingUserId(): string | null {
+  const raw = process.env.PAPER_TRADING_USER_ID?.trim();
+  return raw ? raw : null;
+}
+
+/**
+ * Not a secret — the Tier-0 agent's own FastAPI service origin, a
+ * separate local process on the same machine (same one
+ * `AgentTelemetryTerminal`'s client-side polling already targets, see
+ * its own doc comment). Used server-side by `POST /api/agent/halt` to
+ * forward an HMAC-signed emergency-halt request — the browser never
+ * talks to this origin directly for that action, unlike the read-only
+ * telemetry poll, precisely because signing that request needs
+ * `WEBHOOK_SECRET`, which must never reach client-side code.
+ */
+export function getPaperTraderServiceUrl(): string {
+  return process.env.PAPER_TRADER_SERVICE_URL?.trim() || "http://127.0.0.1:8000";
 }
 
 /**

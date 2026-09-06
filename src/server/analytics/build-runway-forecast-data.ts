@@ -15,7 +15,7 @@ export type RunwayForecastData = {
 
 /**
  * Assembles the two inputs `RunwayForecastChart`
- * (src/app/dashboard/_components/runway-forecast-chart.tsx) hands to
+ * (src/app/(finance)/dashboard/_components/runway-forecast-chart.tsx) hands to
  * the forecaster Worker (AGENTS.md §3dd). Deliberately does NOT run any
  * forecast itself, unlike build-monte-carlo-data.ts — the actual
  * inference (ONNX model warmup + Monte Carlo rollout) only ever runs

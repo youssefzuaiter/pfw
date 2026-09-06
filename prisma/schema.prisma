@@ -98,6 +98,24 @@ enum TradeSide {
   SELL
 }
 
+/// Two-phase paper-trade settlement (ad hoc, extends the Tier-0 agent
+/// integration): PENDING is an order Alpaca has ACCEPTED but not yet
+/// FILLED — no envelope money has moved yet, and no NotableTransaction/
+/// LedgerCommit exists for it. SETTLED means Alpaca reported a real fill
+/// and the ledger entry now exists, using the ACTUAL fill price, not the
+/// original limit price. CANCELED covers an order that never filled (see
+/// the module comment in ~/paper-trader/inference.py for why a limit
+/// order can sit unfillable indefinitely) — reserved for a future
+/// reconciliation pass; nothing currently writes it. A Trade created via
+/// the synchronous, authenticated `/api/trades` route is SETTLED
+/// immediately at creation (it has no separate broker-fill step to wait
+/// for) — only the async paper-trading-agent path ever uses PENDING.
+enum TradeStatus {
+  PENDING
+  SETTLED
+  CANCELED
+}
+
 /// AGENTS.md §3k: multi-currency amendment to the original single-ILS law.
 /// ILS remains the app's one base/reporting currency; the other three are
 /// "native" currencies a BankAccount/NotableTransaction/PortfolioHolding/
@@ -303,7 +321,9 @@ model User {
   debtPayments             DebtPayment[]
   manualAssets             ManualAsset[]
   portfolioHoldings        PortfolioHolding[]
+  holdingLots              HoldingLot[]
   trades                   Trade[]
+  scenarioMetrics          ScenarioMetrics[]
   netWorthSnapshots        NetWorthSnapshot[]
   merchantEmbeddings       MerchantEmbedding[]
   dividends                Dividend[]
@@ -1006,10 +1026,56 @@ model PortfolioHolding {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  trades    Trade[]
-  dividends Dividend[]
+  trades      Trade[]
+  dividends   Dividend[]
+  holdingLots HoldingLot[]
 
   @@unique([userId, symbol])
+}
+
+/// Persisted, per-lot cost-basis tracking for the Tier-0 paper-trading
+/// agent's real settlement pipeline (ad hoc, Phase 2) — a genuinely
+/// DIFFERENT thing from src/lib/tax-lots.ts's FIFO/LIFO engine, which
+/// deliberately stores nothing at all (a "derived truth" replay purely
+/// for the hypothetical tax simulator, AGENTS.md §3r). This table is
+/// real, mutable state, on purpose: HIFO consumption on a REAL sell
+/// needs a genuine, persisted "which lots are still open, and how much
+/// of each" answer that survives across separate webhook deliveries —
+/// a pure in-memory replay can't serve that role for live settlement
+/// the way it can for a one-shot simulator report.
+///
+/// Deliberately does NOT replace PortfolioHolding's own weighted-average
+/// quantity/totalCostBasis (still the figure /trading/portfolio and net
+/// worth read, and still maintained exactly as before) — this is an
+/// ADDITIVE tracking layer, scoped to the paper-trading webhook
+/// settlement path only, per this feature's own stated scope. The
+/// realized gain/loss HIFO computes on a sell is recorded as a note on
+/// the resulting `NotableTransaction.description`, not written into
+/// `Trade.realizedPnlAgorot` — that field stays the existing
+/// weighted-average figure other screens already depend on; storing two
+/// different "the" realized gain in the same column would be genuinely
+/// confusing, not a improvement.
+///
+/// `quantity`/`costBasis` shrink together, proportionally, as shares are
+/// consumed from this lot (the same invariant tax-lots.ts's own
+/// `OpenTaxLot` keeps) — so `costBasis / quantity` is always this lot's
+/// genuine per-share acquisition price, at any point in its life. A
+/// fully-consumed lot is kept at quantity/costBasis 0, never deleted,
+/// matching this schema's own "never delete financial history" habit
+/// (PortfolioHolding's own doc comment states the identical rule).
+model HoldingLot {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  holdingId  String
+  holding    PortfolioHolding @relation(fields: [holdingId], references: [id], onDelete: Cascade)
+  quantity   Decimal          @db.Decimal(30, 18)
+  /// Agorot — the REMAINING cost basis for `quantity`, shrinking with it.
+  costBasis  BigInt
+  acquiredAt DateTime
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, holdingId, quantity])
 }
 
 /// The order blotter. `symbol` is denormalized from the holding for
@@ -1056,10 +1122,78 @@ model Trade {
   exchangeRateAtEntry Decimal          @db.Decimal(12, 6)
   executedAt          DateTime
   idempotencyKey      String?
+  /// See TradeStatus's own doc comment for the full PENDING/SETTLED/
+  /// CANCELED lifecycle and why the default only applies correctly to
+  /// the async paper-trading-agent path.
+  status              TradeStatus      @default(PENDING)
   createdAt           DateTime         @default(now())
 
   @@unique([userId, idempotencyKey])
   @@index([userId, executedAt])
+}
+
+/// Structured AI-strategy telemetry from the Tier-0 paper-trading agent
+/// (ad hoc) — one row per scenario the agent EVALUATED, whether or not it
+/// executed. Deliberately user-scoped like every other paper-trading
+/// table (Trade/NotableTransaction/LedgerCommit) rather than treated as
+/// shared public data the way ExchangeRate/CryptoAssetPrice are: unlike
+/// a market price, this row is specific to one account's own agent
+/// activity, so it gets the standard RLS tenant_isolation policy.
+///
+/// `hash` is a SHA-256 hex digest of `"{ticker}|{headline}"` — the same
+/// input shape inference.py's own `_embed()` hashes for its pseudo-
+/// embedding — so identical scenarios (this agent replays a fixed set of
+/// MARKET_SCENARIOS, not literally-unique headlines every time) share a
+/// stable, comparable identifier across repeated evaluations, without a
+/// uniqueness constraint: the SAME scenario recurring every time it's
+/// randomly re-picked is expected, not a duplicate to reject.
+///
+/// `decision` is a plain String, not an enum, ON PURPOSE — matching one
+/// of two decision shapes: `"executed"`, or one of
+/// `execution.RejectionCode`'s values (e.g. `"below_min_gain"`). An enum
+/// here would couple this schema to that Python enum's exact membership
+/// across two independently-versioned repos; a new rejection code added
+/// to execution.py would need a matching Prisma migration before this
+/// table could record it at all, purely for a field that's read
+/// (grouped/filtered), never itself validated against a fixed set.
+///
+/// `actualFillPrice` is nullable, and — a known, honest limitation
+/// stated plainly rather than glossed over — is currently ALWAYS null:
+/// `scheduler.trading_loop()` (the only writer, per this feature's own
+/// scope) posts this row at EVALUATION time, before any order has even
+/// been submitted, let alone filled. Populating a genuine fill price
+/// would need a second write from the settlement path
+/// (`websocket_settlement_stream`), which this feature deliberately
+/// does not add — out of scope for what was asked.
+model ScenarioMetrics {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticker           String
+  hash             String
+  predictedMovePct Decimal  @db.Decimal(8, 4)
+  actualFillPrice  Decimal? @db.Decimal(12, 4)
+  decision         String
+  /// Shadow A/B pipeline (ad hoc, Phase 3) — a SECOND, non-authoritative
+  /// model's theoretical verdict on the SAME (ticker, headline)
+  /// scenario this row's `hash` already identifies, persisted purely
+  /// for offline backtesting. `scheduler._run_one_cycle` computes this
+  /// CONCURRENTLY with the primary evaluation (`inference._shadow_evaluate`,
+  /// via `asyncio.gather`) — it is never read by anything that submits
+  /// or gates a real order. Both columns are nullable together: only
+  /// rows written after this feature shipped carry a shadow verdict at
+  /// all, and there's no backfill for rows that predate it.
+  shadowPredictedMovePct Decimal? @db.Decimal(8, 4)
+  /// Deliberately a DIFFERENT vocabulary from `decision`
+  /// ("would_execute" / "would_reject", not "executed" / a
+  /// RejectionCode) — the shadow model never actually executes
+  /// anything, so its verdict must never be spelled the same way a real
+  /// one is.
+  shadowDecision         String?
+  createdAt        DateTime @default(now())
+
+  @@index([userId, ticker, createdAt])
+  @@index([hash])
 }
 
 /// Historical only — "today" is always computed live by the DAL, never

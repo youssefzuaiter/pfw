@@ -12,7 +12,7 @@ export type SpendingAnomalyData = {
 
 /**
  * Assembles the one input `SpendingAnomalyAlert`
- * (src/app/dashboard/_components/spending-anomaly-alert.tsx) hands to
+ * (src/app/(finance)/dashboard/_components/spending-anomaly-alert.tsx) hands to
  * the anomaly-detection Worker — the caller's trailing WINDOW_DAYS-day
  * expense history, fetched through the RLS-enforced DAL
  * (getRecentExpenseTransactionsForAnomalyDetection, which itself goes

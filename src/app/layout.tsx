@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Rubik, IBM_Plex_Mono } from "next/font/google";
 import { headers } from "next/headers";
+import { CommandPalette } from "../components/CommandPalette";
 import { CopilotSidebar } from "../components/copilot/copilot-sidebar";
 import { MobileNav } from "../components/nav/mobile-nav";
-import { TopNav } from "../components/nav/top-nav";
+import { Sidebar } from "../components/nav/sidebar";
 import { ThemeInitScript } from "../components/theme/theme-init-script";
 import "./globals.css";
 
@@ -42,11 +43,12 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <ThemeInitScript nonce={nonce} />
       </head>
-      <body className="flex min-h-full flex-col bg-bg text-fg">
-        <TopNav />
-        <main className="flex-1 pb-20 md:pb-0">{children}</main>
+      <body className="flex min-h-full flex-col bg-bg text-fg md:flex-row">
+        <Sidebar />
+        <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
         <MobileNav />
         <CopilotSidebar />
+        <CommandPalette nonce={nonce} />
       </body>
     </html>
   );

@@ -1,11 +1,12 @@
 import Link from "next/link";
 
-export type TradingView = "desk" | "portfolio" | "tax";
+export type TradingView = "desk" | "portfolio" | "tax" | "agent";
 
 const TABS: { view: TradingView; href: string; label: string }[] = [
   { view: "desk", href: "/trading", label: "Trading desk" },
   { view: "portfolio", href: "/trading/portfolio", label: "Portfolio" },
   { view: "tax", href: "/trading/tax", label: "Tax & Capital Gains" },
+  { view: "agent", href: "/trading/agent", label: "Agent Activity" },
 ];
 
 /** The tab switcher shared by all three /trading sub-views (desk, portfolio, tax) — extracted once three copies of the same markup would otherwise exist. */
