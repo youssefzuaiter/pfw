@@ -107,3 +107,38 @@ export function consumeLotsHifo(
 
   return { consumptions, totalCostBasisAgorot, realizedGainAgorot };
 }
+
+export type CostBasisByDatePoint = { dateKey: string; cumulativeCostBasisAgorot: Agorot };
+
+/**
+ * Cumulative OPEN cost basis, bucketed by original acquisition date
+ * (Phase 2, ad hoc — the portfolio chart's area series). Deliberately
+ * titled "by acquisition date," never "cost basis over time": a
+ * `HoldingLot` row's `costBasis` is mutated down in place as it's
+ * partially consumed (see this file's own header comment and
+ * `HoldingLot`'s schema doc comment), so today's remaining amount is NOT
+ * what that lot's cost basis actually was on its acquisition date —
+ * this reconstructs "how much of today's still-open cost basis traces
+ * back to which acquisition dates," not a true historical time series,
+ * which this table's mutate-in-place shape cannot reconstruct without a
+ * separate history log this app doesn't keep. Two lots acquired the same
+ * calendar day are merged into one point, since the chart's x-axis has
+ * day resolution.
+ */
+export function buildCumulativeCostBasisByDate(
+  lots: readonly { acquiredAt: Date; costBasisAgorot: Agorot }[],
+): CostBasisByDatePoint[] {
+  const byDate = new Map<string, Agorot>();
+  for (const lot of [...lots].sort((a, b) => a.acquiredAt.getTime() - b.acquiredAt.getTime())) {
+    const dateKey = lot.acquiredAt.toISOString().slice(0, 10);
+    byDate.set(dateKey, addAgorot(byDate.get(dateKey) ?? agorot(0), lot.costBasisAgorot));
+  }
+
+  let running = agorot(0);
+  const points: CostBasisByDatePoint[] = [];
+  for (const [dateKey, dayTotal] of byDate) {
+    running = addAgorot(running, dayTotal);
+    points.push({ dateKey, cumulativeCostBasisAgorot: running });
+  }
+  return points;
+}

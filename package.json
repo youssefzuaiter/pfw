@@ -30,6 +30,8 @@
     "audit:paper-trades": "tsx --conditions=react-server scripts/reconcile-ledger.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.49",
+    "@ai-sdk/react": "^4.0.96",
     "@anthropic-ai/sdk": "^0.121.0",
     "@huggingface/transformers": "^4.2.0",
     "@prisma/adapter-pg": "^7.10.0",
@@ -37,8 +39,10 @@
     "@react-three/fiber": "^9.7.0",
     "@simplewebauthn/browser": "^9.0.1",
     "@simplewebauthn/server": "^9.0.3",
+    "ai": "^7.0.93",
     "argon2": "^0.45.1",
     "cmdk": "^1.1.1",
+    "lightweight-charts": "^5.2.1",
     "lucide-react": "^1.41.0",
     "next": "16.3.3",
     "next-auth": "^5.0.0-beta.32",

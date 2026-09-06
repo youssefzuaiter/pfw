@@ -152,6 +152,73 @@ export function getMockPriceHistory(
   return points;
 }
 
+export type PriceBar = { date: Date; open: Agorot; high: Agorot; low: Agorot; close: Agorot };
+
+/**
+ * A deterministic daily OHLC bar, converted to ILS agorot (Phase 2, ad
+ * hoc — the trading desk's candlestick chart). `getMockPriceUsdCents`'s
+ * own per-day drift only ever produces ONE native-USD-cents price per
+ * day (a close), which is all the original Recharts area chart ever
+ * needed — there is no real open/high/low anywhere in this app's data
+ * model to feed a candlestick series from, and inventing one at render
+ * time from a single already-converted number would be presenting
+ * fabricated price action as if it were real. This function is the one
+ * place that OHLC shape is actually defined, in native USD cents (the
+ * currency this desk actually prices in), each field converted to agorot
+ * exactly the way `getMockPriceAgorot` already converts a single price:
+ * `open` is literally yesterday's `close` (real day-to-day continuity,
+ * not a second independent draw), and `high`/`low` are a small
+ * deterministic spread around the wider of (open, close) — same
+ * `dailySeed` hashing approach as every other draw in this module, just
+ * keyed on a distinct suffix string so the three draws (`close`,
+ * `range-high`, `range-low`) are independent of each other for the same
+ * symbol/day.
+ */
+export function getMockPriceBarAgorot(
+  symbol: string,
+  asOf: Date = new Date(),
+  usdToIlsRate: number = FALLBACK_RATES.USD,
+): PriceBar {
+  const closeUsdCents = Number(getMockPriceUsdCents(symbol, asOf));
+  const previousDay = new Date(asOf.getTime() - 24 * 60 * 60 * 1000);
+  const openUsdCents = Number(getMockPriceUsdCents(symbol, previousDay));
+
+  const upper = Math.max(openUsdCents, closeUsdCents);
+  const lower = Math.min(openUsdCents, closeUsdCents);
+  const highSpread = (dailySeed(`${symbol}:range-high`, asOf) % 251) / 10_000; // 0 .. +0.025
+  const lowSpread = (dailySeed(`${symbol}:range-low`, asOf) % 251) / 10_000; // 0 .. +0.025
+
+  const toAgorot = (usdCents: number) =>
+    convertNativeAmountToAgorot(nativeAmount(Math.round(usdCents)), "USD", usdToIlsRate);
+
+  return {
+    date: asOf,
+    open: toAgorot(openUsdCents),
+    high: toAgorot(upper * (1 + highSpread)),
+    low: toAgorot(lower * (1 - lowSpread)),
+    close: toAgorot(closeUsdCents),
+  };
+}
+
+/** Same "no storage needed, just re-evaluate each past day" reasoning as `getMockPriceHistory` — every bar's three independent seeded draws are already fully determined by `symbol` + calendar day. */
+export function getMockPriceBarHistory(
+  symbol: string,
+  days: number,
+  endDate: Date = new Date(),
+  usdToIlsRate: number = FALLBACK_RATES.USD,
+): PriceBar[] {
+  if (days <= 0) {
+    throw new RangeError(`days must be positive, received ${days}`);
+  }
+
+  const bars: PriceBar[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const date = new Date(endDate.getTime() - i * 24 * 60 * 60 * 1000);
+    bars.push(getMockPriceBarAgorot(symbol, date, usdToIlsRate));
+  }
+  return bars;
+}
+
 export type MockDividendEvent = {
   symbol: string;
   /** Declared amount per single share, in native USD cents. */

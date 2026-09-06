@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { Badge } from "../../../components/badge/badge";
 import { CurrencyToggle } from "../../../components/currency/currency-toggle";
+import { buildCumulativeCostBasisByDate } from "../../../lib/holding-lots";
+import { agorot } from "../../../lib/money";
 import { getCurrentUser } from "../../../server/auth/current-user";
+import { listOpenHoldingLots } from "../../../server/dal/portfolio";
 import { buildPortfolioData } from "../../../server/portfolio/build-portfolio-data";
 import { AllocationBar } from "../_components/allocation-bar";
 import { DividendSchedule } from "../_components/dividend-schedule";
+import { PortfolioCostBasisChart } from "../_components/portfolio-cost-basis-chart";
 import { PortfolioSummary } from "../_components/portfolio-summary";
 import { PositionsTable } from "../_components/positions-table";
 import { TradingNav } from "../_components/trading-nav";
@@ -13,7 +17,10 @@ export const instant = false;
 
 export default async function PortfolioPage() {
   const user = await getCurrentUser();
-  const data = await buildPortfolioData(user.id);
+  const [data, openLots] = await Promise.all([buildPortfolioData(user.id), listOpenHoldingLots(user.id)]);
+  const costBasisPoints = buildCumulativeCostBasisByDate(
+    openLots.map((lot) => ({ acquiredAt: lot.acquiredAt, costBasisAgorot: agorot(Number(lot.costBasis)) })),
+  );
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 md:px-6">
@@ -52,6 +59,16 @@ export default async function PortfolioPage() {
         ) : (
           <PositionsTable rows={data.rows} />
         )}
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Open cost basis by acquisition date</h2>
+        <PortfolioCostBasisChart points={costBasisPoints} />
+        <p className="mt-2 text-xs text-muted">
+          Cumulative cost basis of currently-open lots, grouped by when each was acquired — not a historical
+          reconstruction (a lot&rsquo;s recorded cost basis shrinks as it&rsquo;s sold, so this reflects today&rsquo;s
+          remaining amounts, not what each lot was worth on that date).
+        </p>
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">

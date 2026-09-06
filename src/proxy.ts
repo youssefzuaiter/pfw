@@ -55,11 +55,35 @@ import { auth } from "./server/auth/auth";
 // routes behind them (`/api/auth/forgot-password`, `/reset-password`,
 // `/verify-email`) are already covered by the existing "/api/auth/"
 // prefix below.
+//
+// "/~offline" (PWA offline fallback, ad hoc Phase 4): the service
+// worker precaches this page's response the moment it installs
+// (public/sw.js's own `install` handler), which can happen before the
+// visitor has ever signed in. If this route required auth, that
+// precache fetch would 307 to `/login` and the service worker would
+// cache the LOGIN page as the "offline" fallback instead of the actual
+// offline message — public, so the cached snapshot is always the real
+// thing regardless of session state at install time.
+//
+// "/manifest.json", "/sw.js" (PWA conversion, ad hoc Phase 4): this
+// matcher (below) intercepts every request except `_next/static`,
+// `_next/image`, and `favicon.ico` — a real, verified bug caught live
+// (not assumed): without these two entries, both files 307-redirected
+// to `/login` for an unauthenticated request, which means Chrome's own
+// installability check (an anonymous fetch of the manifest) and
+// `navigator.serviceWorker.register("/sw.js")` (which receives an HTML
+// login page instead of JavaScript, a hard registration failure — MIME
+// type mismatch) would BOTH silently break the entire PWA feature.
+// `/icons/` (this feature's manifest icons + apple-touch-icon) gets the
+// identical treatment via the prefix list below, same reasoning.
 const PUBLIC_EXACT_PATHS = new Set([
   "/login",
   "/register",
   "/welcome",
   "/forgot-password",
+  "/~offline",
+  "/manifest.json",
+  "/sw.js",
   "/api/health",
   "/api/health/ready",
   "/api/cron",
@@ -72,6 +96,7 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/dead-mans-switch/recover/",
   "/reset-password/",
   "/verify-email/",
+  "/icons/",
 ];
 
 function isPublicPath(pathname: string): boolean {

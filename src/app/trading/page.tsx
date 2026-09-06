@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Badge } from "../../components/badge/badge";
-import { getMockPriceAgorot, getMockPriceHistory, getMockPriceUsdCents, listMockSymbols } from "../../lib/mock-market-data";
+import { getMockPriceAgorot, getMockPriceBarHistory, getMockPriceUsdCents, listMockSymbols } from "../../lib/mock-market-data";
 import { agorot, formatAgorot, multiplyAgorot, subtractAgorot } from "../../lib/money";
 import { nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
@@ -43,9 +43,12 @@ export default async function TradingPage({
 
   const priceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceAgorot(symbol, now, rateTable.USD)]));
   const nativePriceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceUsdCents(symbol, now)]));
-  const history = getMockPriceHistory(selectedSymbol, 30, now, rateTable.USD).map((point) => ({
-    date: point.date,
-    price: Number(point.price),
+  const bars = getMockPriceBarHistory(selectedSymbol, 30, now, rateTable.USD).map((bar) => ({
+    date: bar.date,
+    open: Number(bar.open),
+    high: Number(bar.high),
+    low: Number(bar.low),
+    close: Number(bar.close),
   }));
 
   const openHoldings = holdings.filter((holding) => holding.quantity.toNumber() > 0);
@@ -95,7 +98,7 @@ export default async function TradingPage({
             {formatAgorot(priceBySymbol.get(selectedSymbol) ?? agorot(0))}
           </p>
         </div>
-        <PriceChart history={history} />
+        <PriceChart bars={bars} />
         <div className="mt-3 flex flex-wrap gap-2">
           {symbols.map((symbol) => (
             <Link

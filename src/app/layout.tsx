@@ -1,11 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Rubik, IBM_Plex_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { CommandPalette } from "../components/CommandPalette";
 import { CopilotSidebar } from "../components/copilot/copilot-sidebar";
 import { MobileNav } from "../components/nav/mobile-nav";
 import { Sidebar } from "../components/nav/sidebar";
+import { ServiceWorkerRegistration } from "../components/pwa/service-worker-registration";
 import { ThemeInitScript } from "../components/theme/theme-init-script";
+import { PWA_THEME_COLOR } from "../lib/pwa-theme-color";
 import "./globals.css";
 
 const rubik = Rubik({
@@ -22,6 +24,31 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "PFW",
   description: "Personal finance operating system and simulated trading dashboard.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "PFW",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+};
+
+// `themeColor`/`colorScheme` were split out of `Metadata` into this
+// separate `Viewport` export in a recent Next major — `metadata.themeColor`
+// is deprecated (verified against this exact installed Next version's
+// own type declarations, not assumed from older docs). Matches
+// `manifest.json`'s own `theme_color` — the app's actual dark-navy brand
+// (`--pfw-bg`'s dark value), not `/trading`'s separately-fixed neutral
+// palette, since a PWA's theme color applies to the whole installed app,
+// not one subtree.
+export const viewport: Viewport = {
+  themeColor: PWA_THEME_COLOR,
 };
 
 // Reading a dynamic API (headers(), below) opts the whole app shell out of
@@ -49,6 +76,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <MobileNav />
         <CopilotSidebar />
         <CommandPalette nonce={nonce} />
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );

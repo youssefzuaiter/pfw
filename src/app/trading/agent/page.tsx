@@ -1,18 +1,26 @@
+import { getCurrentUser } from "../../../server/auth/current-user";
+import { listScenarioMetrics } from "../../../server/dal/scenario-metrics";
+import { AgentPredictedMoveChart } from "../_components/agent-predicted-move-chart";
 import { AgentTelemetryTerminal } from "../_components/agent-telemetry-terminal";
 import { TradingNav } from "../_components/trading-nav";
 
 export const instant = false;
 
 /**
- * A live view into the Tier-0 paper-trading agent's own FastAPI process
- * (~/paper-trader) — NOT a PFW/DAL screen. There is no server-side data
- * fetch here (no getCurrentUser()/DAL call): the agent's telemetry lives
- * in that OTHER process's memory, not this app's database, so the whole
- * page is one client component polling that process directly. See
- * AgentTelemetryTerminal's own doc comment and src/proxy.ts's connect-src
- * comment for the CORS/CSP wiring this requires.
+ * Two genuinely different data sources on one page, kept honestly
+ * distinct rather than blended: the live wake/evaluate/reject/execute
+ * event stream still comes from the Tier-0 agent's own FastAPI process
+ * (`AgentTelemetryTerminal`, unchanged — see its own doc comment), which
+ * this app's database has no record of at all. The new predicted-move
+ * chart below it (Phase 2, ad hoc) is the first read this page has ever
+ * done against PFW's own `ScenarioMetrics` table — the persisted,
+ * webhook-recorded history of every scenario the agent has evaluated,
+ * independent of whether that process happens to be running right now.
  */
-export default function AgentActivityPage() {
+export default async function AgentActivityPage() {
+  const user = await getCurrentUser();
+  const scenarioMetrics = await listScenarioMetrics(user.id);
+
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -27,6 +35,15 @@ export default function AgentActivityPage() {
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <AgentTelemetryTerminal />
+      </section>
+
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Predicted move % — history</h2>
+        <AgentPredictedMoveChart rows={scenarioMetrics} />
+        <p className="mt-2 text-xs text-muted">
+          Every scenario the agent has evaluated, recorded via its webhook to this app&rsquo;s own database — persists
+          across restarts of the FastAPI process above, unlike the live event stream.
+        </p>
       </section>
     </div>
   );

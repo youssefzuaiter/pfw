@@ -16,7 +16,19 @@ const TOKEN_DEFINITION_FILE = path.resolve(SRC_ROOT, "app/globals.css");
  * This app's own themed UI still goes through `--pfw-*` tokens
  * exclusively; this is the one legitimate exception, not a loophole.
  */
-const ALLOWED_HEX_FILES = [path.resolve(SRC_ROOT, "server/email/auth-emails.ts")];
+/**
+ * `lib/pwa-theme-color.ts` (PWA conversion, ad hoc Phase 4) — the same
+ * shape of exception: a `<meta name="theme-color">` value and
+ * `public/manifest.json`'s matching fields are both evaluated with no
+ * access to `globals.css`'s CSS custom properties at all, same
+ * reasoning `auth-emails.ts` already established. Kept in its own
+ * narrow file specifically so only this one small file needs the
+ * exception, not all of `layout.tsx`.
+ */
+const ALLOWED_HEX_FILES = [
+  path.resolve(SRC_ROOT, "server/email/auth-emails.ts"),
+  path.resolve(SRC_ROOT, "lib/pwa-theme-color.ts"),
+];
 
 // Matches #abc, #abcdef, #abcdef12 — but not longer runs of hex-looking
 // characters (e.g. git-style hashes) or URL fragment identifiers like

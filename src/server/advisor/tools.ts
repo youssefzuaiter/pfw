@@ -144,7 +144,7 @@ const getSpendingByCategory = defineTool({
   },
 });
 
-const RecentTransactionsSchema = z.object({
+export const RecentTransactionsSchema = z.object({
   limit: z.number().int().min(1).max(50).default(20),
   categoryName: z.string().trim().max(80).optional(),
   direction: z.enum(["income", "expense", "all"]).default("all"),

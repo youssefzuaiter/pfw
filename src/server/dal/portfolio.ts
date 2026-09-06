@@ -16,6 +16,55 @@ export async function listTrades(userId: string) {
   return withUserScope(userId, (tx) => tx.trade.findMany({ where: { userId }, orderBy: { executedAt: "desc" } }));
 }
 
+/**
+ * Every open (`quantity > 0`) HIFO lot across all of this user's
+ * holdings, oldest acquisition first — feeds the portfolio chart's
+ * "open cost basis by acquisition date" area series (Phase 2, ad hoc).
+ * Deliberately excludes fully-consumed lots (kept at `quantity: 0`,
+ * never deleted — see `HoldingLot`'s own schema doc comment): a
+ * liquidated lot's `costBasis` was already zeroed out by
+ * `applyHoldingLotTracking`, so including it would only ever contribute
+ * zero to the running sum, not a real historical data point.
+ */
+export async function listOpenHoldingLots(userId: string) {
+  return withUserScope(userId, (tx) =>
+    tx.holdingLot.findMany({
+      where: { userId, quantity: { gt: 0 } },
+      orderBy: { acquiredAt: "asc" },
+      select: { acquiredAt: true, costBasis: true },
+    }),
+  );
+}
+
+export type AgentTradeWinRate = {
+  settledSellCount: number;
+  winningSellCount: number;
+};
+
+/**
+ * "Win rate" here means: of this account's SETTLED SELL trades with a
+ * recorded realized P&L, what fraction closed with `realizedPnlAgorot >
+ * 0`. Deliberately scoped to every settled sell on the account, not
+ * exclusively ones the Tier-0 paper-trading agent itself placed — `Trade`
+ * has no column distinguishing an agent-submitted fill from one entered
+ * through `/trading`'s own interactive order form (both paths write the
+ * same table, see `paper-trades.ts`'s own doc comment), so a genuinely
+ * agent-only figure isn't derivable without a schema change. A PENDING
+ * trade (accepted but not yet filled) and a BUY (nothing realized yet)
+ * are both excluded, since neither has a `realizedPnlAgorot` to judge.
+ */
+export async function getAgentTradeWinRate(userId: string): Promise<AgentTradeWinRate> {
+  return withUserScope(userId, async (tx) => {
+    const settledSells = await tx.trade.findMany({
+      where: { userId, status: "SETTLED", side: "SELL", realizedPnlAgorot: { not: null } },
+      select: { realizedPnlAgorot: true },
+    });
+    const settledSellCount = settledSells.length;
+    const winningSellCount = settledSells.filter((trade) => (trade.realizedPnlAgorot ?? 0n) > 0n).length;
+    return { settledSellCount, winningSellCount };
+  });
+}
+
 /** A trade already recorded under this idempotency key, if any — the route checks this before executing, so a retried submission never re-executes. */
 export async function findTradeByIdempotencyKey(userId: string, idempotencyKey: string) {
   return withUserScope(userId, (tx) => tx.trade.findFirst({ where: { userId, idempotencyKey } }));
