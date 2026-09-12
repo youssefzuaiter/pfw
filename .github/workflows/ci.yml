@@ -30,7 +30,17 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17
+        # pgvector/pgvector:pg17, not plain postgres:17 — matches
+        # compose.yaml's own image (AGENTS.md §3cc). Migration
+        # 20260903100000_transaction_search_embedding runs `CREATE
+        # EXTENSION IF NOT EXISTS "vector"`, which the plain postgres
+        # image doesn't ship (`extension "vector" is not available`,
+        # confirmed live: this exact CI job has been failing at the
+        # migration step on every run since that migration landed,
+        # unrelated to whatever else a given push changes) — a real,
+        # pre-existing gap from when compose.yaml was updated but this
+        # workflow's own ephemeral Postgres wasn't.
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: pfw_local
           POSTGRES_USER: pfw_app
@@ -144,7 +154,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17
+        # pgvector/pgvector:pg17 — see the `test` job's identical service
+        # above for why (the `vector` extension migration).
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: pfw_local
           POSTGRES_USER: pfw_app
