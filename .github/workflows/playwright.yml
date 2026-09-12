@@ -27,7 +27,11 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17
+        # pgvector/pgvector:pg17, not plain postgres:17 — see ci.yml's
+        # identical fix/comment (AGENTS.md §3cc's `vector` extension
+        # migration; this workflow's ephemeral Postgres was never
+        # updated to match compose.yaml's own image either).
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: pfw_local
           POSTGRES_USER: pfw_app
