@@ -93,6 +93,21 @@ jobs:
       - name: Seed deterministic mock data
         run: npm run db:seed
 
+      # `tsconfig.json`'s own `include` references `.next/types/**/*.ts`
+      # (Next's generated route/layout param types — e.g.
+      # `src/app/layout.tsx`'s `LayoutProps<"/">`), which don't exist on
+      # a fresh checkout until something generates them. This job's own
+      # later `Build (production)` step would normally produce them too,
+      # but that runs AFTER Typecheck — confirmed live, not assumed: a
+      # fresh `rm -rf .next && npx tsc --noEmit` reproduces
+      # `error TS2304: Cannot find name 'LayoutProps'` locally, and
+      # `npx next typegen` (generates types without a full build) fixes
+      # it. This bug was masked on every prior CI run by the earlier
+      # `vector`-extension migration failure above, which meant CI never
+      # got this far until that was fixed.
+      - name: Generate Next.js route/layout types
+        run: npx next typegen
+
       - name: Typecheck
         run: npm run typecheck
 
