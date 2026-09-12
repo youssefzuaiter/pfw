@@ -67,16 +67,16 @@ export function RecoveryPortal({ token, initialStatus }: { token: string; initia
 
   if (recoveredDocuments) {
     return (
-      <section className="flex flex-col gap-4 rounded-lg border-2 border-positive bg-surface p-4">
+      <section className="flex flex-col gap-4 rounded-lg border-2 border-positive bg-slate-900 p-4">
         <Badge variant="positive">Vault recovered</Badge>
-        <p className="text-sm text-muted">
+        <p className="text-sm text-slate-400">
           Enough beneficiaries submitted their shares. These documents are shown once — save them now.
         </p>
         <ul className="flex flex-col gap-3">
           {recoveredDocuments.map((doc) => (
-            <li key={doc.id} className="rounded-md border border-border bg-bg p-3">
-              <p className="text-sm font-medium text-fg">{doc.title}</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{doc.plaintext}</p>
+            <li key={doc.id} className="rounded-md border border-slate-800/80 bg-slate-800 p-3">
+              <p className="text-sm font-medium text-slate-100">{doc.title}</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-slate-400">{doc.plaintext}</p>
             </li>
           ))}
         </ul>
@@ -86,27 +86,27 @@ export function RecoveryPortal({ token, initialStatus }: { token: string; initia
 
   if (!status.found) {
     return (
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
         <p className="text-sm text-negative">This recovery link is invalid or has been revoked.</p>
       </section>
     );
   }
 
   return (
-    <section className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4">
-      <p className="text-sm text-fg">
+    <section className="flex flex-col gap-4 rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+      <p className="text-sm text-slate-100">
         Hello, <span className="font-medium">{status.beneficiaryLabel}</span>.
       </p>
 
       {status.switchStatus !== "TRIGGERED" && status.switchStatus !== "RECOVERED" && (
-        <p className="text-sm text-muted">
+        <p className="text-sm text-slate-400">
           This vault has not been opened for recovery yet — nothing to do here right now. Check back if you have
           reason to believe the owner is unreachable.
         </p>
       )}
 
       {status.switchStatus === "RECOVERED" && (
-        <p className="text-sm text-muted">This vault has already been recovered by other beneficiaries.</p>
+        <p className="text-sm text-slate-400">This vault has already been recovered by other beneficiaries.</p>
       )}
 
       {status.switchStatus === "TRIGGERED" && (
@@ -114,12 +114,12 @@ export function RecoveryPortal({ token, initialStatus }: { token: string; initia
           <Badge variant="critical" pulse>
             Recovery open
           </Badge>
-          <p className="text-sm text-muted">
+          <p className="text-sm text-slate-400">
             {status.submittedShareCount} of {status.thresholdShares} required shares submitted so far.
             {status.hasSubmitted && " Your share has already been recorded."}
           </p>
           <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-            <label htmlFor="recovery-share" className="text-xs font-medium text-muted">
+            <label htmlFor="recovery-share" className="text-xs font-medium text-slate-400">
               Your share value
             </label>
             <textarea
@@ -127,7 +127,7 @@ export function RecoveryPortal({ token, initialStatus }: { token: string; initia
               rows={3}
               value={share}
               onChange={(event) => setShare(event.target.value)}
-              className="rounded-md border border-border bg-bg px-2 py-1 font-tabular-figures text-xs text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="dms-share1:..."
             />
             <button

@@ -50,11 +50,11 @@ export function EmailVerificationPanel({ initialVerified }: { initialVerified: b
         type="button"
         onClick={handleResend}
         disabled={isBusy}
-        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-bg px-3 py-1.5 text-xs font-medium text-fg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isBusy && <Spinner />} Resend verification email
       </button>
-      {message && <p className="text-xs text-muted">{message}</p>}
+      {message && <p className="text-xs text-slate-400">{message}</p>}
     </div>
   );
 }

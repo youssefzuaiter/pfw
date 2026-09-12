@@ -37,46 +37,47 @@ export default async function TransactionRulesPage() {
   const [rules, categories] = await Promise.all([listTransactionRules(user.id), listCategories(user.id)]);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-semibold text-fg">Transaction rules</h1>
-          <p className="mt-1 text-sm text-muted">
+          <h1 className="font-display text-xl font-semibold text-slate-100">Transaction rules</h1>
+          <p className="mt-1 text-sm text-slate-400">
             Deterministic rules run first, on both CSV import and manual entry — before the automatic categorization
             engine ever sees a transaction.
           </p>
         </div>
         <Link
           href="/transactions"
-          className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           ← Transactions
         </Link>
       </div>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">New rule</h2>
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">New rule</h2>
         <CreateRuleForm categories={categories.map((c) => ({ slug: c.slug, name: c.name }))} />
       </section>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Rules ({rules.length})</h2>
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Rules ({rules.length})</h2>
         {rules.length === 0 ? (
-          <p className="text-sm text-muted">No rules yet — every transaction goes straight to the categorization engine.</p>
+          <p className="text-sm text-slate-400">No rules yet — every transaction goes straight to the categorization engine.</p>
         ) : (
           <ul className="flex flex-col gap-4">
             {rules.map((rule) => (
               <li
                 key={rule.id}
-                className={`flex flex-wrap items-start justify-between gap-3 border-t border-border pt-3 first:border-t-0 first:pt-0 ${
+                className={`flex flex-wrap items-start justify-between gap-3 border-t border-slate-800/80 pt-3 first:border-t-0 first:pt-0 ${
                   rule.isActive ? "" : "opacity-60"
                 }`}
               >
                 <div>
-                  <p className="font-medium text-fg">
-                    {rule.name} <span className="font-tabular-figures text-xs text-muted">priority {rule.priority}</span>
+                  <p className="font-medium text-slate-100">
+                    {rule.name}{" "}
+                    <span className="font-tabular-figures text-xs tracking-tight text-slate-400">priority {rule.priority}</span>
                   </p>
-                  <p className="mt-1 text-xs text-muted">
+                  <p className="mt-1 text-xs text-slate-400">
                     If {rule.conditions.map(summarizeCondition).join(" AND ")}, then {rule.actions.map(summarizeAction).join("; ")}.
                   </p>
                 </div>

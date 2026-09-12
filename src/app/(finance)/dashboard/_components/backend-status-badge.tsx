@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<BackendStatus, string> = {
 };
 
 const DOT_CLASS: Record<BackendStatus, string> = {
-  checking: "bg-muted",
+  checking: "bg-slate-500",
   online: "bg-positive uv-badge-pulse",
   offline: "bg-negative",
 };
@@ -58,9 +58,9 @@ export function BackendStatusBadge() {
   }, []);
 
   return (
-    <div className="flex items-center gap-2 text-xs font-medium text-muted" role="status">
+    <div className="flex items-center gap-2 text-xs font-medium text-slate-400" role="status">
       <span aria-hidden="true" className={`h-2 w-2 rounded-full ${DOT_CLASS[status]}`} />
-      <span className={status === "online" ? "text-positive" : status === "offline" ? "text-negative" : "text-muted"}>
+      <span className={status === "online" ? "text-positive" : status === "offline" ? "text-negative" : "text-slate-400"}>
         {STATUS_LABEL[status]}
       </span>
     </div>

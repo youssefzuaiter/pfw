@@ -15,10 +15,10 @@ export default async function RecoveryPortalPage({ params }: { params: Promise<{
   const status = await getRecoveryPortalStatus(token);
 
   return (
-    <div className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-6 md:px-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-fg">Emergency Vault Recovery</h1>
-        <p className="mt-1 text-sm text-muted">
+    <div className="mx-auto flex max-w-xl flex-col gap-4 px-4 py-4 md:px-6">
+      <div className="border-b border-slate-800/80 pb-3">
+        <h1 className="font-display text-xl font-semibold text-slate-100">Emergency Vault Recovery</h1>
+        <p className="mt-1 text-sm text-slate-400">
           You&apos;ve received a recovery link for someone&apos;s Emergency Vault. You&apos;ll also need the share
           value they gave you separately — this link alone cannot unlock anything.
         </p>

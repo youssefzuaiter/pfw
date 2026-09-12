@@ -204,19 +204,19 @@ export function VaultSetupWizard() {
 
   if (distribution) {
     return (
-      <section className="flex flex-col gap-4 rounded-lg border-2 border-negative bg-surface p-4">
-        <h2 className="font-display text-lg font-semibold text-fg">Distribute these now — they will never be shown again</h2>
-        <p className="text-sm text-muted">
+      <section className="flex flex-col gap-4 rounded-lg border-2 border-negative bg-slate-900 p-4">
+        <h2 className="font-display text-lg font-semibold text-slate-100">Distribute these now — they will never be shown again</h2>
+        <p className="text-sm text-slate-400">
           The server never stored your master passphrase, the raw key, or any of these shares. Give each beneficiary
           their own recovery link AND their own share value, through two different channels if possible (e.g. the
           link by email, the share printed on paper) — anyone with only one of the two cannot unlock anything.
         </p>
         <ul className="flex flex-col gap-3">
           {distribution.map((packet) => (
-            <li key={packet.label} className="rounded-md border border-border bg-bg p-3">
-              <p className="text-sm font-medium text-fg">{packet.label}</p>
-              <p className="mt-1 break-all font-tabular-figures text-xs text-muted">Link: {packet.recoveryUrl}</p>
-              <p className="mt-1 break-all font-tabular-figures text-xs text-muted">Share: {packet.share}</p>
+            <li key={packet.label} className="rounded-md border border-slate-800/80 bg-slate-800 p-3">
+              <p className="text-sm font-medium text-slate-100">{packet.label}</p>
+              <p className="mt-1 break-all font-tabular-figures text-xs text-slate-400">Link: {packet.recoveryUrl}</p>
+              <p className="mt-1 break-all font-tabular-figures text-xs text-slate-400">Share: {packet.share}</p>
             </li>
           ))}
         </ul>
@@ -232,9 +232,9 @@ export function VaultSetupWizard() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-5 rounded-lg border border-border bg-surface p-4">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5 rounded-lg border border-slate-800/80 bg-slate-900 p-4">
       <div className="flex flex-col gap-1">
-        <label htmlFor="dms-passphrase" className="text-xs font-medium text-muted">
+        <label htmlFor="dms-passphrase" className="text-xs font-medium text-slate-400">
           Recovery passphrase
         </label>
         <input
@@ -243,11 +243,11 @@ export function VaultSetupWizard() {
           autoComplete="new-password"
           value={passphrase}
           onChange={(event) => setPassphrase(event.target.value)}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="dms-passphrase-confirm" className="text-xs font-medium text-muted">
+        <label htmlFor="dms-passphrase-confirm" className="text-xs font-medium text-slate-400">
           Confirm passphrase
         </label>
         <input
@@ -256,12 +256,12 @@ export function VaultSetupWizard() {
           autoComplete="new-password"
           value={confirmPassphrase}
           onChange={(event) => setConfirmPassphrase(event.target.value)}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
 
       <fieldset className="flex flex-col gap-2">
-        <legend className="text-xs font-medium text-muted">Beneficiaries</legend>
+        <legend className="text-xs font-medium text-slate-400">Beneficiaries</legend>
         {beneficiaries.map((b, index) => (
           <div key={index} className="flex items-center gap-2">
             <input
@@ -269,14 +269,14 @@ export function VaultSetupWizard() {
               placeholder={`Beneficiary ${index + 1} (e.g. "Spouse — Dana")`}
               value={b.label}
               onChange={(event) => updateBeneficiaryLabel(index, event.target.value)}
-              className="flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             {beneficiaries.length > 2 && (
               <button
                 type="button"
                 data-index={index}
                 onClick={handleRemoveBeneficiaryClick}
-                className="rounded-md px-2 py-1 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md px-2 py-1 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Remove
               </button>
@@ -286,7 +286,7 @@ export function VaultSetupWizard() {
         <button
           type="button"
           onClick={addBeneficiary}
-          className="uv-btn-press self-start rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press self-start rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           + Add beneficiary
         </button>
@@ -294,7 +294,7 @@ export function VaultSetupWizard() {
 
       <div className="flex flex-wrap gap-4">
         <div className="flex flex-col gap-1">
-          <label htmlFor="dms-threshold" className="text-xs font-medium text-muted">
+          <label htmlFor="dms-threshold" className="text-xs font-medium text-slate-400">
             Shares required to unlock
           </label>
           <input
@@ -304,11 +304,11 @@ export function VaultSetupWizard() {
             max={beneficiaries.length}
             value={thresholdShares}
             onChange={(event) => setThresholdShares(Number(event.target.value))}
-            className="w-24 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-24 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor="dms-inactivity" className="text-xs font-medium text-muted">
+          <label htmlFor="dms-inactivity" className="text-xs font-medium text-slate-400">
             Inactive days before grace period
           </label>
           <input
@@ -317,11 +317,11 @@ export function VaultSetupWizard() {
             min={1}
             value={inactivityThresholdDays}
             onChange={(event) => setInactivityThresholdDays(Number(event.target.value))}
-            className="w-24 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-24 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor="dms-grace" className="text-xs font-medium text-muted">
+          <label htmlFor="dms-grace" className="text-xs font-medium text-slate-400">
             Grace period days
           </label>
           <input
@@ -330,29 +330,29 @@ export function VaultSetupWizard() {
             min={1}
             value={gracePeriodDays}
             onChange={(event) => setGracePeriodDays(Number(event.target.value))}
-            className="w-24 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-24 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
       </div>
 
       <fieldset className="flex flex-col gap-2">
-        <legend className="text-xs font-medium text-muted">Emergency documents (optional — you can add more later)</legend>
+        <legend className="text-xs font-medium text-slate-400">Emergency documents (optional — you can add more later)</legend>
         {documents.map((d, index) => (
-          <div key={index} className="flex flex-col gap-1 rounded-md border border-border p-2">
+          <div key={index} className="flex flex-col gap-1 rounded-md border border-slate-800/80 p-2">
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 placeholder="Title (e.g. Where the will is)"
                 value={d.title}
                 onChange={(event) => updateDocument(index, "title", event.target.value)}
-                className="flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               {documents.length > 1 && (
                 <button
                   type="button"
                   data-index={index}
                   onClick={handleRemoveDocumentClick}
-                  className="rounded-md px-2 py-1 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="rounded-md px-2 py-1 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   Remove
                 </button>
@@ -363,20 +363,20 @@ export function VaultSetupWizard() {
               rows={3}
               value={d.content}
               onChange={(event) => updateDocument(index, "content", event.target.value)}
-              className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
         ))}
         <button
           type="button"
           onClick={addDocument}
-          className="uv-btn-press self-start rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press self-start rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           + Add document
         </button>
       </fieldset>
 
-      <p className="text-xs text-muted">
+      <p className="text-xs text-slate-400">
         This passphrase and every generated share exist only in your browser during setup. If forgotten, and fewer
         than the threshold of beneficiaries can be reached, the vault becomes permanently unrecoverable — the same
         honest trade-off every zero-knowledge scheme in this app makes.

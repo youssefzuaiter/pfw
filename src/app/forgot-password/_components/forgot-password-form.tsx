@@ -40,7 +40,7 @@ export function ForgotPasswordForm() {
 
   if (submitted) {
     return (
-      <p className="mt-6 text-sm text-fg">
+      <p className="mt-6 text-sm text-slate-100">
         If an account exists for <span className="font-medium">{email}</span>, a reset link has been sent. Check your
         inbox — the link expires in 15 minutes.
       </p>
@@ -50,7 +50,7 @@ export function ForgotPasswordForm() {
   return (
     <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <label htmlFor="forgot-password-email" className="text-xs font-medium text-muted">
+        <label htmlFor="forgot-password-email" className="text-xs font-medium text-slate-400">
           Email
         </label>
         <input
@@ -60,7 +60,7 @@ export function ForgotPasswordForm() {
           required
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button

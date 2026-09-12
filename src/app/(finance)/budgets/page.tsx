@@ -69,9 +69,9 @@ export default async function BudgetsPage({
     }));
 
     return (
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
+      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-display text-2xl font-semibold text-fg">{activeMembership.group.name}</h1>
+          <h1 className="font-display text-xl font-semibold text-slate-100">{activeMembership.group.name}</h1>
           <HouseholdNav basePath="/budgets" groups={groupOptions} activeGroupId={activeMembership.group.id} />
         </div>
 
@@ -130,20 +130,20 @@ export default async function BudgetsPage({
     });
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-semibold text-fg">Budgets</h1>
+        <h1 className="font-display text-xl font-semibold text-slate-100">Budgets</h1>
         <HouseholdNav basePath="/budgets" groups={groupOptions} activeGroupId={null} />
       </div>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-muted">Available to budget</h2>
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Available to budget</h2>
         <p
-          className={`mt-1 font-tabular-figures text-3xl font-semibold ${availableAgorot < 0 ? "text-negative" : "text-positive"}`}
+          className={`mt-1 font-tabular-figures text-3xl font-semibold tracking-tight ${availableAgorot < 0 ? "text-negative" : "text-positive"}`}
         >
           {formatAgorot(availableAgorot)}
         </p>
-        <p className="mt-1 text-xs text-muted">
+        <p className="mt-1 text-xs text-slate-400">
           Real income received through {month}, minus everything allocated so far — every ₪ should eventually be
           assigned somewhere.
         </p>
@@ -156,12 +156,12 @@ export default async function BudgetsPage({
       </ul>
 
       {envelopeRows.length === 0 && (
-        <p className="text-sm text-muted">No categories to budget yet — create one under Categories first.</p>
+        <p className="text-sm text-slate-400">No categories to budget yet — create one under Categories first.</p>
       )}
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Household Spaces</h2>
-        <p className="mb-3 text-sm text-muted">
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Household Spaces</h2>
+        <p className="mb-3 text-sm text-slate-400">
           Create a household to share specific envelopes, accounts, or categories with other people — your other
           personal data (transactions, goals, debts, and everything else) always stays strictly yours.
         </p>

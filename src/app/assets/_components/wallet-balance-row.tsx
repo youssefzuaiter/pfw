@@ -66,20 +66,20 @@ export function WalletBalanceRow({
   }
 
   return (
-    <li className="rounded-lg border border-border bg-surface p-4">
+    <li className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-medium text-fg">
-            {label} <span className="text-xs text-muted">({CHAIN_LABEL[chainId] ?? `Chain ${chainId}`})</span>
+          <p className="font-medium text-slate-100">
+            {label} <span className="text-xs text-slate-400">({CHAIN_LABEL[chainId] ?? `Chain ${chainId}`})</span>
           </p>
-          <p className="font-tabular-figures text-xs text-muted">{shortenEvmAddress(address)}</p>
+          <p className="font-tabular-figures tracking-tight text-xs text-slate-400">{shortenEvmAddress(address)}</p>
         </div>
         <button
           type="button"
           data-wallet-id={id}
           onClick={handleDeleteClick}
           disabled={isDeleting}
-          className="uv-btn-press flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="uv-btn-press flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           {isDeleting && <Spinner />} Remove
         </button>
@@ -88,9 +88,9 @@ export function WalletBalanceRow({
       {rpcError ? (
         <p className="mt-2 text-xs text-negative">Couldn&apos;t fetch a live balance right now — {rpcError}</p>
       ) : (
-        <div className="mt-2 flex flex-wrap items-baseline gap-2 font-tabular-figures">
-          <span className="text-lg font-semibold text-fg">{weiToEtherString(BigInt(balanceWei ?? "0"))} ETH</span>
-          <span className="text-sm text-muted">≈ {formatAgorot(agorot(Math.round(valueAgorot)))}</span>
+        <div className="mt-2 flex flex-wrap items-baseline gap-2 font-tabular-figures tracking-tight">
+          <span className="text-lg font-semibold text-slate-100">{weiToEtherString(BigInt(balanceWei ?? "0"))} ETH</span>
+          <span className="text-sm text-slate-400">≈ {formatAgorot(agorot(Math.round(valueAgorot)))}</span>
         </div>
       )}
 

@@ -36,7 +36,7 @@
 // banner is a pure connectivity indicator, mounted app-wide, and
 // entirely independent of this cache.
 
-const CACHE_NAME = "pfw-offline-v2";
+const CACHE_NAME = "pfw-offline-v4";
 const OFFLINE_URL = "/~offline";
 const OFFLINE_ICON_URL = "/icons/icon-192.png";
 

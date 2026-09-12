@@ -53,7 +53,7 @@ export function RegisterForm() {
   return (
     <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <label htmlFor="register-name" className="text-xs font-medium text-muted">
+        <label htmlFor="register-name" className="text-xs font-medium text-slate-400">
           Name
         </label>
         <input
@@ -62,11 +62,11 @@ export function RegisterForm() {
           required
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="register-email" className="text-xs font-medium text-muted">
+        <label htmlFor="register-email" className="text-xs font-medium text-slate-400">
           Email
         </label>
         <input
@@ -76,11 +76,11 @@ export function RegisterForm() {
           required
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="register-password" className="text-xs font-medium text-muted">
+        <label htmlFor="register-password" className="text-xs font-medium text-slate-400">
           Password
         </label>
         <input
@@ -91,9 +91,9 @@ export function RegisterForm() {
           minLength={8}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
-        <p className="text-xs text-muted">At least 8 characters.</p>
+        <p className="text-xs text-slate-400">At least 8 characters.</p>
       </div>
       <button
         type="submit"

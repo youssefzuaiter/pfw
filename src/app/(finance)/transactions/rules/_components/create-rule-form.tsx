@@ -170,7 +170,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
         <div className="flex flex-1 flex-col gap-1">
-          <label htmlFor="rule-name" className="text-xs font-medium text-muted">
+          <label htmlFor="rule-name" className="text-xs font-medium text-slate-400">
             Rule name
           </label>
           <input
@@ -178,11 +178,11 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="e.g. Netflix -> Entertainment"
-            className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex w-28 flex-col gap-1">
-          <label htmlFor="rule-priority" className="text-xs font-medium text-muted">
+          <label htmlFor="rule-priority" className="text-xs font-medium text-slate-400">
             Priority
           </label>
           <input
@@ -192,20 +192,20 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
             max={10000}
             value={priority}
             onChange={(event) => setPriority(event.target.value)}
-            className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-medium text-muted">Conditions (all must match)</p>
+        <p className="text-xs font-medium text-slate-400">Conditions (all must match)</p>
         {conditions.map((condition, index) => (
           <div key={index} className="flex flex-wrap items-center gap-2">
             <select
               data-index={index}
               value={condition.field}
               onChange={handleConditionFieldChange}
-              className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1.5 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="merchantName">Merchant name</option>
               <option value="description">Description</option>
@@ -215,7 +215,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
               data-index={index}
               value={condition.operator}
               onChange={handleConditionOperatorChange}
-              className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1.5 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {OPERATORS_BY_FIELD[condition.field].map((op) => (
                 <option key={op.value} value={op.value}>
@@ -228,14 +228,14 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
               value={condition.value}
               onChange={handleConditionValueChange}
               placeholder={condition.field === "amount" ? "e.g. -50.00" : "e.g. Netflix"}
-              className="min-w-[160px] flex-1 rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             {conditions.length > 1 && (
               <button
                 type="button"
                 data-index={index}
                 onClick={handleRemoveCondition}
-                className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs text-muted hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Remove
               </button>
@@ -245,21 +245,21 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
         <button
           type="button"
           onClick={handleAddCondition}
-          className="uv-btn-press self-start rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press self-start rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           + Add condition
         </button>
       </div>
 
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-medium text-muted">Then</p>
+        <p className="text-xs font-medium text-slate-400">Then</p>
         {actions.map((action, index) => (
           <div key={index} className="flex flex-wrap items-center gap-2">
             <select
               data-index={index}
               value={action.type}
               onChange={handleActionTypeChange}
-              className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1.5 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="categorize">Set category</option>
               <option value="rename">Rename merchant</option>
@@ -270,7 +270,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
                 data-index={index}
                 value={action.categorySlug}
                 onChange={handleActionCategoryChange}
-                className="min-w-[160px] flex-1 rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1.5 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {categories.length === 0 && <option value="">No categories yet</option>}
                 {categories.map((category) => (
@@ -286,11 +286,11 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
                 value={action.renameValue}
                 onChange={handleActionRenameValueChange}
                 placeholder="New merchant name"
-                className="min-w-[160px] flex-1 rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             )}
             {action.type === "flag" && (
-              <label className="flex items-center gap-2 text-sm text-fg">
+              <label className="flex items-center gap-2 text-sm text-slate-100">
                 <input data-index={index} type="checkbox" checked={action.flagValue} onChange={handleActionFlagChange} />
                 Needs review
               </label>
@@ -300,7 +300,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
                 type="button"
                 data-index={index}
                 onClick={handleRemoveAction}
-                className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs text-muted hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Remove
               </button>
@@ -310,7 +310,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
         <button
           type="button"
           onClick={handleAddAction}
-          className="uv-btn-press self-start rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press self-start rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           + Add action
         </button>
@@ -320,7 +320,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
         <button
           type="submit"
           disabled={isSubmitting || !isValid}
-          className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="uv-btn-press flex items-center gap-2 rounded-md border border-transparent bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           {isSubmitting && <Spinner />}
           {isSubmitting ? "Creating…" : "Create rule"}

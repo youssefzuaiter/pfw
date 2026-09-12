@@ -58,9 +58,9 @@ export function LiquidityRunwayCard({
   const percent = runwayDays === null ? 100 : Math.min(100, (runwayDays / TARGET_RUNWAY_DAYS) * 100);
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="liquidity-runway-heading">
+    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="liquidity-runway-heading">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 id="liquidity-runway-heading" className="text-sm font-medium uppercase tracking-wide text-muted">
+        <h2 id="liquidity-runway-heading" className="text-xs font-medium uppercase tracking-wide text-slate-400">
           Liquidity Runway
         </h2>
         <Badge variant={health.badge} pulse={health.badge === "critical"}>
@@ -76,24 +76,24 @@ export function LiquidityRunwayCard({
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
         <div>
-          <dt className="text-xs text-muted">Available (liquid + semi-liquid)</dt>
-          <dd className="font-tabular-figures font-medium text-fg">{formatAgorot(availableAgorot)}</dd>
+          <dt className="text-xs text-slate-400">Available (liquid + semi-liquid)</dt>
+          <dd className="font-tabular-figures font-medium tracking-tight text-slate-100">{formatAgorot(availableAgorot)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">Monthly burn rate</dt>
-          <dd className="font-tabular-figures font-medium text-fg">{formatAgorot(monthlyBurnRateAgorot)}</dd>
+          <dt className="text-xs text-slate-400">Monthly burn rate</dt>
+          <dd className="font-tabular-figures font-medium tracking-tight text-slate-100">{formatAgorot(monthlyBurnRateAgorot)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">— of which liquid (cash)</dt>
-          <dd className="font-tabular-figures text-muted">{formatAgorot(liquidAgorot)}</dd>
+          <dt className="text-xs text-slate-400">— of which liquid (cash)</dt>
+          <dd className="font-tabular-figures tracking-tight text-slate-400">{formatAgorot(liquidAgorot)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">— of which semi-liquid (equities)</dt>
-          <dd className="font-tabular-figures text-muted">{formatAgorot(semiLiquidAgorot)}</dd>
+          <dt className="text-xs text-slate-400">— of which semi-liquid (equities)</dt>
+          <dd className="font-tabular-figures tracking-tight text-slate-400">{formatAgorot(semiLiquidAgorot)}</dd>
         </div>
       </dl>
 
-      <p className="mt-3 text-xs text-muted">
+      <p className="mt-3 text-xs text-slate-400">
         Based on {BURN_SOURCE_LABEL[burnRateSource]}. Illiquid assets (property, vehicles, locked retirement
         accounts) are excluded — they can&apos;t fund next month&apos;s bills.
       </p>

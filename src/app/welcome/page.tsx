@@ -12,11 +12,11 @@ export default function WelcomePage() {
     <div className="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-10 md:px-6 md:py-16">
       <div className="grid items-center gap-10 md:grid-cols-2 md:gap-16">
         <div className="flex flex-col gap-6">
-          <p className="text-sm font-medium uppercase tracking-wide text-muted">Personal finance, one ledger</p>
-          <h1 className="font-display text-4xl font-semibold text-fg md:text-5xl">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Personal finance, one ledger</p>
+          <h1 className="font-display text-4xl font-semibold text-slate-100 md:text-5xl">
             Every shekel, every debt, every trade — in one view.
           </h1>
-          <p className="max-w-prose text-base text-muted">
+          <p className="max-w-prose text-base text-slate-400">
             PFW tracks spending, budgets, goals, debts, and a simulated equities desk against your real financial
             picture, with an AI advisor that only ever reads your ledger — never guesses at it.
           </p>

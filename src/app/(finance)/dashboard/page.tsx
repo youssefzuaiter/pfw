@@ -53,9 +53,9 @@ export default async function DashboardPage() {
   );
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-semibold text-fg">Dashboard</h1>
+    <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 md:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+        <h1 className="font-display text-xl font-semibold text-slate-100">Dashboard</h1>
         <BackendStatusBadge />
       </div>
 
@@ -63,7 +63,7 @@ export default async function DashboardPage() {
 
       <SpendingAnomalyAlert transactions={spendingAnomaly.transactions} windowEndDateKey={spendingAnomaly.windowEndDateKey} />
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <NetWorthHero netWorth={data.netWorth} history={data.netWorthHistory} />
         <AttentionFeed insights={data.insights} />
       </div>
@@ -77,15 +77,15 @@ export default async function DashboardPage() {
         burnRateSource={liquidityRunway.burnRate.source}
       />
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         <HouseholdSummary households={households} />
         <DeadMansSwitchSummary isSetUp={vaultStatus.isSetUp} status={vaultStatus.status} />
       </div>
 
       <OpenBankingSyncCard data={openBankingSync} />
 
-      <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="cash-flow-heading">
-        <h2 id="cash-flow-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="cash-flow-heading">
+        <h2 id="cash-flow-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">
           60-day cash-flow forecast
         </h2>
         <CashFlowChart
@@ -99,16 +99,16 @@ export default async function DashboardPage() {
         dailyHistory={runwayForecast.dailyHistory}
       />
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="category-spend-heading">
-          <h2 id="category-spend-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
+      <div className="grid gap-4 md:grid-cols-2">
+        <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="category-spend-heading">
+          <h2 id="category-spend-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">
             Category spending — this month
           </h2>
           <CategoryDonut breakdown={data.categorySpendBreakdown.map((c) => ({ categoryName: c.categoryName, amount: c.amount }))} />
         </section>
 
-        <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="income-expense-heading">
-          <h2 id="income-expense-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
+        <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="income-expense-heading">
+          <h2 id="income-expense-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">
             Income vs. expense
           </h2>
           <IncomeExpenseChart

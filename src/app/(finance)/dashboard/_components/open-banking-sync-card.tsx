@@ -11,9 +11,9 @@ import type { OpenBankingSyncData } from "../../../../server/analytics/build-ope
  */
 export function OpenBankingSyncCard({ data }: { data: OpenBankingSyncData }) {
   return (
-    <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="open-banking-sync-heading">
+    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="open-banking-sync-heading">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 id="open-banking-sync-heading" className="text-sm font-medium uppercase tracking-wide text-muted">
+        <h2 id="open-banking-sync-heading" className="text-xs font-medium uppercase tracking-wide text-slate-400">
           Open Banking Sync
         </h2>
         <Link
@@ -24,7 +24,7 @@ export function OpenBankingSyncCard({ data }: { data: OpenBankingSyncData }) {
         </Link>
       </div>
       {data.connectionCount === 0 ? (
-        <p className="text-sm text-muted">
+        <p className="text-sm text-slate-400">
           No European bank connections yet.{" "}
           <Link
             href="/settings/open-banking"
@@ -46,7 +46,7 @@ export function OpenBankingSyncCard({ data }: { data: OpenBankingSyncData }) {
             </Badge>
           )}
           {data.mostRecentSyncIso && (
-            <span className="text-xs text-muted">last synced {new Date(data.mostRecentSyncIso).toLocaleString()}</span>
+            <span className="text-xs text-slate-400">last synced {new Date(data.mostRecentSyncIso).toLocaleString()}</span>
           )}
         </div>
       )}

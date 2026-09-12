@@ -12,9 +12,9 @@ export default async function CategoriesPage() {
   const categories = await listAllCategories(user.id);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
-      <h1 className="font-display text-2xl font-semibold text-fg">Categories</h1>
-      <section className="rounded-lg border border-border bg-surface p-4">
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
+      <h1 className="font-display text-xl font-semibold text-slate-100">Categories</h1>
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
         <CreateCategoryForm />
       </section>
       {/*
@@ -26,13 +26,13 @@ export default async function CategoriesPage() {
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {categories.map((category) => (
           <li key={category.id}>
-            <TiltCard className="flex h-full flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4">
+            <TiltCard className="flex h-full flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800/80 bg-slate-900 p-4">
               <div>
-                <p className="flex items-center gap-2 font-medium text-fg">
+                <p className="flex items-center gap-2 font-medium text-slate-100">
                   {category.name}
                   {category.archivedAt && <Badge variant="neutral">Archived</Badge>}
                 </p>
-                <p className="text-xs text-muted">slug: {category.slug}</p>
+                <p className="text-xs text-slate-400">slug: {category.slug}</p>
               </div>
               <CategoryRowActions
                 category={{

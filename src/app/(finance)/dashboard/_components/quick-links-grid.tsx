@@ -34,19 +34,28 @@ const QUICK_LINKS: QuickLink[] = [
   { href: "/trading/tax", label: "Tax Simulation", icon: Receipt },
 ];
 
+/**
+ * Condensed into a single-row, low-height toolbar (institutional-terminal
+ * pass) — the original vertical icon-over-label grid of large `p-4` cards
+ * took up a full screenful of vertical space above the fold for what is,
+ * functionally, a row of six links; this gives that real estate back to
+ * the Net Worth chart and Attention Feed immediately below. Same links,
+ * same order, same icons, same destinations — only the container/item
+ * markup changed.
+ */
 export function QuickLinksGrid() {
   return (
-    <nav aria-label="Quick links" className="grid grid-cols-2 gap-3 md:grid-cols-3">
+    <nav aria-label="Quick links" className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 pb-3">
       {QUICK_LINKS.map((link) => {
         const Icon = link.icon;
         return (
           <Link
             key={link.href}
             href={link.href}
-            className="flex flex-col items-center gap-2 rounded-lg border border-border bg-surface p-4 text-center transition-colors hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-700 hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Icon className="h-6 w-6 text-accent" aria-hidden="true" />
-            <span className="text-sm font-medium text-fg">{link.label}</span>
+            <Icon className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+            {link.label}
           </Link>
         );
       })}

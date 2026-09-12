@@ -69,16 +69,16 @@ export function EnvelopeRow({
   }
 
   return (
-    <li className="rounded-lg border border-border bg-surface p-4">
+    <li className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-medium text-fg">{envelope.categoryName}</p>
+          <p className="font-medium text-slate-100">{envelope.categoryName}</p>
           <p
-            className={`font-tabular-figures text-lg font-semibold ${envelope.balanceIsNegative ? "text-negative" : "text-positive"}`}
+            className={`font-tabular-figures text-lg font-semibold tracking-tight ${envelope.balanceIsNegative ? "text-negative" : "text-positive"}`}
           >
             {envelope.balanceFormatted}
           </p>
-          <p className="text-xs text-muted">rolling balance</p>
+          <p className="text-xs text-slate-400">rolling balance</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <form onSubmit={handleSubmit} className="flex items-center gap-2">
@@ -90,12 +90,12 @@ export function EnvelopeRow({
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
               inputMode="decimal"
-              className="w-28 rounded-md border border-border bg-bg px-2 py-1 text-right text-sm font-tabular-figures text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-right text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <button
               type="submit"
               disabled={isSubmitting}
-              className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             >
               {isSubmitting && <Spinner />} Save
             </button>
@@ -115,7 +115,7 @@ export function EnvelopeRow({
           status={statusFromUtilization(envelope.utilization)}
         />
       </div>
-      <p className="mt-2 text-xs text-muted">{envelope.spentThisMonthFormatted} spent this month</p>
+      <p className="mt-2 text-xs text-slate-400">{envelope.spentThisMonthFormatted} spent this month</p>
       {error && <p className="mt-2 text-xs text-negative">{error}</p>}
     </li>
   );

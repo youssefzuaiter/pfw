@@ -37,7 +37,7 @@ export function SignOutButton({ variant = "nav" }: { variant?: "nav" | "drawer" 
         type="button"
         onClick={handleSignOut}
         aria-label="Sign out"
-        className="uv-btn-press flex items-center justify-center rounded-md border border-border p-2 text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="uv-btn-press flex items-center justify-center rounded-md border border-slate-800 p-2 text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       >
         <LogOut className="h-4 w-4" aria-hidden="true" />
       </button>
@@ -49,7 +49,7 @@ export function SignOutButton({ variant = "nav" }: { variant?: "nav" | "drawer" 
       <button
         type="button"
         onClick={handleSignOut}
-        className="block w-full rounded-md border border-border px-3 py-2 text-center text-sm font-medium text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="block w-full rounded-md border border-slate-800 px-3 py-2 text-center text-sm font-medium text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       >
         Sign out
       </button>
@@ -60,7 +60,7 @@ export function SignOutButton({ variant = "nav" }: { variant?: "nav" | "drawer" 
     <button
       type="button"
       onClick={handleSignOut}
-      className="rounded-md px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
       Sign out
     </button>

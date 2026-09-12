@@ -145,29 +145,29 @@ export function PasskeyPanel() {
 
   if (!isSupported) {
     return (
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="text-sm font-semibold text-fg">Passkeys</h3>
-        <p className="mt-1 text-xs text-muted">Your browser doesn&rsquo;t support passkeys.</p>
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h3 className="text-sm font-semibold text-slate-100">Passkeys</h3>
+        <p className="mt-1 text-xs text-slate-400">Your browser doesn&rsquo;t support passkeys.</p>
       </section>
     );
   }
 
   return (
-    <section className="rounded-lg border border-border bg-surface p-4">
+    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-fg">Passkeys</h3>
+        <h3 className="text-sm font-semibold text-slate-100">Passkeys</h3>
         {!isAdding && (
           <button
             type="button"
             onClick={handleOpenAdd}
             disabled={isBusy}
-            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             Add a passkey
           </button>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted">
+      <p className="mt-1 text-xs text-slate-400">
         Sign in with your device&rsquo;s fingerprint, face, or PIN — no password needed. The private key never leaves
         your device; nothing biometric is ever sent here.
       </p>
@@ -175,7 +175,7 @@ export function PasskeyPanel() {
       {isAdding && (
         <form onSubmit={handleAddPasskey} className="mt-3 flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
-            <label htmlFor="passkey-label" className="text-xs font-medium text-muted">
+            <label htmlFor="passkey-label" className="text-xs font-medium text-slate-400">
               Label (optional)
             </label>
             <input
@@ -184,7 +184,7 @@ export function PasskeyPanel() {
               placeholder="e.g. MacBook Touch ID"
               value={newLabel}
               onChange={handleLabelChange}
-              className="w-56 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-56 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <button
@@ -198,7 +198,7 @@ export function PasskeyPanel() {
             type="button"
             onClick={handleCancelAdd}
             disabled={isBusy}
-            className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             Cancel
           </button>
@@ -210,16 +210,16 @@ export function PasskeyPanel() {
       {recoveryCodes && <RecoveryCodesReveal codes={recoveryCodes} onAcknowledge={handleAcknowledgeRecoveryCodes} />}
 
       <ul className="mt-3 flex flex-col gap-2">
-        {authenticators === null && <li className="text-xs text-muted">Loading…</li>}
-        {authenticators?.length === 0 && <li className="text-xs text-muted">No passkeys registered yet.</li>}
+        {authenticators === null && <li className="text-xs text-slate-400">Loading…</li>}
+        {authenticators?.length === 0 && <li className="text-xs text-slate-400">No passkeys registered yet.</li>}
         {authenticators?.map((a) => (
           <li
             key={a.id}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-bg px-3 py-2 text-sm"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm"
           >
             <div>
-              <p className="font-medium text-fg">{a.deviceLabel}</p>
-              <p className="text-xs text-muted">
+              <p className="font-medium text-slate-100">{a.deviceLabel}</p>
+              <p className="text-xs text-slate-400">
                 {a.backedUp ? "Synced across devices" : "This device only"}
                 {a.lastUsedAtIso && ` · last used ${new Date(a.lastUsedAtIso).toLocaleDateString()}`}
               </p>

@@ -43,13 +43,13 @@ function ChartTooltip({
   const point = payload[0]?.payload;
   if (!point) return null;
   return (
-    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
-      <p className="text-muted">
+    <div className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-xs shadow-lg">
+      <p className="text-slate-400">
         Day {label} · {point.date}
       </p>
-      <p className="font-tabular-figures text-fg">95th pct: {formatAgorot(agorot(point.p5 + point.band))}</p>
-      <p className="font-tabular-figures font-medium text-fg">Median: {formatAgorot(agorot(point.p50))}</p>
-      <p className="font-tabular-figures text-fg">5th pct: {formatAgorot(agorot(point.p5))}</p>
+      <p className="font-tabular-figures tracking-tight text-slate-100">95th pct: {formatAgorot(agorot(point.p5 + point.band))}</p>
+      <p className="font-tabular-figures font-medium tracking-tight text-slate-100">Median: {formatAgorot(agorot(point.p50))}</p>
+      <p className="font-tabular-figures tracking-tight text-slate-100">5th pct: {formatAgorot(agorot(point.p5))}</p>
     </div>
   );
 }
@@ -115,23 +115,23 @@ export function RunwayForecastChart({
   }, []);
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-4">
+    <div className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-display text-lg font-semibold text-fg">30-Day Cash-Flow Forecast</h2>
+        <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-slate-400">30-Day Cash-Flow Forecast</h2>
         {status === "loading" && <Spinner size="sm" />}
         {status === "ready" && <Badge variant="neutral">experimental</Badge>}
       </div>
 
-      {status === "loading" && <p className="py-8 text-center text-sm text-muted">Running the on-device forecast…</p>}
+      {status === "loading" && <p className="py-8 text-center text-sm text-slate-400">Running the on-device forecast…</p>}
 
       {status === "unsupported" && (
-        <p className="py-8 text-center text-sm text-muted">
+        <p className="py-8 text-center text-sm text-slate-400">
           Your browser doesn&rsquo;t support the Web Worker this forecast runs in.
         </p>
       )}
 
       {status === "error" && (
-        <p className="py-8 text-center text-sm text-muted">
+        <p className="py-8 text-center text-sm text-slate-400">
           Couldn&rsquo;t run the forecast this time — your other dashboard figures are unaffected.
         </p>
       )}
@@ -183,7 +183,7 @@ export function RunwayForecastChart({
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          <p className="mt-2 text-xs text-muted">
+          <p className="mt-2 text-xs text-slate-400">
             Shaded band: 5th-95th percentile across 200 simulated paths. Line: median projection. A small model
             trained on synthetic cash-flow patterns, not a guarantee — same spirit as the retirement Monte Carlo
             projection, treat it as a range to plan around, not a prediction to bank on.

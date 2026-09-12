@@ -79,7 +79,7 @@ export function CategoryRowActions({ category }: { category: Category }) {
   }
 
   if (category.isUncategorized) {
-    return <span className="text-xs text-muted">Permanent category</span>;
+    return <span className="text-xs text-slate-400">Permanent category</span>;
   }
 
   return (
@@ -94,13 +94,13 @@ export function CategoryRowActions({ category }: { category: Category }) {
             value={name}
             onChange={handleNameChange}
             autoFocus
-            className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <button
             type="button"
             onClick={saveRename}
             disabled={isPending}
-            className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             Save
           </button>
@@ -110,7 +110,7 @@ export function CategoryRowActions({ category }: { category: Category }) {
           type="button"
           onClick={startRenaming}
           disabled={isPending}
-          className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           Rename
         </button>
@@ -119,7 +119,7 @@ export function CategoryRowActions({ category }: { category: Category }) {
         type="button"
         onClick={toggleArchive}
         disabled={isPending}
-        className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {category.archivedAt ? "Unarchive" : "Archive"}
       </button>
@@ -127,7 +127,7 @@ export function CategoryRowActions({ category }: { category: Category }) {
         type="button"
         onClick={handleDelete}
         disabled={isPending}
-        className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-negative hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-negative hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         Delete
       </button>

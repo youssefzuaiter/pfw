@@ -130,8 +130,8 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
 
   if (recoveryCodes) {
     return (
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="text-sm font-semibold text-fg">Two-factor authentication enabled</h3>
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h3 className="text-sm font-semibold text-slate-100">Two-factor authentication enabled</h3>
         <RecoveryCodesReveal codes={recoveryCodes} onAcknowledge={handleAcknowledgeRecoveryCodes} />
       </section>
     );
@@ -139,9 +139,9 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
 
   if (mode === "setup") {
     return (
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="text-sm font-semibold text-fg">Set up two-factor authentication</h3>
-        <p className="mt-1 text-xs text-muted">
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h3 className="text-sm font-semibold text-slate-100">Set up two-factor authentication</h3>
+        <p className="mt-1 text-xs text-slate-400">
           Scan this QR code with an authenticator app (Google Authenticator, Authy, 1Password, …), then enter the
           6-digit code it shows.
         </p>
@@ -162,15 +162,15 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
               alt="Scan this QR code with your authenticator app"
               width={200}
               height={200}
-              className="rounded-md border border-border"
+              className="rounded-md border border-slate-800/80"
             />
-            <p className="text-xs text-muted">
+            <p className="text-xs text-slate-400">
               Can&apos;t scan? Enter this code manually:{" "}
-              <code className="font-tabular-figures">{setupData.secret}</code>
+              <code className="font-tabular-figures tracking-tight text-slate-100">{setupData.secret}</code>
             </p>
             <form onSubmit={handleConfirmSetup} className="flex flex-wrap items-end gap-2">
               <div className="flex flex-col gap-1">
-                <label htmlFor="mfa-confirm-code" className="text-xs font-medium text-muted">
+                <label htmlFor="mfa-confirm-code" className="text-xs font-medium text-slate-400">
                   6-digit code
                 </label>
                 <input
@@ -180,7 +180,7 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
                   autoComplete="one-time-code"
                   value={code}
                   onChange={handleCodeChange}
-                  className="w-32 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg font-tabular-figures focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <button
@@ -193,7 +193,7 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
               <button
                 type="button"
                 onClick={handleCancel}
-                className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>
@@ -207,14 +207,14 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
 
   if (mode === "disable") {
     return (
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="text-sm font-semibold text-fg">Disable two-factor authentication</h3>
-        <p className="mt-1 text-xs text-muted">
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <h3 className="text-sm font-semibold text-slate-100">Disable two-factor authentication</h3>
+        <p className="mt-1 text-xs text-slate-400">
           Enter your password to confirm. This will sign every other device out.
         </p>
         <form onSubmit={handleDisable} className="mt-3 flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
-            <label htmlFor="mfa-disable-password" className="text-xs font-medium text-muted">
+            <label htmlFor="mfa-disable-password" className="text-xs font-medium text-slate-400">
               Password
             </label>
             <input
@@ -223,7 +223,7 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
               autoComplete="current-password"
               value={password}
               onChange={handlePasswordChange}
-              className="w-48 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <button
@@ -236,7 +236,7 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancel
           </button>
@@ -247,16 +247,16 @@ export function MfaPanel({ initialEnabled, initialPending }: Props) {
   }
 
   return (
-    <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm">
+    <section className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900 p-3 text-sm">
       <Badge variant={enabled ? "positive" : "neutral"}>
         {enabled ? "Two-factor enabled" : "Two-factor disabled"}
       </Badge>
-      {statusMessage && <span className="text-xs text-muted">{statusMessage}</span>}
+      {statusMessage && <span className="text-xs text-slate-400">{statusMessage}</span>}
       <button
         type="button"
         onClick={enabled ? handleOpenDisable : handleBeginSetup}
         disabled={isBusy}
-        className="uv-btn-press ml-auto flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press ml-auto flex items-center gap-1.5 rounded-md border border-slate-800/80 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isBusy && <Spinner />} {enabled ? "Disable" : "Enable"}
       </button>

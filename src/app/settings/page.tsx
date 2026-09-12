@@ -41,14 +41,14 @@ export default async function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-fg">Settings</h1>
-        <p className="mt-1 text-sm text-muted">{user.displayName} — {user.email}</p>
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
+      <div className="border-b border-slate-800/80 pb-3">
+        <h1 className="font-display text-xl font-semibold text-slate-100">Settings</h1>
+        <p className="mt-1 text-sm text-slate-400">{user.displayName} — {user.email}</p>
       </div>
 
       <div>
-        <h2 className="text-base font-semibold text-fg">Security</h2>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Security</h2>
         <div className="mt-2 flex flex-col gap-3">
           <EmailVerificationPanel initialVerified={user.emailVerified !== null} />
           <MfaPanel initialEnabled={mfaStatus.enabled} initialPending={mfaStatus.pending} />
@@ -58,18 +58,18 @@ export default async function SettingsPage() {
       </div>
 
       <div>
-        <h2 className="text-base font-semibold text-fg">Preferences</h2>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Preferences</h2>
         <div className="mt-2">
           <PreferencesForm initial={initialPreferences} />
         </div>
       </div>
 
       <div>
-        <h2 className="text-base font-semibold text-fg">Connections</h2>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">Connections</h2>
         <div className="mt-2">
           <Link
             href="/settings/open-banking"
-            className="inline-flex items-center rounded-md border border-border bg-bg px-3 py-2 text-sm font-medium text-fg hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex items-center rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Open Banking (EU) →
           </Link>

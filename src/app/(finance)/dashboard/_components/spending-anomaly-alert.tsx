@@ -91,8 +91,8 @@ export function SpendingAnomalyAlert({
         </Badge>
         <Badge variant="neutral">experimental</Badge>
       </div>
-      <p className="text-sm text-fg">{buildAlertMessage(result)}</p>
-      <p className="mt-1 text-xs text-muted">
+      <p className="text-sm text-slate-100">{buildAlertMessage(result)}</p>
+      <p className="mt-1 text-xs text-slate-400">
         Detected on-device by comparing your recent spending against your own history — a small model trained on
         synthetic data, treat it as a prompt to double-check, not a confirmed problem.
       </p>

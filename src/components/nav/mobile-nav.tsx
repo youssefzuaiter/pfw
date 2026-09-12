@@ -90,14 +90,14 @@ export function MobileNav() {
             role="dialog"
             aria-modal="true"
             aria-label="More navigation"
-            className="relative w-full rounded-t-2xl border-t border-border bg-surface p-4"
+            className="relative w-full rounded-t-lg border-t border-slate-800 bg-slate-950 p-4"
           >
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted">More</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">More</p>
               <button
                 type="button"
                 onClick={closeMore}
-                className="rounded-md px-2 py-1 text-sm font-medium text-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md px-2 py-1 text-sm font-medium text-slate-500 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
               >
                 Close
               </button>
@@ -108,18 +108,18 @@ export function MobileNav() {
                   <Link
                     href={item.href}
                     onClick={closeMore}
-                    className="block rounded-md border border-border px-3 py-2 text-sm font-medium text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="block rounded-md border border-slate-800 px-3 py-2 text-sm font-medium text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
                   >
                     {item.label}
                   </Link>
                 </li>
               ))}
             </ul>
-            <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+            <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3">
               <Link
                 href="/settings"
                 onClick={closeMore}
-                className="rounded-md px-2 py-1 text-sm font-medium text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md px-2 py-1 text-sm font-medium text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
               >
                 Settings
               </Link>
@@ -130,7 +130,7 @@ export function MobileNav() {
       )}
       <nav
         aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-10 flex border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-10 flex border-t border-slate-800 bg-slate-950 pb-[env(safe-area-inset-bottom)] md:hidden"
       >
         {MOBILE_PRIMARY_ITEMS.map((item) => {
           const active = isNavItemActive(pathname, item.href);
@@ -139,8 +139,8 @@ export function MobileNav() {
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
-              className={`flex flex-1 flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                active ? "text-accent" : "text-muted"
+              className={`flex flex-1 flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
+                active ? "text-sky-400" : "text-slate-500"
               }`}
             >
               {item.label}
@@ -153,8 +153,8 @@ export function MobileNav() {
           onClick={openMore}
           aria-haspopup="dialog"
           aria-expanded={moreOpen}
-          className={`flex flex-1 flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-            moreActive ? "text-accent" : "text-muted"
+          className={`flex flex-1 flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
+            moreActive ? "text-sky-400" : "text-slate-500"
           }`}
         >
           More

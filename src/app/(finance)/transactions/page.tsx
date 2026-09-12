@@ -63,19 +63,19 @@ export default async function TransactionsPage({
   }));
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
+    <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-semibold text-fg">Transactions</h1>
+        <h1 className="font-display text-xl font-semibold text-slate-100">Transactions</h1>
         <div className="flex flex-wrap gap-2">
           <Link
             href="/transactions/rules"
-            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Rules →
           </Link>
           <Link
             href="/transactions/subscriptions"
-            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Subscriptions radar →
           </Link>

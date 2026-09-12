@@ -17,10 +17,10 @@ export default async function ResetPasswordPage({ params }: { params: Promise<{ 
   const { token } = await params;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6">
-        <h1 className="font-display text-xl font-semibold text-fg">Set a new password</h1>
-        <p className="mt-1 text-sm text-muted">PFW — personal finance</p>
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-lg border border-slate-800/80 bg-slate-900 p-6">
+        <h1 className="font-display text-xl font-semibold text-slate-100">Set a new password</h1>
+        <p className="mt-1 text-sm text-slate-400">PFW — personal finance</p>
         <ResetPasswordForm token={token} />
       </div>
     </div>

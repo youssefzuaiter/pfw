@@ -16,15 +16,15 @@ const SEVERITY_STYLES: Record<InsightSeverity, { dot: string; label: string }> =
  */
 export function AttentionFeed({ insights }: { insights: readonly Insight[] }) {
   return (
-    <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="attention-feed-heading">
+    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="attention-feed-heading">
       <h2
         id="attention-feed-heading"
-        className="mb-3 text-sm font-medium uppercase tracking-wide text-muted"
+        className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400"
       >
         Attention feed
       </h2>
       {insights.length === 0 ? (
-        <p className="text-sm text-muted">Nothing needs your attention right now.</p>
+        <p className="text-sm text-slate-400">Nothing needs your attention right now.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {insights.map((insight, index) => {
@@ -33,11 +33,11 @@ export function AttentionFeed({ insights }: { insights: readonly Insight[] }) {
               <li key={`${insight.type}-${insight.relatedEntityId ?? index}`} className="flex gap-3">
                 <span className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
                 <div>
-                  <p className="text-sm font-medium text-fg">
+                  <p className="text-sm font-medium text-slate-100">
                     <span className="sr-only">{style.label}: </span>
                     {insight.title}
                   </p>
-                  <p className="text-sm text-muted">{insight.description}</p>
+                  <p className="text-sm text-slate-400">{insight.description}</p>
                 </div>
               </li>
             );

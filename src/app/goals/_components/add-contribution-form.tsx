@@ -57,7 +57,7 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
         value={amount}
         onChange={(event) => setAmount(event.target.value)}
         placeholder="500.00"
-        className="w-28 rounded-md border border-border bg-bg px-2 py-1 font-tabular-figures text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <label className="sr-only" htmlFor={`contribution-note-${goalId}`}>
         Encrypted note (optional)
@@ -68,12 +68,12 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
         onChange={(event) => setNote(event.target.value)}
         placeholder={zkUnlocked ? "Note (encrypted)" : "Unlock secure notes to add a note"}
         disabled={!zkUnlocked}
-        className="w-40 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="w-40 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       />
       <button
         type="submit"
         disabled={isSubmitting || !amount.trim()}
-        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs font-medium text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 px-3 py-1 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
         Add contribution

@@ -230,11 +230,11 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
   if (showRecoveryForm) {
     return (
       <form onSubmit={handleRecoverySubmit} className="mt-6 flex flex-col gap-4">
-        <p className="text-sm text-muted">
+        <p className="text-sm text-slate-400">
           Enter your email and one of your backup codes. Each code works once.
         </p>
         <div className="flex flex-col gap-1">
-          <label htmlFor="login-recovery-email" className="text-xs font-medium text-muted">
+          <label htmlFor="login-recovery-email" className="text-xs font-medium text-slate-400">
             Email
           </label>
           <input
@@ -244,11 +244,11 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             required
             value={email}
             onChange={handleEmailChange}
-            className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label htmlFor="login-recovery-code" className="text-xs font-medium text-muted">
+          <label htmlFor="login-recovery-code" className="text-xs font-medium text-slate-400">
             Backup code
           </label>
           <input
@@ -259,7 +259,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             required
             value={recoveryCode}
             onChange={handleRecoveryCodeChange}
-            className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg font-tabular-figures placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 font-tabular-figures tracking-tight placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <button
@@ -273,7 +273,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
         <button
           type="button"
           onClick={handleBackToPassword}
-          className="text-xs text-muted underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="text-xs text-slate-400 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Back to password sign-in
         </button>
@@ -289,9 +289,9 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
   if (mfaRequired) {
     return (
       <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
-        <p className="text-sm text-muted">Enter the 6-digit code from your authenticator app.</p>
+        <p className="text-sm text-slate-400">Enter the 6-digit code from your authenticator app.</p>
         <div className="flex flex-col gap-1">
-          <label htmlFor="login-totp-code" className="text-xs font-medium text-muted">
+          <label htmlFor="login-totp-code" className="text-xs font-medium text-slate-400">
             Authentication code
           </label>
           <input
@@ -303,7 +303,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             required
             value={totpCode}
             onChange={handleTotpCodeChange}
-            className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg font-tabular-figures placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 font-tabular-figures tracking-tight placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <button
@@ -336,16 +336,16 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             {isSubmitting && <Spinner />}
             {isSubmitting ? "Signing in…" : "⚡ Demo Login"}
           </button>
-          <div className="flex items-center gap-2 text-xs text-muted">
-            <span className="h-px flex-1 bg-border" />
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <span className="h-px flex-1 bg-slate-800" />
             or sign in manually
-            <span className="h-px flex-1 bg-border" />
+            <span className="h-px flex-1 bg-slate-800" />
           </div>
         </>
       )}
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <label htmlFor="login-email" className="text-xs font-medium text-muted">
+        <label htmlFor="login-email" className="text-xs font-medium text-slate-400">
           Email
         </label>
         <input
@@ -355,12 +355,12 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
           required
           value={email}
           onChange={handleEmailChange}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <label htmlFor="login-password" className="text-xs font-medium text-muted">
+          <label htmlFor="login-password" className="text-xs font-medium text-slate-400">
             Password
           </label>
           <Link
@@ -377,7 +377,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
           required
           value={password}
           onChange={handlePasswordChange}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button
@@ -388,16 +388,16 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
         {isSubmitting && <Spinner />}
         {isSubmitting ? "Signing in…" : "Sign in"}
       </button>
-      <div className="flex items-center gap-2 text-xs text-muted">
-        <span className="h-px flex-1 bg-border" />
+      <div className="flex items-center gap-2 text-xs text-slate-400">
+        <span className="h-px flex-1 bg-slate-800" />
         or
-        <span className="h-px flex-1 bg-border" />
+        <span className="h-px flex-1 bg-slate-800" />
       </div>
       <button
         type="button"
         onClick={handlePasskeySignIn}
         disabled={isSubmitting}
-        className="uv-btn-press flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center justify-center gap-2 rounded-md border border-slate-800/80 px-4 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
         Sign in with Passkey
@@ -405,7 +405,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
       <button
         type="button"
         onClick={handleShowRecoveryForm}
-        className="text-center text-xs text-muted underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="text-center text-xs text-slate-400 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Use a backup code instead
       </button>

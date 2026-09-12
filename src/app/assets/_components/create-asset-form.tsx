@@ -58,7 +58,7 @@ export function CreateAssetForm() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
       <div className="flex flex-col gap-1">
-        <label htmlFor="asset-name" className="text-xs font-medium text-muted">
+        <label htmlFor="asset-name" className="text-xs font-medium text-slate-400">
           Name
         </label>
         <input
@@ -66,18 +66,18 @@ export function CreateAssetForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Apartment in Tel Aviv"
-          className="min-w-[160px] rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="asset-type" className="text-xs font-medium text-muted">
+        <label htmlFor="asset-type" className="text-xs font-medium text-slate-400">
           Type
         </label>
         <select
           id="asset-type"
           value={assetType}
           onChange={(event) => setAssetType(event.target.value as (typeof ASSET_TYPES)[number]["value"])}
-          className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {ASSET_TYPES.map((type) => (
             <option key={type.value} value={type.value}>
@@ -87,7 +87,7 @@ export function CreateAssetForm() {
         </select>
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="asset-value" className="text-xs font-medium text-muted">
+        <label htmlFor="asset-value" className="text-xs font-medium text-slate-400">
           Current value (₪)
         </label>
         <input
@@ -96,7 +96,7 @@ export function CreateAssetForm() {
           value={currentValue}
           onChange={(event) => setCurrentValue(event.target.value)}
           placeholder="500000.00"
-          className="w-32 rounded-md border border-border bg-bg px-3 py-2 font-tabular-figures text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="pb-2">
@@ -105,7 +105,7 @@ export function CreateAssetForm() {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-2 rounded-md border border-slate-800/80 bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
         {isSubmitting ? "Adding…" : "Add asset"}

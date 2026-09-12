@@ -155,7 +155,7 @@ export function TransactionsExplorer({
             value={query}
             onChange={(event) => handleQueryChange(event.target.value)}
             placeholder="Search merchant or description, in any language…"
-            className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           {mode === "searching" && (
             <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
@@ -166,10 +166,10 @@ export function TransactionsExplorer({
       </div>
 
       {mode === "semantic" && (
-        <p className="text-xs text-muted">Showing semantic matches for &ldquo;{query}&rdquo;.</p>
+        <p className="text-xs text-slate-400">Showing semantic matches for &ldquo;{query}&rdquo;.</p>
       )}
       {mode === "substring" && query.trim() !== "" && (
-        <p className="text-xs text-muted">
+        <p className="text-xs text-slate-400">
           Semantic search wasn&rsquo;t available for this search — showing exact-text matches for &ldquo;{query}&rdquo;
           instead.
         </p>

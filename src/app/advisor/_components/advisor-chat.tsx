@@ -82,7 +82,7 @@ export function AdvisorChat() {
               type="button"
               data-prompt={prompt}
               onClick={handleSuggestedPromptClick}
-              className="uv-btn-press rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="uv-btn-press rounded-full border border-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {prompt}
             </button>
@@ -95,7 +95,7 @@ export function AdvisorChat() {
           <div
             key={index}
             className={`max-w-[85%] whitespace-pre-wrap rounded-lg px-4 py-3 text-sm ${
-              message.role === "user" ? "self-end bg-accent text-bg" : "self-start bg-surface text-fg"
+              message.role === "user" ? "self-end bg-accent text-bg" : "self-start border border-slate-800/80 bg-slate-900 text-slate-100"
             }`}
           >
             {message.content || (message.role === "assistant" && isStreaming ? <Spinner /> : "")}
@@ -121,7 +121,7 @@ export function AdvisorChat() {
           }}
           rows={2}
           placeholder="Ask about your spending, budgets, goals, debts, or portfolio…"
-          className="flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex-1 resize-none rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <button
           type="submit"

@@ -33,9 +33,9 @@ function handleRetry() {
 
 /**
  * `useSyncExternalStore`, not `useEffect` + `setState` — the same
- * reasoning `ThemeToggle` and `useCurrencyDisplayMode` already establish
- * for syncing to a browser-only source of truth (AGENTS.md §3c): it
- * avoids a synchronous `setState` call in an effect body (the
+ * reasoning `useCurrencyDisplayMode` already establishes for syncing to
+ * a browser-only source of truth (AGENTS.md §3c): it avoids a
+ * synchronous `setState` call in an effect body (the
  * `react-hooks/set-state-in-effect` trap this app's history has hit and
  * fixed several times) and needs no cleanup-timing reasoning of its own.
  */
@@ -64,9 +64,9 @@ export default function OfflinePage() {
   const isBackOnline = useSyncExternalStore(subscribeToOnlineStatus, getOnlineSnapshot, getServerOnlineSnapshot);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-4 py-24 text-center">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 bg-slate-950 px-4 py-24 text-center text-slate-100">
       {/* eslint-disable-next-line @next/next/no-img-element -- a service-worker-precached static asset (public/sw.js), not something Next's image optimizer can process offline */}
-      <img src="/icons/icon-192.png" alt="" width={64} height={64} className="rounded-2xl" />
+      <img src="/icons/icon-192.png" alt="" width={64} height={64} className="rounded-xl" />
 
       <Badge variant={isBackOnline ? "positive" : "critical"} pulse>
         {isBackOnline ? "Back online" : "Offline Mode"}
@@ -80,11 +80,11 @@ export default function OfflinePage() {
         )}
       </div>
 
-      <h1 className="font-display text-xl font-semibold text-fg">
+      <h1 className="font-display text-xl font-semibold text-slate-100">
         {isBackOnline ? "Connection restored" : "You’re offline"}
       </h1>
 
-      <p className="text-sm text-muted">
+      <p className="text-sm text-slate-400">
         {isBackOnline
           ? "Your connection is back — reload to pick up right where you left off."
           : "PFW couldn’t reach the network. Your budgets, balances, and transactions need a live connection to load — nothing here is ever shown from a stale cache."}

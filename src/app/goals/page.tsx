@@ -53,8 +53,8 @@ export default async function GoalsPage() {
   );
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 md:px-6">
-      <h1 className="font-display text-2xl font-semibold text-fg">Goals</h1>
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
+      <h1 className="font-display text-xl font-semibold text-slate-100">Goals</h1>
 
       <SecureNotesPanel
         isSetUp={zkVaultStatus.isSetUp}
@@ -64,11 +64,11 @@ export default async function GoalsPage() {
         legacyNoteCount={legacyNoteCount}
       />
 
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
         <CreateGoalForm />
       </section>
 
-      {goals.length === 0 && <p className="text-sm text-muted">No goals yet — add one above.</p>}
+      {goals.length === 0 && <p className="text-sm text-slate-400">No goals yet — add one above.</p>}
 
       <ul className="flex flex-col gap-4">
         {goals.map((goal) => {
@@ -83,16 +83,16 @@ export default async function GoalsPage() {
           });
 
           return (
-            <li key={goal.id} className="rounded-lg border border-border bg-surface p-4">
+            <li key={goal.id} className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="flex flex-wrap items-center gap-2 font-medium text-fg">
+                  <p className="flex flex-wrap items-center gap-2 font-medium text-slate-100">
                     {goal.name}
                     <Badge variant={STATUS_BADGE[summary.status]} pulse={summary.status === "overdue"}>
                       {STATUS_LABEL[summary.status]}
                     </Badge>
                   </p>
-                  <p className="font-tabular-figures text-sm text-muted">
+                  <p className="font-tabular-figures tracking-tight text-sm text-slate-400">
                     {formatAgorot(currentAmount)} of {formatAgorot(targetAmount)}
                   </p>
                 </div>
@@ -106,23 +106,23 @@ export default async function GoalsPage() {
                 />
               </div>
               {summary.projectedCompletionDate && summary.status !== "complete" && (
-                <p className="mt-2 text-xs text-muted">
+                <p className="mt-2 text-xs text-slate-400">
                   Projected completion around {summary.projectedCompletionDate.toISOString().slice(0, 10)}
                 </p>
               )}
               {goal.contributions.length > 0 && (
                 <details className="mt-3">
-                  <summary className="cursor-pointer text-xs font-medium text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <summary className="cursor-pointer text-xs font-medium text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     Contribution log ({goal.contributions.length})
                   </summary>
                   <ul className="mt-2 flex flex-col gap-1">
                     {[...goal.contributions]
                       .sort((a, b) => b.contributedAt.getTime() - a.contributedAt.getTime())
                       .map((contribution) => (
-                        <li key={contribution.id} className="flex flex-wrap justify-between gap-x-3 text-xs text-muted">
+                        <li key={contribution.id} className="flex flex-wrap justify-between gap-x-3 text-xs text-slate-400">
                           <span>{contribution.contributedAt.toISOString().slice(0, 10)}</span>
                           <ContributionNote ciphertext={contribution.note} />
-                          <span className="font-tabular-figures">{formatAgorot(agorot(Number(contribution.amount)))}</span>
+                          <span className="font-tabular-figures tracking-tight">{formatAgorot(agorot(Number(contribution.amount)))}</span>
                         </li>
                       ))}
                   </ul>
