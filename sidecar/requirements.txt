@@ -4,3 +4,13 @@ onnx==1.22.0
 onnxruntime==1.29.0
 numpy==2.5.2
 pydantic==2.13.4
+
+# Async task offloading for the anomaly-detection inference route (see
+# app/celery_app.py, app/tasks.py). Pinned as an exact resolved set,
+# verified locally (`pip install "celery[redis]==5.6.3"`) rather than
+# guessed — celery[redis]'s own `kombu[redis]` dependency pins a redis-py
+# range incompatible with the latest redis-py (8.x) at the time this was
+# written; 6.4.0 is what celery[redis]==5.6.3 actually resolves to.
+celery==5.6.3
+kombu==5.6.2
+redis==6.4.0

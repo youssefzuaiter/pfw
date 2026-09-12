@@ -25,5 +25,27 @@ services:
       retries: 10
       start_period: 5s
 
+  redis:
+    # Celery broker + result backend for sidecar/'s async task offloading
+    # (sidecar/app/celery_app.py) — a message broker and a short-TTL
+    # result cache, not durable app data, so no named volume: losing it
+    # on a restart just means any in-flight/recently-finished task
+    # result is gone, which is exactly as consequential as it sounds for
+    # a per-dashboard-load anomaly check (nothing else in this app reads
+    # Redis). Standard default port (6379) — unlike postgres above,
+    # nothing else on this machine was found bound to it, so there's no
+    # real reason to remap.
+    image: redis:8.8.2-alpine
+    container_name: pfw_local_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
 volumes:
   pgdata:

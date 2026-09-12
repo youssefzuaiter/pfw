@@ -1,3 +1,10 @@
 -r requirements.txt
 pytest==9.1.1
 httpx==0.28.1
+# Pinned directly, not left as an incidental transitive dep of httpx --
+# tests/conftest.py's `anyio_backend` fixture and tests/test_concurrency.py
+# both use anyio's own pytest plugin directly, so a future httpx version
+# that drops anyio as a dependency shouldn't silently break test
+# collection.
+anyio==4.14.2
+pytest-cov==6.0.0

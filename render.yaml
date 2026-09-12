@@ -1,0 +1,93 @@
+# Render Blueprint for sidecar/ — the Python FastAPI/ONNX service (NOT
+# this repo's main Next.js app, which deploys separately on Vercel; see
+# AGENTS.md §3pp). Defines three services: the FastAPI web process, a
+# Celery worker process that consumes the same code's async tasks
+# (app/celery_app.py, app/tasks.py), and a managed Redis instance the two
+# communicate through as broker + result backend.
+#
+# Schema verified against Render's own current docs before writing this
+# file (render.com/docs/blueprint-spec, /web-services, /python-version,
+# /monorepo-support) rather than assumed from memory — a few things are
+# genuinely easy to get wrong and worth calling out:
+#   - `type: redis` is a deprecated alias; `keyvalue` is current.
+#   - `runtime` replaced the older `env` field name.
+#   - `rootDir` changes the WORKING DIRECTORY buildCommand/startCommand
+#     run in (confirmed via Render's monorepo-support docs, not the
+#     blueprint-spec page alone, which doesn't state this itself) — so
+#     both commands below are written relative to sidecar/, not the repo
+#     root.
+#   - A web service must bind to Render's injected $PORT, never a fixed
+#     port number.
+#
+# Known limitation, stated plainly rather than glossed over: `rootDir`
+# also controls which file changes trigger a rebuild ("changes to files
+# outside the root directory do not trigger a build for the service").
+# app/anomaly_constants.py's ANOMALY_MODEL_PATH deliberately reads
+# public/models/spending_anomaly.onnx from OUTSIDE sidecar/ (the one
+# canonical, committed model artifact, not a duplicated copy — see that
+# file's own comment) — a retrained model committed there alone will NOT
+# auto-trigger a Render redeploy of either Python service. Until this is
+# revisited, a model retrain needs a manual "Deploy latest commit" (or a
+# no-op change inside sidecar/) to actually take effect on Render.
+
+services:
+  - name: pfw-sidecar-web
+    type: web
+    runtime: python
+    rootDir: sidecar
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    # Render sets $PORT itself; --host 0.0.0.0 is required so the
+    # process actually listens on the container's external interface,
+    # not just loopback.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Both vars resolve to the SAME connectionString (Render's Key Value
+    # `connectionString` has no per-database-index variant to split
+    # broker vs. results the way local dev's default (redis://localhost:6379/0
+    # vs. /1, app/celery_app.py) does) — broker and result backend share
+    # one Redis database here. Not a bug: Celery's Redis backend/broker
+    # each use their own key-prefix namespace internally, so sharing one
+    # database is safe, just a deliberate deviation from the local
+    # default worth knowing about if debugging with `redis-cli` directly.
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.15
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: pfw-sidecar-redis
+          type: keyvalue
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: pfw-sidecar-redis
+          type: keyvalue
+          property: connectionString
+
+  - name: pfw-sidecar-worker
+    type: worker
+    runtime: python
+    rootDir: sidecar
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A app.celery_app:celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.15
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: pfw-sidecar-redis
+          type: keyvalue
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          name: pfw-sidecar-redis
+          type: keyvalue
+          property: connectionString
+
+  - name: pfw-sidecar-redis
+    type: keyvalue
+    plan: free
+    region: oregon
+    ipAllowList: []  # empty = accessible only from other services in this workspace, never the public internet

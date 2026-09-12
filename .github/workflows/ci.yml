@@ -159,6 +159,69 @@ jobs:
       - name: Verify no secrets leaked into the client bundle
         run: npm run verify:client-bundle-secrets
 
+  sidecar-tests:
+    name: Sidecar (FastAPI/ONNX) · pytest
+    runs-on: ubuntu-latest
+    # Independent of the `test` job on purpose — sidecar/ is a separate
+    # Python service with no Node/Postgres dependency at all (see
+    # AGENTS.md §3b), so there's nothing to gate this on. This suite has
+    # been manual/local-only since Phase 3 (sidecar/README.md's own
+    # "Test" section) — this job is what actually runs it on every
+    # push/PR instead of relying on someone remembering to run
+    # `python -m pytest` by hand, the same gap the e2e suite had until it
+    # was wired in (AGENTS.md §3kk).
+    #
+    # Redis is real, load-bearing infra for THIS service now (the broker
+    # + result backend behind app/celery_app.py's async task offloading),
+    # not a separately-deployed service this workflow merely calls out to
+    # the way sidecar/'s own embedding model is from the Node `test` job's
+    # perspective (that job leaves EMBEDDING_SIDECAR_URL unset on purpose
+    # and skips its one live-integration test) — so unlike that case, this
+    # job stands Redis up for real rather than skipping the tests that
+    # need it. tests/test_celery_redis_integration.py spawns its own real
+    # `celery worker` subprocess against it; no separate "start worker"
+    # step is needed here.
+    services:
+      redis:
+        image: redis:8.8.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 5s
+    defaults:
+      run:
+        working-directory: sidecar
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: sidecar/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Builds model/embedding_model.onnx (gitignored — see
+      # app/build_model.py's own docstring). tests/conftest.py's
+      # `ensure_model_is_built` fixture would build it anyway if this
+      # step were skipped, but building it explicitly here keeps the
+      # actual test run itself fast and its own timing honest, the same
+      # "explicit step, fixture is only the safety net" split the DB
+      # migration/seed steps above take relative to their own tests.
+      - name: Build the ONNX embedding model
+        run: python -m app.build_model
+
+      - name: Run pytest with coverage
+        run: python -m pytest -v --cov=app --cov-report=term-missing
+
   e2e:
     name: E2E (accessibility, keyboard nav, security)
     runs-on: ubuntu-latest
