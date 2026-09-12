@@ -313,7 +313,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
             id="pref-liquidity-tier"
             value={form.defaultManualAssetLiquidityTier ?? ""}
             onChange={handleLiquidityTierChange}
-            className="w-56 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">No default (use asset-type default)</option>
             <option value="LIQUID">Liquid</option>

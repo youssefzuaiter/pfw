@@ -101,7 +101,14 @@ export function MonteCarloWidget({
         });
     }, DEBOUNCE_MS);
 
-    return () => clearTimeout(timeout);
+    // Aborting here too, not just clearing the debounce timer: once the
+    // timer has already fired, `clearTimeout` is a no-op and the request
+    // is left in flight against a component that no longer exists. Same
+    // cleanup shape AgentTelemetryTerminal already uses.
+    return () => {
+      clearTimeout(timeout);
+      abortRef.current?.abort();
+    };
   }, [currentAge, retirementAge, annualSpendAgorot, volatilityMultiplier]);
 
   const chartData = data.yearlyPercentiles.map((point) => ({
@@ -223,7 +230,23 @@ export function MonteCarloWidget({
                 className="fill-muted text-xs"
                 tickLine={false}
                 axisLine={false}
-                width={72}
+                // A too-narrow width (72px, then 90px to match
+                // runway-forecast-chart.tsx) clipped formatted values from
+                // the left (SVG's root element clips content outside its
+                // own bounds, so a right-anchored tick label wider than
+                // its reserved axis width loses its leading digits/
+                // currency symbol, not just visually overflows) — a real
+                // bug found live: a net-worth-scale tick rendered as
+                // "0,000.00" instead of "-₪1,100,000.00". Omitting `width`
+                // entirely was tried and did NOT fix it (confirmed live —
+                // this installed Recharts version's auto-width still
+                // under-measured), so this is a deliberately generous
+                // fixed width sized for this chart's actual worst case:
+                // a 7-figure signed ILS value ("-₪1,100,000.00", 14
+                // characters) — wider than runway-forecast-chart.tsx's
+                // own values ever need, which is why that chart's 90px
+                // was never wide enough here.
+                width={130}
                 tickFormatter={(value: number) => formatAgorot(agorot(Math.round(value)))}
               />
               <Tooltip content={<ChartTooltip />} />

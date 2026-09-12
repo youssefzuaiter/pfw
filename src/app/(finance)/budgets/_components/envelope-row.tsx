@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { Badge } from "../../../../components/badge/badge";
 import { ShareResourceControl } from "../../../../components/household/share-resource-control";
 import { Spinner } from "../../../../components/spinner/spinner";
 import { Tickbar, type TickbarStatus } from "../../../../components/tickbar/tickbar";
@@ -72,7 +73,14 @@ export function EnvelopeRow({
     <li className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-medium text-slate-100">{envelope.categoryName}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium text-slate-100">{envelope.categoryName}</p>
+            {envelope.balanceIsNegative && (
+              <Badge variant="critical" pulse>
+                Overdrawn
+              </Badge>
+            )}
+          </div>
           <p
             className={`font-tabular-figures text-lg font-semibold tracking-tight ${envelope.balanceIsNegative ? "text-negative" : "text-positive"}`}
           >

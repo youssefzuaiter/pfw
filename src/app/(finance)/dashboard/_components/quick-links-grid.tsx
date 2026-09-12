@@ -30,7 +30,7 @@ const QUICK_LINKS: QuickLink[] = [
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/transactions/subscriptions", label: "Subscription Radar", icon: Radar },
   { href: "/trading/portfolio", label: "Trading / Portfolio", icon: LineChart },
-  { href: "/analytics", label: "Retirement Analytic", icon: TrendingUp },
+  { href: "/analytics", label: "Retirement Analytics", icon: TrendingUp },
   { href: "/trading/tax", label: "Tax Simulation", icon: Receipt },
 ];
 
@@ -54,7 +54,7 @@ export function QuickLinksGrid() {
             href={link.href}
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-700 hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Icon className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+            <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
             {link.label}
           </Link>
         );

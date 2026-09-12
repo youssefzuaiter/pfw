@@ -324,7 +324,12 @@ const listPortfolioHoldingsTool = defineTool({
         );
         return {
           symbol: holding.symbol,
-          quantity: holding.quantity.toString(),
+          // .toFixed(4), not a raw .toString() — never hand the model an
+          // imprecise floating-point-artifact quantity to read back
+          // verbatim (the same principle formatAgorot's own doc comment
+          // already applies to monetary figures, extended to quantity;
+          // see src/app/trading/page.tsx's doc comment for the real bug).
+          quantity: holding.quantity.toFixed(4),
           currency: holding.currency,
           costBasis: formatAgorot(costBasis),
           nativeCostBasis: formatNativeAmount(nativeCostBasis, holding.currency),
@@ -355,7 +360,7 @@ const listRecentTrades = defineTool({
       date: trade.executedAt.toISOString().slice(0, 10),
       side: trade.side,
       symbol: trade.symbol,
-      quantity: trade.quantity.toString(),
+      quantity: trade.quantity.toFixed(4),
       price: formatAgorot(agorot(Number(trade.priceAgorot))),
       total: formatAgorot(agorot(Number(trade.totalAgorot))),
       realizedPnl: trade.realizedPnlAgorot !== null ? formatAgorot(agorot(Number(trade.realizedPnlAgorot))) : null,

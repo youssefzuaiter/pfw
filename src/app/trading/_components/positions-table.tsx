@@ -65,7 +65,10 @@ export function PositionsTable({ rows }: { rows: PortfolioRow[] }) {
                 </div>
                 <p className="text-xs text-muted">{row.name}</p>
               </td>
-              <td className="py-3 pr-3 font-tabular-figures text-fg">{row.quantity}</td>
+              {/* .toFixed(4), not the raw number — see src/app/trading/page.tsx's
+                  doc comment for the real floating-point artifact this avoids
+                  (a partial-sell BTC position rendering as "0.16999999999999998"). */}
+              <td className="py-3 pr-3 font-tabular-figures text-fg">{row.quantity.toFixed(4)}</td>
               <td className="py-3 pr-3 text-right font-tabular-figures text-fg">{formatAgorot(row.costBasis)}</td>
               <td className="py-3 pr-3 text-right">
                 <CurrencyAmount agorotValue={row.marketValue} nativeValue={row.nativeMarketValue} currency={row.currency} />

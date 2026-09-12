@@ -267,6 +267,18 @@ export const proxy = auth((request) => {
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", csp);
 
+  // Forward auth state so the root layout (src/app/layout.tsx) can decide
+  // whether to render the authenticated app shell (Sidebar/MobileNav/
+  // CopilotSidebar) — a real, previously-shipped bug: the shell was
+  // rendered unconditionally, so /login, /register, and /welcome all
+  // rendered the full authenticated nav (including a "Sign out" link)
+  // behind their own public forms even for a signed-out visitor, since
+  // by the time this proxy reaches this line, a PUBLIC path may still be
+  // unauthenticated (unlike a protected path, which is guaranteed
+  // authenticated here — the early-return above would have redirected it
+  // otherwise).
+  requestHeaders.set("x-authenticated", isAuthenticated ? "1" : "0");
+
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });

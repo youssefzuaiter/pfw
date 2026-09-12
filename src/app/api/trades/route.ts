@@ -31,7 +31,10 @@ function serializeTrade(trade: TradeRecord) {
     id: trade.id,
     symbol: trade.symbol,
     side: trade.side,
-    quantity: trade.quantity.toString(),
+    // .toFixed(4), not a raw .toString() — see src/app/trading/page.tsx's
+    // doc comment on the same Decimal-quantity shape for the real
+    // floating-point artifact this avoids.
+    quantity: trade.quantity.toFixed(4),
     currency: trade.currency,
     priceAgorot: Number(trade.priceAgorot),
     totalAgorot: Number(trade.totalAgorot),

@@ -92,7 +92,21 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
       </p>
 
       <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
+        {/*
+         * `min-w-0` on the wrapper is load-bearing, not decorative — a
+         * real bug found live: a bilingual account label ("Current
+         * Account [עו״ש] — Bank Hapoalim [בנק הפועלים]") is long enough
+         * that the `<select>`'s intrinsic content width alone exceeded a
+         * 390px mobile viewport, and a flex item's default `min-width:
+         * auto` means `flex-wrap` still won't let it shrink below that —
+         * it forced real horizontal page scroll on mobile (confirmed via
+         * `document.documentElement.scrollWidth` on a real page load),
+         * not just an inline visual overflow. `min-w-0` here plus `w-full
+         * min-w-0` on the select itself is what actually lets both shrink
+         * to the available row width; the browser truncates the option
+         * text on its own once the box is narrower than its content.
+         */}
+        <div className="flex min-w-0 flex-col gap-1">
           <label htmlFor="import-account" className="text-xs font-medium text-slate-400">
             Account
           </label>
@@ -100,7 +114,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
             id="import-account"
             value={bankAccountId}
             onChange={(event) => setBankAccountId(event.target.value)}
-            className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full min-w-0 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {bankAccounts.map((account) => (
               <option key={account.id} value={account.id}>

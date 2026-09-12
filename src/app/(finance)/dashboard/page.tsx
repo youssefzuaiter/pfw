@@ -63,19 +63,37 @@ export default async function DashboardPage() {
 
       <SpendingAnomalyAlert transactions={spendingAnomaly.transactions} windowEndDateKey={spendingAnomaly.windowEndDateKey} />
 
+      {/*
+        The Attention Feed's insight count varies a lot run to run (from
+        the seed script's RNG, or a real account's real activity), and
+        it's routinely much taller than Net Worth alone — a plain 2-col
+        grid left a large, empty gap in the shorter left column next to
+        a long feed. Fixed by stacking Net Worth and Liquidity Runway in
+        the left column, each sized to its own content (implicit `auto`
+        rows — NOT `grid-rows-2`, which forces two equal-height tracks
+        and would just split one big gap into two smaller ones), with
+        the feed spanning both rows on the right (`md:row-span-2`) — CSS
+        grid's auto-placement fills column 1 top-to-bottom before moving
+        to column 2, so this order (hero, feed, runway) places exactly
+        as intended with no explicit grid-area names needed. Deliberately
+        NOT `items-start` here: the default `stretch` is what makes the
+        spanning feed's own height match the two stacked cards' combined
+        height exactly (see AttentionFeed's own doc comment for how it
+        turns that stretched height into a real filled card rather than
+        a taller box with empty space still inside it).
+      */}
       <div className="grid gap-4 md:grid-cols-2">
         <NetWorthHero netWorth={data.netWorth} history={data.netWorthHistory} />
-        <AttentionFeed insights={data.insights} />
+        <AttentionFeed insights={data.insights} className="md:row-span-2" />
+        <LiquidityRunwayCard
+          availableAgorot={liquidityRunway.runway.availableAgorot}
+          liquidAgorot={liquidityRunway.breakdown.liquidAgorot}
+          semiLiquidAgorot={liquidityRunway.breakdown.semiLiquidAgorot}
+          monthlyBurnRateAgorot={liquidityRunway.runway.monthlyBurnRateAgorot}
+          runwayDays={liquidityRunway.runway.runwayDays}
+          burnRateSource={liquidityRunway.burnRate.source}
+        />
       </div>
-
-      <LiquidityRunwayCard
-        availableAgorot={liquidityRunway.runway.availableAgorot}
-        liquidAgorot={liquidityRunway.breakdown.liquidAgorot}
-        semiLiquidAgorot={liquidityRunway.breakdown.semiLiquidAgorot}
-        monthlyBurnRateAgorot={liquidityRunway.runway.monthlyBurnRateAgorot}
-        runwayDays={liquidityRunway.runway.runwayDays}
-        burnRateSource={liquidityRunway.burnRate.source}
-      />
 
       <div className="grid gap-4 md:grid-cols-2">
         <HouseholdSummary households={households} />

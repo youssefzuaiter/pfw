@@ -121,6 +121,15 @@ export default async function TradingPage({
         <TradeForm symbols={symbols} defaultSymbol={selectedSymbol} />
       </section>
 
+      {/*
+       * Quantity renders via `.toFixed(4)`, never a raw `.toString()` —
+       * a real bug found live: a partial-sell BTC position rendered as
+       * "0.16999999999999998 sh" because floating-point subtraction
+       * upstream left that exact imprecision baked into the stored
+       * Decimal value, and `.toString()` prints it verbatim. Matches
+       * the same convention `tax-lots-table.tsx`/`harvest-radar-list.tsx`
+       * already use for the identical Decimal-quantity shape.
+       */}
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Holdings</h2>
         {openHoldings.length === 0 ? (
@@ -144,7 +153,7 @@ export default async function TradingPage({
                   <div>
                     <p className="font-medium text-fg">{holding.symbol}</p>
                     <p className="font-tabular-figures text-xs text-muted">
-                      {holding.quantity.toString()} sh · cost basis {formatAgorot(costBasis)}
+                      {holding.quantity.toFixed(4)} sh · cost basis {formatAgorot(costBasis)}
                     </p>
                   </div>
                   <div className="text-right">
@@ -169,7 +178,7 @@ export default async function TradingPage({
                 <span className="text-muted">{trade.executedAt.toISOString().slice(0, 19).replace("T", " ")}</span>
                 <Badge variant={trade.side === "BUY" ? "positive" : "critical"}>{trade.side}</Badge>
                 <span className="font-tabular-figures text-fg">
-                  {trade.quantity.toString()} {trade.symbol}
+                  {trade.quantity.toFixed(4)} {trade.symbol}
                 </span>
                 <span className="font-tabular-figures text-fg">@ {formatAgorot(agorot(Number(trade.priceAgorot)))}</span>
                 <span className="font-tabular-figures text-fg">{formatAgorot(agorot(Number(trade.totalAgorot)))}</span>

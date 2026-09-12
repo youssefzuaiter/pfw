@@ -57,7 +57,7 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
         value={amount}
         onChange={(event) => setAmount(event.target.value)}
         placeholder="500.00"
-        className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <label className="sr-only" htmlFor={`contribution-note-${goalId}`}>
         Encrypted note (optional)
@@ -66,9 +66,10 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
         id={`contribution-note-${goalId}`}
         value={note}
         onChange={(event) => setNote(event.target.value)}
-        placeholder={zkUnlocked ? "Note (encrypted)" : "Unlock secure notes to add a note"}
+        placeholder={zkUnlocked ? "Note (encrypted)" : "Secure notes locked"}
+        title={zkUnlocked ? undefined : "Unlock secure notes above to add an encrypted note"}
         disabled={!zkUnlocked}
-        className="w-40 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="w-40 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       />
       <button
         type="submit"

@@ -63,17 +63,23 @@ export const viewport: Viewport = {
 export const instant = false;
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get("x-nonce") ?? undefined;
+  // Set by src/proxy.ts — a public route (login/register/welcome/etc.)
+  // can still be visited while signed out, so the authenticated app shell
+  // (Sidebar/MobileNav/CopilotSidebar, which includes a "Sign out" link
+  // and full app navigation) must not render for those requests.
+  const isAuthenticated = requestHeaders.get("x-authenticated") === "1";
 
   return (
     <html lang="en" className={`${rubik.variable} ${ibmPlexMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col bg-bg text-fg md:flex-row">
         <OfflineBanner />
-        <Sidebar />
+        {isAuthenticated && <Sidebar />}
         <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
-        <MobileNav />
-        <CopilotSidebar />
-        <CommandPalette nonce={nonce} />
+        {isAuthenticated && <MobileNav />}
+        {isAuthenticated && <CopilotSidebar />}
+        {isAuthenticated && <CommandPalette nonce={nonce} />}
         <ServiceWorkerRegistration />
       </body>
     </html>
