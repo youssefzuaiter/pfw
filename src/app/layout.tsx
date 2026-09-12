@@ -7,7 +7,6 @@ import { MobileNav } from "../components/nav/mobile-nav";
 import { Sidebar } from "../components/nav/sidebar";
 import { OfflineBanner } from "../components/pwa/offline-banner";
 import { ServiceWorkerRegistration } from "../components/pwa/service-worker-registration";
-import { ThemeInitScript } from "../components/theme/theme-init-script";
 import { PWA_THEME_COLOR } from "../lib/pwa-theme-color";
 import "./globals.css";
 
@@ -68,9 +67,6 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   return (
     <html lang="en" className={`${rubik.variable} ${ibmPlexMono.variable} h-full antialiased`}>
-      <head>
-        <ThemeInitScript nonce={nonce} />
-      </head>
       <body className="flex min-h-full flex-col bg-bg text-fg md:flex-row">
         <OfflineBanner />
         <Sidebar />

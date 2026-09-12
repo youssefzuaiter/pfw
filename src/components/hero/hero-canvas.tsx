@@ -23,10 +23,9 @@ function getReducedMotionSnapshot(): boolean {
 // The server can't know either of these — no `window`, no real display —
 // so both server snapshots fail safe toward the static gradient rather
 // than toward spinning up a 3D scene. `useSyncExternalStore` (not an
-// effect + setState, same reasoning as ThemeToggle) is what lets the
-// client's first hydration pass reuse this same safe value with no
-// hydration-mismatch warning, then immediately re-render with the real
-// client-detected value right after.
+// effect + setState) is what lets the client's first hydration pass
+// reuse this same safe value with no hydration-mismatch warning, then
+// immediately re-render with the real client-detected value right after.
 function getReducedMotionServerSnapshot(): boolean {
   return true;
 }

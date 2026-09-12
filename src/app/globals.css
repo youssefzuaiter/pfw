@@ -3,110 +3,32 @@
 /*
  * PFW design tokens.
  *
- * Light and dark are each authored explicitly with their own hex values —
- * never derived by inverting/filtering the other mode. "System" is just
- * "no explicit choice made yet", resolved via prefers-color-scheme; an
- * explicit user choice (data-theme) always wins over the system preference.
+ * A single, permanent theme (user request: removed the System/Light/Dark
+ * toggle entirely rather than leave it wired to a theme nobody can
+ * actually reach anymore). This app spent several passes converting
+ * almost every screen to hardcoded `slate-*`/`neutral-*` Tailwind classes
+ * for the institutional-terminal aesthetic — by the time that was done,
+ * these tokens had almost no surface area left to actually toggle (only
+ * a handful of files, mostly primary-CTA buttons and `/trading`, still
+ * read them at all), so keeping a whole light/dark/system switching
+ * mechanism alive for that shrinking footprint stopped being worth its
+ * own complexity (a second CSS block, `theme-init-script.tsx`'s blocking
+ * inline script, `ThemeToggle`'s client state). What's kept is exactly
+ * the values every screenshot in this session was actually taken
+ * against — the former "light" (default, no `data-theme` set) block —
+ * not the separately-tuned, deeper "dark" block, which is now deleted
+ * rather than left as dead, unreachable CSS.
  */
 :root {
-  /* Dark navy blue page (user request, replacing the earlier dollar-
-     green theme entirely) — a genuine, dark navy, not a medium/steel
-     tone. That choice has a real, unavoidable consequence, worked
-     through with the user before building: WCAG's luminance formula
-     weighs blue far lower than green (0.0722 vs. 0.7152), so a blue dark
-     enough to read as authentic navy makes DARK text fail catastrophically
-     against it (measured: ~1.0-1.3:1, nowhere close to AA) — there's no
-     "just darken it a bit" fix available the way there was for green.
-     The only architecturally sound answer is the one this app's own
-     dark mode already uses: dark bg, a subtly-lifted dark surface (not
-     white), and LIGHT text/status colors throughout — so this block now
-     mirrors dark mode's shape, re-skinned in navy, rather than trying to
-     force a light-mode-shaped palette onto a genuinely dark ground. */
   --pfw-bg: #101a33;
-  /* A navy-tinted lift off the bg, same subtle "cards are mainly defined
-     by their border, not a big background jump" philosophy dark mode's
-     own surface/bg pairing already established (that pair measures
-     ~1.07:1; this one's 1.15:1 — intentionally a touch more separation,
-     since this is a brand-new theme with no prior audit history to lean
-     on, verified fresh rather than assumed proportional). */
   --pfw-surface: #182645;
-  /* Light, cool-white — the SAME role dark mode's own --pfw-fg already
-     plays, needed here for the same reason: body text and card text are
-     one shared token in this app, and a dark bg means both have to be
-     light now. 15.24:1 against bg, 13.24:1 against surface. */
-  --pfw-fg: #eef1f7;
+  --pfw-fg: #eef1f7; /* 15.24:1 vs bg, 13.24:1 vs surface */
   --pfw-muted: #a9b4c7; /* 8.25:1 vs bg, 7.16:1 vs surface */
-  /* Solved for the SAME real case the dollar-green pass's own history
-     caught twice — `Badge`'s "neutral" variant renders `text-muted`
-     directly ON `bg-border` as a fill, not just a decorative line, so
-     this needed real text-contrast math (muted-on-it: 5.79:1), not just
-     a "looks fine as an outline" check. */
-  --pfw-border: #253654;
-  /* A bright sky-blue/cyan, NOT the same deep navy as the bg — kept
-     genuinely distinct in LIGHTNESS (9.05:1 vs bg) rather than hue,
-     since a bright-vs-deep gap of this size reads as clearly different
-     even within the same blue family (unlike the green pass, where
-     "positive" had to hue-shift away from green specifically because
-     both were similar MID-tones — that collision risk doesn't apply
-     here). Also checked against the actual compositing a `bg-accent/10`
-     pill produces (7.48:1 blended over bg, 6.41:1 over surface), not
-     just the two raw endpoints — the exact case that caught two real
-     bugs in the green pass. */
-  --pfw-accent: #5ec8f2;
-  /* A real, saturated green — genuinely fine here, unlike the green
-     theme where "positive" had to move away from green specifically
-     because the PAGE was also green. That collision doesn't exist
-     against a navy background, so this reverts to the obvious, standard
-     "gains are green" choice. 8.97:1 vs bg. */
-  --pfw-positive: #34d399;
+  --pfw-border: #253654; /* muted-on-border-as-fill (Badge's "neutral" variant): 5.79:1 */
+  --pfw-accent: #5ec8f2; /* 9.05:1 vs bg; bg-accent/10 pill: 7.48:1 over bg, 6.41:1 over surface */
+  --pfw-positive: #34d399; /* 8.97:1 vs bg */
   --pfw-negative: #f87171; /* 6.24:1 vs bg */
   --pfw-signature: #fbbf24; /* 10.33:1 vs bg */
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    /* Navy blue (user request — matching light mode's theme for
-       consistency, replacing the earlier money-green dark mode).
-       Deeper than light mode's own navy (#101a33) on purpose: dark mode
-       is meant to read as the moodier of the two, the same way the
-       original app's light/dark pair always differed in depth, not just
-       swap one hue for another at the same lightness. */
-    --pfw-bg: #080e1c;
-    /* Same subtle-lift philosophy as light mode's own surface/bg pairing
-       (1.1:1 here vs. that one's 1.15:1) — cards are still defined
-       mainly by their border, not a big background jump. */
-    --pfw-surface: #0f1830;
-    /* Every status color below is the IDENTICAL value light mode's navy
-       theme uses (`--pfw-accent`/`--pfw-positive`/etc.) — re-verified
-       against this deeper bg/surface, not just assumed to still pass:
-       every one holds MORE margin here than it did against light mode's
-       shallower navy (e.g. accent 10.11:1 vs. bg here, was 9.05:1
-       against light mode's bg), since a darker ground only helps a
-       light foreground color's contrast. Reusing the exact same values
-       (not a second, independently-tuned set) is what actually delivers
-       the "consistency" this request asked for — one navy color
-       language, two depths. */
-    --pfw-fg: #eef1f7;
-    --pfw-muted: #a9b4c7;
-    --pfw-border: #253654;
-    --pfw-accent: #5ec8f2;
-    --pfw-positive: #34d399;
-    --pfw-negative: #f87171;
-    --pfw-signature: #fbbf24;
-  }
-}
-
-:root[data-theme="dark"] {
-  /* Kept identical to the media-query block above — see its comments for why each value is what it is. */
-  --pfw-bg: #080e1c;
-  --pfw-surface: #0f1830;
-  --pfw-fg: #eef1f7;
-  --pfw-muted: #a9b4c7;
-  --pfw-border: #253654;
-  --pfw-accent: #5ec8f2;
-  --pfw-positive: #34d399;
-  --pfw-negative: #f87171;
-  --pfw-signature: #fbbf24;
 }
 
 @theme inline {

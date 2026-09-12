@@ -19,9 +19,9 @@ import { WifiOff } from "lucide-react";
  * this device currently has no network.
  *
  * `useSyncExternalStore`, not `useEffect` + `setState` — same reasoning
- * as `ThemeToggle`/`useCurrencyDisplayMode`/the offline page itself: a
- * browser-only source of truth with no synchronous-setState-in-an-effect
- * trap to avoid.
+ * as `useCurrencyDisplayMode`/the offline page itself: a browser-only
+ * source of truth with no synchronous-setState-in-an-effect trap to
+ * avoid.
  *
  * `navigator.onLine` reports whether the OS thinks a network interface
  * is up, not genuine internet reachability (a captive portal or a
@@ -45,8 +45,8 @@ function getOnlineSnapshot() {
 
 // Assume online on the server (there is no real connectivity state to
 // read there) — corrected on the client the instant hydration reads the
-// real snapshot, the same "fail toward the common case" reasoning
-// `ThemeToggle`'s own server snapshot already uses.
+// real snapshot, the same "fail toward the common case" reasoning this
+// app's other `useSyncExternalStore` server snapshots already use.
 function getServerOnlineSnapshot() {
   return true;
 }

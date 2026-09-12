@@ -83,8 +83,8 @@ export function CommandPalette({ nonce }: { nonce?: string }) {
   // The dialog's underlying `react-remove-scroll` body-scroll-lock
   // injects a `<style>` tag at open time — this app's strict CSP has no
   // `style-src 'unsafe-inline'`, so that tag needs the same per-request
-  // nonce `ThemeInitScript` already receives from `headers()` in the
-  // root layout, or the browser silently drops the whole rule (verified
+  // nonce the root layout reads from `headers()`, or the browser
+  // silently drops the whole rule (verified
   // against `react-style-singleton`'s own source, which reads exactly
   // this `get-nonce` global before falling back to no nonce at all).
   useEffect(() => {
