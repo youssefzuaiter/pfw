@@ -57,6 +57,12 @@ COPY . .
 # the schema file, never opens a real connection.
 RUN npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
+# Explicit opt-in for next.config.ts's `output: "standalone"` — see that
+# file's own comment: standalone output is only ever consumed by this
+# Dockerfile's `runner` stage (`node server.js`, not `next start`), and
+# must NOT be the default for every other build (local `npm run build`,
+# CI, Vercel), which want the normal trace output instead.
+ENV NEXT_OUTPUT_STANDALONE=1
 
 # A build-time-only PLACEHOLDER, discovered necessary by actually running
 # this build in Docker (a plain host-machine `npm run build` misleadingly

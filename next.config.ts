@@ -49,17 +49,26 @@ const nextConfig: NextConfig = {
   // `require()` calls that a naive file tracer would otherwise miss)
   // instead of trying to bundle them.
   //
-  // Deliberately OFF when building on Vercel (`process.env.VERCEL`,
-  // Vercel's own always-set build-env flag): standalone mode replaces
-  // Next's normal `.next/next-server.js.nft.json` trace output with the
-  // self-contained `.next/standalone/` directory instead — verified live
-  // against a real Vercel build, which failed at its own
-  // "onBuildComplete" step with `ENOENT .next/next-server.js.nft.json`
-  // once `next build` finished successfully, because Vercel's builder
-  // (`@vercel/next`) does its own function bundling from that trace file
-  // and never looks for `.next/standalone` at all — the two output modes
-  // are for two different deployment targets, not layerable.
-  output: process.env.VERCEL ? undefined : "standalone",
+  // An explicit OPT-IN (`NEXT_OUTPUT_STANDALONE=1`, set only by the
+  // Dockerfile's builder stage), not the reverse. It was previously
+  // `process.env.VERCEL ? undefined : "standalone"` — off only on
+  // Vercel, on everywhere else by default — which fixed the real,
+  // verified Vercel build failure (`ENOENT .next/next-server.js.nft.json`;
+  // Vercel's builder does its own function bundling from the normal trace
+  // file and never looks for `.next/standalone` at all, so the two output
+  // modes aren't layerable) but broke every OTHER caller of a plain `next
+  // start` — standalone mode replaces the normal trace output with a
+  // self-contained `.next/standalone/` server that `next start` doesn't
+  // know how to run at all (`next start` prints "does not work with
+  // output: standalone configuration" and serves a broken build) —
+  // caught live via `npm run test:e2e` (`next build && next start`)
+  // failing sign-in with no session ever established, not assumed from
+  // the warning text alone. Standalone output is only ever actually
+  // consumed by the Dockerfile's `runner` stage running `node server.js`
+  // directly (see Dockerfile's own comments) — every other build (local
+  // `npm run build`/`npm run start`, this CI's own build/verify/e2e
+  // steps, a Vercel build) wants the normal trace output instead.
+  output: process.env.NEXT_OUTPUT_STANDALONE === "1" ? "standalone" : undefined,
   async headers() {
     return [
       {

@@ -134,6 +134,67 @@ jobs:
       - name: Verify no secrets leaked into the client bundle
         run: npm run verify:client-bundle-secrets
 
+  e2e:
+    name: E2E (accessibility, keyboard nav, security)
+    runs-on: ubuntu-latest
+    # Gated behind the fast typecheck/lint/unit suite passing first — this
+    # job pays for a full production build plus a Chromium download, which
+    # isn't worth doing when the cheaper checks already caught the bug.
+    needs: test
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: pfw_local
+          POSTGRES_USER: pfw_app
+          POSTGRES_PASSWORD: pfw_local_dev_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U pfw_app -d pfw_local"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 5s
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      - name: Seed deterministic mock data
+        run: npm run db:seed
+
+      # playwright.config.ts's webServer runs a real `next build && next
+      # start -p 3100` and drives it with real Chromium — neither the
+      # binary nor its OS-level shared libs come from `npm ci`.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # tests/e2e/ — axe-core accessibility across all 9 primary screens x
+      # light/dark, real keyboard tab-order/focus-trap checks, and a
+      # security suite (headers, CSRF, IDOR/404, SQLi fuzzing, rate
+      # limiting, stored XSS). Was manual/local-only since Phase 7
+      # (AGENTS.md §3g); this is what actually runs it on every push/PR
+      # instead of relying on someone remembering to run `npm run
+      # test:e2e` by hand — the exact gap that let the real auth
+      # (§3ff)-vs-e2e-suite regression documented in §3kk go unnoticed
+      # until it was run manually.
+      - name: Run Playwright e2e suite
+        run: npm run test:e2e
+
   gitleaks:
     name: Security · Gitleaks (credential leak scan)
     runs-on: ubuntu-latest

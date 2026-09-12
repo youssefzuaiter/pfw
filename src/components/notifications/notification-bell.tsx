@@ -115,6 +115,14 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
   }
 
   const unreadCount = notifications.length;
+  // Hoisted out of the JSX below on purpose: a literal ">" from this
+  // comparison sitting inside the compact button's own attribute list
+  // (e.g. aria-label={unreadCount > 0 ? ... }) truncates
+  // tests/guards/focus-visible.test.ts's regex before it ever reaches
+  // that button's className — the same known trap that guard's own doc
+  // comment already warns about for an inline "=>", just triggered here
+  // by a plain comparison operator instead.
+  const hasUnread = unreadCount > 0;
 
   return (
     <div className="relative">
@@ -126,11 +134,11 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
           aria-haspopup="true"
           aria-expanded={open}
           aria-controls="notification-bell-panel"
-          aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : "Notifications"}
+          aria-label={hasUnread ? `Notifications (${unreadCount} unread)` : "Notifications"}
           className="relative flex items-center justify-center rounded-md border border-border p-2 text-fg transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Bell className="h-4 w-4" aria-hidden="true" />
-          {unreadCount > 0 && (
+          {hasUnread && (
             <span
               aria-hidden="true"
               className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-negative"
@@ -148,7 +156,7 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
           className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Notifications
-          {unreadCount > 0 && <Badge variant="critical">{unreadCount}</Badge>}
+          {hasUnread && <Badge variant="critical">{unreadCount}</Badge>}
         </button>
       )}
 

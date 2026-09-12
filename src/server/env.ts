@@ -253,6 +253,27 @@ export function getPaperTraderServiceUrl(): string {
 }
 
 /**
+ * Not a secret — the URL `BackendStatusBadge` (dashboard header) polls
+ * server-side to show "AI Engine Online"/offline. Deliberately a
+ * SEPARATE config from `getPaperTraderServiceUrl()` above: that one
+ * targets whatever the LOCAL agent process is (used for the
+ * authenticated halt/telemetry actions, defaults to loopback), while
+ * this one targets the hosted Render deployment of the same Tier-0
+ * agent that a live demo (or a machine with no local agent running)
+ * actually wants to show status for. Checked server-side, not from the
+ * browser, so no CSP `connect-src`/CORS exception is needed on this
+ * app's side, and the check's reliability never depends on the agent's
+ * own CORS configuration (unlike a direct client-side fetch would).
+ * `/docs` (FastAPI's auto-generated Swagger page) is used as the
+ * liveness probe in the absence of a dedicated `/health` endpoint on
+ * that service — any 2xx response there proves the process is up and
+ * serving requests.
+ */
+export function getPaperTraderHealthCheckUrl(): string {
+  return process.env.PAPER_TRADER_HEALTH_URL?.trim() || "https://paper-trader-juwa.onrender.com/docs";
+}
+
+/**
  * Not a secret — the "From" address for outbound auth emails. Defaults
  * to Resend's own shared testing sender (`onboarding@resend.dev`), which
  * works with zero domain-verification setup — the right default for this

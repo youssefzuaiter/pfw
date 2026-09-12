@@ -70,6 +70,22 @@ async function signInWithRecoveryCode(email: string, code: string): Promise<{ ok
 }
 
 /**
+ * Demo Login (ad hoc, built for live/trade-show demos) — auto-fills and
+ * instantly submits the seeded `demo@pfw.local` credentials
+ * (`prisma/seed/israeli-data.ts`'s `SEED_USER`) against the SAME
+ * `credentials` provider the password form below uses, so it's subject
+ * to the exact same rate-limiting/lockout/CSRF handling as a real login,
+ * never a bypass of any of it. Gated on `NEXT_PUBLIC_DEMO_MODE` — see
+ * `.env.example`'s own doc comment for why this must never be set in a
+ * real production deployment: the button and credentials would otherwise
+ * be visible and usable by anyone who reaches the public login page, not
+ * just an audience at a supervised demo.
+ */
+const DEMO_LOGIN_EMAIL = "demo@pfw.local";
+const DEMO_LOGIN_PASSWORD = "demopassword123";
+const DEMO_MODE_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+
+/**
  * Same generic "Invalid email or password" message regardless of WHICH
  * of the three ways this can fail (unknown email, an unclaimed seeded
  * row with no password yet, or a wrong password) — matching
@@ -158,14 +174,13 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitCredentials(submitEmail: string, submitPassword: string) {
     setIsSubmitting(true);
     setError(null);
     try {
       const result = await signIn("credentials", {
-        email,
-        password,
+        email: submitEmail,
+        password: submitPassword,
         ...(mfaRequired ? { totpCode } : {}),
         redirect: false,
       });
@@ -199,6 +214,17 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitCredentials(email, password);
+  }
+
+  async function handleDemoLogin() {
+    setEmail(DEMO_LOGIN_EMAIL);
+    setPassword(DEMO_LOGIN_PASSWORD);
+    await submitCredentials(DEMO_LOGIN_EMAIL, DEMO_LOGIN_PASSWORD);
   }
 
   if (showRecoveryForm) {
@@ -298,7 +324,26 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
+    <div className="mt-6 flex flex-col gap-4">
+      {DEMO_MODE_ENABLED && (
+        <>
+          <button
+            type="button"
+            onClick={handleDemoLogin}
+            disabled={isSubmitting}
+            className="uv-btn-press flex items-center justify-center gap-2 rounded-md border-2 border-signature bg-signature px-4 py-3 text-sm font-semibold text-bg shadow-sm transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            {isSubmitting && <Spinner />}
+            {isSubmitting ? "Signing in…" : "⚡ Demo Login"}
+          </button>
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <span className="h-px flex-1 bg-border" />
+            or sign in manually
+            <span className="h-px flex-1 bg-border" />
+          </div>
+        </>
+      )}
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <label htmlFor="login-email" className="text-xs font-medium text-muted">
           Email
@@ -370,5 +415,6 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
         </p>
       )}
     </form>
+    </div>
   );
 }

@@ -23,7 +23,12 @@ export default function TradingLayout({ children }: { children: React.ReactNode 
   return (
     <div className="flex min-h-screen bg-neutral-950 font-tabular text-neutral-100">
       <TradingSidebar />
-      <main className="min-w-0 flex-1">{children}</main>
+      {/* Not a second `<main>` — the root layout (src/app/layout.tsx)
+          already renders the page's one `<main>` landmark around this
+          whole subtree; a nested `<main>` here produced a real, verified
+          axe `page-no-duplicate-main`/`landmark-unique` violation on
+          every /trading/** route. */}
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }

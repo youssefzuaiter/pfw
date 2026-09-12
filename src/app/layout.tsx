@@ -5,6 +5,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CopilotSidebar } from "../components/copilot/copilot-sidebar";
 import { MobileNav } from "../components/nav/mobile-nav";
 import { Sidebar } from "../components/nav/sidebar";
+import { OfflineBanner } from "../components/pwa/offline-banner";
 import { ServiceWorkerRegistration } from "../components/pwa/service-worker-registration";
 import { ThemeInitScript } from "../components/theme/theme-init-script";
 import { PWA_THEME_COLOR } from "../lib/pwa-theme-color";
@@ -71,6 +72,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <ThemeInitScript nonce={nonce} />
       </head>
       <body className="flex min-h-full flex-col bg-bg text-fg md:flex-row">
+        <OfflineBanner />
         <Sidebar />
         <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
         <MobileNav />

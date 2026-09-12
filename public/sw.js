@@ -16,23 +16,35 @@
 // identically regardless of which bundler built the rest of the app.
 //
 // Scope, deliberately narrow: this only ever caches the OFFLINE
-// FALLBACK PAGE, nothing else. It does not cache API responses or any
-// financial data — this app's standing rule that no live financial
-// figure is ever served stale applies exactly as much to a service
-// worker cache as to Next's own request cache (AGENTS.md §3c: even
+// FALLBACK PAGE (plus the one branding icon it renders), nothing else.
+// It does not cache API responses or any financial data — this app's
+// standing rule that no live financial figure is ever served stale
+// applies exactly as much to a service worker cache as to Next's own
+// request cache (AGENTS.md §3c: even
 // `getCurrentUser()`/`buildDashboardData()` use React's per-REQUEST
 // `cache()`, never a cross-request one, for this exact reason). Offline
 // means a clear "you're offline" page, never a stale balance presented
-// as current.
+// as current — a real, explicit design choice re-confirmed (not
+// silently reopened) when this fallback page was polished for live-demo
+// resilience: a "cached dashboard shell" showing real figures was
+// considered and deliberately NOT built for exactly this reason.
+//
+// `src/components/pwa/offline-banner.tsx` is a separate, complementary
+// mechanism for the gap this service worker's `fetch` handler can't
+// cover on its own — a dropped connection while already on a live
+// screen (no full-page navigation, so nothing here ever sees it). That
+// banner is a pure connectivity indicator, mounted app-wide, and
+// entirely independent of this cache.
 
-const CACHE_NAME = "pfw-offline-v1";
+const CACHE_NAME = "pfw-offline-v2";
 const OFFLINE_URL = "/~offline";
+const OFFLINE_ICON_URL = "/icons/icon-192.png";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.add(OFFLINE_URL))
+      .then((cache) => cache.addAll([OFFLINE_URL, OFFLINE_ICON_URL]))
       .then(() => self.skipWaiting()),
   );
 });

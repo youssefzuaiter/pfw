@@ -7,6 +7,7 @@ import { buildDashboardData } from "../../../server/dashboard/build-dashboard-da
 import { getVaultStatus } from "../../../server/dal/dead-mans-switch";
 import { getSharedGroupData, listMyGroups } from "../../../server/dal/shared-groups";
 import { AttentionFeed } from "./_components/attention-feed";
+import { BackendStatusBadge } from "./_components/backend-status-badge";
 import { CashFlowChart } from "./_components/cash-flow-chart";
 import { CategoryDonut } from "./_components/category-donut";
 import { DeadMansSwitchSummary } from "./_components/dead-mans-switch-summary";
@@ -55,6 +56,7 @@ export default async function DashboardPage() {
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-2xl font-semibold text-fg">Dashboard</h1>
+        <BackendStatusBadge />
       </div>
 
       <QuickLinksGrid />
