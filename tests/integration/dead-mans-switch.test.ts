@@ -289,9 +289,20 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Cry
       expect(afterGrace.status).toBe("GRACE_PERIOD");
       expect(afterGrace.graceStartedAt).not.toBeNull();
 
-      // Not yet past the 14-day grace period.
+      // The notification bell's one real producer (ad hoc): a genuine
+      // Notification row, not just the switch's own status change.
+      const graceNotifications = await admin.notification.findMany({ where: { userId: owner4.id } });
+      expect(graceNotifications).toHaveLength(1);
+      expect(graceNotifications[0].type).toBe("dead_mans_switch_grace_period");
+      expect(graceNotifications[0].read).toBe(false);
+
+      // Not yet past the 14-day grace period — also proves re-running
+      // the check while still in GRACE_PERIOD doesn't double-notify
+      // (the notification lives inside the same one-shot transition
+      // branch as the status change itself).
       const stillGraceResult = await runInactivityCheck();
       expect(stillGraceResult.triggered).not.toContain(vaultRow.id);
+      expect(await admin.notification.count({ where: { userId: owner4.id } })).toBe(1);
 
       // Backdate graceStartedAt past the 14-day grace period.
       await admin.deadMansSwitch.update({
@@ -304,6 +315,13 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Cry
       const afterTrigger = await admin.deadMansSwitch.findUniqueOrThrow({ where: { id: vaultRow.id } });
       expect(afterTrigger.status).toBe("TRIGGERED");
       expect(afterTrigger.triggeredAt).not.toBeNull();
+
+      const allNotifications = await admin.notification.findMany({
+        where: { userId: owner4.id },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(allNotifications).toHaveLength(2);
+      expect(allNotifications[1].type).toBe("dead_mans_switch_triggered");
     } finally {
       await admin.user.deleteMany({ where: { id: owner4.id } });
     }
