@@ -60,7 +60,7 @@ export function SignOutButton({ variant = "nav" }: { variant?: "nav" | "drawer" 
     <button
       type="button"
       onClick={handleSignOut}
-      className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
       Sign out
     </button>

@@ -182,7 +182,7 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
           aria-haspopup="true"
           aria-expanded={open}
           aria-controls="notification-bell-panel"
-          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
         >
           Notifications
           {hasUnread && <Badge variant="critical">{unreadCount}</Badge>}
@@ -212,7 +212,7 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
                     type="button"
                     data-notification-id={notification.id}
                     onClick={handleDismissClick}
-                    className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                    className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
                   >
                     Dismiss
                   </button>

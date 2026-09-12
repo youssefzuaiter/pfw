@@ -66,7 +66,7 @@ export function CreateAssetForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Apartment in Tel Aviv"
-          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -96,7 +96,7 @@ export function CreateAssetForm() {
           value={currentValue}
           onChange={(event) => setCurrentValue(event.target.value)}
           placeholder="500000.00"
-          className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="pb-2">

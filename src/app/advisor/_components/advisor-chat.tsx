@@ -121,7 +121,7 @@ export function AdvisorChat() {
           }}
           rows={2}
           placeholder="Ask about your spending, budgets, goals, debts, or portfolio…"
-          className="flex-1 resize-none rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex-1 resize-none rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <button
           type="submit"

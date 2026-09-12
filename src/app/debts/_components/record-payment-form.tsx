@@ -46,7 +46,7 @@ export function RecordPaymentForm({ debtId }: { debtId: string }) {
         value={amount}
         onChange={(event) => setAmount(event.target.value)}
         placeholder="300.00"
-        className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <button
         type="submit"

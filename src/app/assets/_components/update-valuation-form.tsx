@@ -46,7 +46,7 @@ export function UpdateValuationForm({ assetId }: { assetId: string }) {
         value={currentValue}
         onChange={(event) => setCurrentValue(event.target.value)}
         placeholder="510000.00"
-        className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <button
         type="submit"

@@ -68,7 +68,7 @@ export function CreateDebtForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Credit card debt"
-          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -98,7 +98,7 @@ export function CreateDebtForm() {
           value={currentBalance}
           onChange={(event) => setCurrentBalance(event.target.value)}
           placeholder="5000.00"
-          className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -111,7 +111,7 @@ export function CreateDebtForm() {
           value={aprPercent}
           onChange={(event) => setAprPercent(event.target.value)}
           placeholder="19.90"
-          className="w-20 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-20 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -124,7 +124,7 @@ export function CreateDebtForm() {
           value={minimumPayment}
           onChange={(event) => setMinimumPayment(event.target.value)}
           placeholder="300.00"
-          className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button

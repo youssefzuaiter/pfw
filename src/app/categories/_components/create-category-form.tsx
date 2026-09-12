@@ -46,7 +46,7 @@ export function CreateCategoryForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="e.g. Hobbies"
-          className="min-w-[200px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[200px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button

@@ -244,7 +244,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             required
             value={email}
             onChange={handleEmailChange}
-            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -259,7 +259,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             required
             value={recoveryCode}
             onChange={handleRecoveryCodeChange}
-            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 font-tabular-figures tracking-tight placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 font-tabular-figures tracking-tight placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <button
@@ -303,7 +303,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
             required
             value={totpCode}
             onChange={handleTotpCodeChange}
-            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 font-tabular-figures tracking-tight placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 font-tabular-figures tracking-tight placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <button
@@ -355,7 +355,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
           required
           value={email}
           onChange={handleEmailChange}
-          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
@@ -377,7 +377,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
           required
           value={password}
           onChange={handlePasswordChange}
-          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button

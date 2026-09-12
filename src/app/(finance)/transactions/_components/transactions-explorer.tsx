@@ -155,7 +155,7 @@ export function TransactionsExplorer({
             value={query}
             onChange={(event) => handleQueryChange(event.target.value)}
             placeholder="Search merchant or description, in any language…"
-            className="w-full rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           {mode === "searching" && (
             <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">

@@ -178,7 +178,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="e.g. Netflix -> Entertainment"
-            className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <div className="flex w-28 flex-col gap-1">
@@ -228,7 +228,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
               value={condition.value}
               onChange={handleConditionValueChange}
               placeholder={condition.field === "amount" ? "e.g. -50.00" : "e.g. Netflix"}
-              className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             {conditions.length > 1 && (
               <button
@@ -286,7 +286,7 @@ export function CreateRuleForm({ categories }: { categories: { slug: string; nam
                 value={action.renameValue}
                 onChange={handleActionRenameValueChange}
                 placeholder="New merchant name"
-                className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-w-[160px] flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             )}
             {action.type === "flag" && (

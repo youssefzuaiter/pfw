@@ -97,7 +97,7 @@ export function MobileNav() {
               <button
                 type="button"
                 onClick={closeMore}
-                className="rounded-md px-2 py-1 text-sm font-medium text-slate-500 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                className="rounded-md px-2 py-1 text-sm font-medium text-slate-400 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
               >
                 Close
               </button>
@@ -140,7 +140,7 @@ export function MobileNav() {
               href={item.href}
               aria-current={active ? "page" : undefined}
               className={`flex flex-1 flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
-                active ? "text-sky-400" : "text-slate-500"
+                active ? "text-sky-400" : "text-slate-400"
               }`}
             >
               {item.label}
@@ -154,7 +154,7 @@ export function MobileNav() {
           aria-haspopup="dialog"
           aria-expanded={moreOpen}
           className={`flex flex-1 flex-col items-center gap-1 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
-            moreActive ? "text-sky-400" : "text-slate-500"
+            moreActive ? "text-sky-400" : "text-slate-400"
           }`}
         >
           More
