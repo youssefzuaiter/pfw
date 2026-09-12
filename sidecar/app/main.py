@@ -72,11 +72,16 @@ class AnomalyTransaction(BaseModel):
 
 
 class AnomalyDetectRequest(BaseModel):
-    # min_length=1 for the same reason: an empty window has no baseline to
-    # z-score against, so it can only ever produce a meaningless result.
-    transactions: list[AnomalyTransaction] = Field(
-        ..., min_length=1, max_length=MAX_ANOMALY_TRANSACTIONS
-    )
+    # Deliberately NO min_length: an empty transaction list is a valid
+    # request and must stay a 202, per
+    # test_enqueue_anomaly_detection_accepts_an_empty_transaction_list.
+    # It's safe all the way down -- an all-zero feature matrix hits
+    # normalize_window()'s own `raw_std < 1e-6 -> 1.0` floor, so nothing
+    # divides by zero; it just yields an uninformative result, which is a
+    # different thing from an invalid one. (Adding min_length=1 here also
+    # quietly broke the neighbouring malformed-date test, which posts an
+    # empty list and expects its 422 to come from the DATE.)
+    transactions: list[AnomalyTransaction] = Field(..., max_length=MAX_ANOMALY_TRANSACTIONS)
     window_end_date_key: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
