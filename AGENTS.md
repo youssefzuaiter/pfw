@@ -6089,6 +6089,139 @@ question and became a running-balance question.
   spending categories moved to the envelope model, matching the original
   `Budget` model's own scope.
 
+## 3tt. Live design review, full-codebase audit & the WCAG contrast sweep (ad hoc — commits e23a71e, 6a5a91f, fd44726)
+
+Three passes in one session, in the order they happened: a live
+design review (log in, drive every screen, fix what's visibly wrong), a
+systematic four-layer correctness audit, and — surfaced only by finally
+running the e2e suite afterward — a sitewide accessibility fix. 19
+distinct bugs, every one reproduced before being believed.
+
+- **The design review found what a test suite had no reason to catch**,
+  because it was done by using the app rather than reading it. The
+  headline: `src/app/layout.tsx` mounted `Sidebar`/`MobileNav`/
+  `CopilotSidebar`/`CommandPalette` unconditionally, so `/login`,
+  `/register` and `/welcome` rendered the full authenticated nav —
+  live "Sign out" link included — behind their own signed-out forms.
+  `src/proxy.ts` already knows the answer by the time it sets the CSP
+  nonce (a protected path cannot reach that line unauthenticated; a
+  PUBLIC one can, which is exactly the case that was rendering wrong),
+  so it now forwards `x-authenticated` and the layout gates on it.
+  - `/dashboard`'s net-worth card stretched to match a much taller
+    Attention Feed, leaving ~500px of dead space. Fixed by stacking Net
+    Worth + Liquidity Runway in column 1 with the feed spanning both
+    rows — deliberately NOT `grid-rows-2`, which forces equal tracks and
+    merely splits one gap into two (tried, observed, reverted). The feed
+    scrolls internally so a long insight run can't reopen the gap.
+  - **A floating-point artifact reaching the UI**: a partial-sell BTC
+    position rendered as `0.16999999999999998 sh`. The imprecision is
+    baked into the stored `Decimal` (upstream float subtraction), and
+    `.toString()` prints it verbatim. Now `.toFixed(4)` at all four
+    display sites, matching `tax-lots-table.tsx`'s existing convention.
+    The two advisor tools were included deliberately: handing a model a
+    garbled quantity invites it to read that number back out loud.
+  - `/analytics`' Y axis clipped its own labels (`0,000.00` instead of
+    `-₪1,100,000.00`). The root `<svg>` clips anything drawn past its
+    bounds, so a right-anchored tick wider than the reserved axis width
+    loses its leading digits. **Omitting `width` did NOT fix it** —
+    this Recharts version's auto-measure under-reports — so 130px,
+    sized for this chart's real 7-figure worst case, is the fix.
+  - An overdrawn envelope showed a red rolling balance directly above an
+    all-grey 0% bar (nothing spent *this* month) — two true numbers
+    reading as a contradiction; added an "Overdrawn" badge. Two inputs
+    were narrower than their own copy. And `/transactions`' CSV account
+    select pushed the page 55px wider than a 390px viewport, scrolling
+    the whole body sideways — a real violation of this app's own mobile
+    rule, fixed with `min-w-0` on the flex child.
+
+- **The audit's critical finding is worth stating plainly**: a goal
+  contribution small enough relative to its target took down three
+  surfaces at once. `elapsedDays / completedFraction` with ₪0.01 toward
+  a ₪50,000 goal (fraction 2e-7) projects ~1.5e8 days out, past
+  ECMAScript's ±8.64e15 ms Date range; `new Date(...)` silently becomes
+  `Invalid Date` and the next `.toISOString()` throws `RangeError`.
+  With no try/catch anywhere in `generateInsights` →
+  `buildDashboardData` → page, that killed `/dashboard`, `/goals`, and
+  the advisor's `list_goals_with_progress` tool. The pre-existing
+  `actualFraction > 0` guard shows the zero case was considered; the
+  near-zero case wasn't. Both call sites now share one
+  `projectCompletionDate()` (`src/lib/goal-progress.ts`) returning
+  `null` past a 100-year horizon rather than an unrepresentable Date.
+  - **`src/app/error.tsx` is new — this app had no error boundary at
+    all**, which is precisely why two individually-narrow faults became
+    whole-screen outages. It renders `error.digest`, never
+    `error.message`: Next redacts server-thrown errors but NOT
+    client-component ones, and this client tree handles decrypted vault
+    and goal-note plaintext.
+  - `AgentTelemetryTerminal` cast a separate process's JSON straight to
+    `TelemetryEvent[]`; any non-array body reached `[...events].reverse()`
+    and threw mid-render. Now validated at the boundary, the same
+    treatment `rate-sync.ts`/`price-sync.ts` already give Frankfurter
+    and CoinGecko.
+  - The sidecar accepted an unconstrained `amount_agorot`, but
+    `normalize_window` feeds it to `math.log1p`, which raises for any
+    value `<= -1` — and `tasks.py` catches `ValueError`, so this would
+    have surfaced as a permanently-failing pipeline reporting
+    `invalid_input` rather than a 422 at the boundary. `ge=0` now
+    enforces what the docstring always claimed. (Latent, not live: the
+    Node caller already negates to positive magnitudes.)
+  - Smaller: `DividendSchedule` computed `new Date()` in a Client
+    Component's render body (hydration mismatch against device-clock
+    skew, and inconsistent with the amounts beside it, already computed
+    against the server's `asOf`); two debounced widgets cleared their
+    timer on unmount but never aborted an in-flight request;
+    `BackendStatusBadge` checked `cancelled` before `response.json()`
+    but not after; `/api/cron` read `CRON_SECRET` outside its `try`.
+  - **Ruled out rather than reported** — worth recording so the next
+    audit doesn't re-litigate them: all 11 `/api/auth/*` routes DO
+    enforce their own guards under the public prefix; the cron secret
+    can't be bypassed by an unset env var (`readRequiredEnv` throws);
+    webhook HMAC verifies before parsing raw bytes; no `BigInt` reaches
+    `NextResponse.json`; `addAgorot` on an empty array is safe (`reduce`
+    has an initial value); both non-null assertions in server code are
+    genuinely guarded.
+
+- **The contrast sweep was surfaced by the e2e suite, not by either
+  review** — 10 accessibility failures, one per primary screen except
+  `/trading`. `text-slate-500` (`#62748e`) fails WCAG AA against all
+  three dark grounds this app renders on: 4.23:1 on `bg-slate-950`,
+  3.75:1 on `bg-slate-900`, 3.07:1 on `bg-slate-800`. `text-slate-400`
+  clears all three (7.66 / 6.79 / 5.56). Ratios computed with the real
+  relative-luminance formula *before* picking the shade, then confirmed
+  against real axe output.
+  - **Why `/trading` alone passed is the actual diagnosis**: it's the
+    one screen still on the tokenized `--pfw-*` palette, which was
+    contrast-verified in Phase 7 and again through §3kk's green→navy
+    re-themes. Everything else moved to hardcoded `slate-*` utilities
+    during the institutional-terminal pass — the same drift `ff5cad8`
+    already noted as the reason the theme toggle had nothing left to
+    switch — and those raw defaults never went through the check the
+    tokens did. This closes that gap for the muted-text role only; **the
+    two palettes still coexist**, and that remains real technical debt.
+
+- **A test-environment lesson worth keeping**: the integration suite
+  failed 3 tests on first run, all in `auth-credentials.test.ts`, all
+  because `demo@pfw.local` was left CLAIMED by this session's own
+  earlier browser testing — the exact precondition those tests assume is
+  false. Not a code bug; `npm run db:seed` fixed it. This is why every
+  prior section in this file ends with "re-seeded afterward." The e2e
+  suite's own `global-teardown.ts` correctly restored the account on its
+  own, confirmed by direct `psql` query.
+
+- **Verified**: typecheck, lint, **1002** unit/component (6 new
+  regression tests pinning the Date overflow), **252** integration,
+  **36/36** e2e (was 26/36 before the contrast fix), production build —
+  every layer this repo has a test for, green, with the dev database
+  confirmed clean of residue afterward.
+
+- **Known limitations, left as such**: the two coexisting color systems
+  (tokenized `--pfw-*` vs. raw `slate-*`) are not reconciled — only the
+  one failing role was fixed; `error.tsx` is route-level only, with no
+  `global-error.tsx` for root-layout faults; and the `.toFixed(4)`
+  quantity fix is a DISPLAY fix — the float imprecision is still what's
+  stored in the `Decimal` column, which would need a data migration and
+  a look at `portfolio-math.ts`'s own arithmetic to actually correct.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
