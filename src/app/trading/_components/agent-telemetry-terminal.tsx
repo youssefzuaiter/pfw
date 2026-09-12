@@ -70,6 +70,49 @@ const ACTION_VARIANT: Record<TelemetryAction, BadgeVariant> = {
 
 type ConnectionState = "connecting" | "connected" | "unreachable";
 
+const TELEMETRY_ACTIONS = new Set<string>([
+  "wake",
+  "evaluate",
+  "reject",
+  "execute",
+  "settle",
+  "sleep",
+  "error",
+  "critical_alert",
+]);
+
+/**
+ * The agent is a SEPARATE process this app doesn't control or deploy in
+ * lockstep, so its response is untrusted input crossing a trust boundary
+ * — exactly the treatment `rate-sync.ts`/`price-sync.ts` already give
+ * Frankfurter and CoinGecko. A bare `as TelemetryEvent[]` cast was a real
+ * crash, not a style nit: any non-array body (a FastAPI `{"detail": ...}`
+ * error served with a 200 by a proxy, a `null`, or a future
+ * `{events: [...]}` reshape) reached `[...events].reverse()` below and
+ * threw `TypeError: events is not iterable` during render, which with no
+ * `error.tsx` boundary in this app blanks the whole /trading/agent page.
+ *
+ * An unrecognized `action` is dropped rather than rendered: it would
+ * otherwise index `ACTION_LABEL`/`ACTION_VARIANT` to `undefined`, which
+ * renders an unlabelled row with `class="... undefined"` — a silent
+ * mis-render that's harder to notice than a missing row.
+ */
+function parseTelemetryEvents(body: unknown): TelemetryEvent[] {
+  if (!Array.isArray(body)) return [];
+  return body.filter((item): item is TelemetryEvent => {
+    if (typeof item !== "object" || item === null) return false;
+    const candidate = item as Record<string, unknown>;
+    return (
+      typeof candidate.timestamp === "string" &&
+      typeof candidate.action === "string" &&
+      TELEMETRY_ACTIONS.has(candidate.action) &&
+      typeof candidate.status === "string" &&
+      typeof candidate.details === "string" &&
+      (candidate.ticker === null || typeof candidate.ticker === "string")
+    );
+  });
+}
+
 function formatTimestamp(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString();
@@ -136,8 +179,8 @@ export function AgentTelemetryTerminal() {
       try {
         const response = await fetch(AGENT_TELEMETRY_URL, { signal: controller.signal });
         if (!response.ok) throw new Error(`Agent returned ${response.status}`);
-        const body = (await response.json()) as TelemetryEvent[];
-        setEvents(body);
+        const body: unknown = await response.json();
+        setEvents(parseTelemetryEvents(body));
         setConnection("connected");
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;

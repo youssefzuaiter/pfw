@@ -154,7 +154,14 @@ export function TaxSimulator({ initialData }: { initialData: TaxSimulationRespon
         });
     }, DEBOUNCE_MS);
 
-    return () => clearTimeout(timeout);
+    // Aborting here too, not just clearing the debounce timer: once the
+    // timer has already fired, `clearTimeout` is a no-op and the request
+    // is left in flight against a component that no longer exists. Same
+    // cleanup shape AgentTelemetryTerminal already uses.
+    return () => {
+      clearTimeout(timeout);
+      abortRef.current?.abort();
+    };
   }, [method, jurisdiction, otherOrdinaryIncomeAgorot, includeNiit, churchTaxRate, annualAllowanceAgorot, flatRatePercent]);
 
   function handleExportClick() {

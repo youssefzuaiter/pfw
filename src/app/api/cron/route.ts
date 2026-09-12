@@ -76,7 +76,21 @@ function isAuthorizedCronRequest(request: NextRequest): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  if (!isAuthorizedCronRequest(request)) {
+  // `getCronSecret()` throws when CRON_SECRET is unset, and this call sits
+  // OUTSIDE the try below — an unconfigured deployment surfaced that as an
+  // unhandled framework-level 500 rather than a clear, logged
+  // misconfiguration. Fails closed either way (never authorizes), but the
+  // operator now gets a diagnosable message. Same shape
+  // /api/webhooks/trades already uses for its own secret read.
+  let authorized: boolean;
+  try {
+    authorized = isAuthorizedCronRequest(request);
+  } catch (error) {
+    console.error("GET /api/cron: CRON_SECRET is not configured", error);
+    return jsonServerError();
+  }
+
+  if (!authorized) {
     return jsonForbidden("Invalid or missing cron secret");
   }
 

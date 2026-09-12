@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agorot } from "./money";
-import { summarizeGoalProgress } from "./goal-progress";
+import { projectCompletionDate, summarizeGoalProgress } from "./goal-progress";
 
 describe("summarizeGoalProgress()", () => {
   it("is complete once the current amount reaches the target", () => {
@@ -100,5 +100,42 @@ describe("summarizeGoalProgress()", () => {
       today: new Date("2026-01-01"),
     });
     expect(summary.progressPercent).toBe(0);
+  });
+});
+
+describe("projectCompletionDate()", () => {
+  const startDate = new Date("2026-08-01T00:00:00Z");
+
+  it("projects a representable completion date at a normal contribution rate", () => {
+    // 25% done after 30 days -> ~120 total days.
+    const projected = projectCompletionDate(startDate, 30, 0.25);
+    expect(projected).not.toBeNull();
+    expect(projected?.toISOString().slice(0, 10)).toBe("2026-11-29");
+  });
+
+  // Regression: this exact input produced `Invalid Date`, whose
+  // `.toISOString()` throws `RangeError: Invalid time value` — crashing
+  // /goals, /dashboard and the advisor's list_goals_with_progress tool.
+  it("returns null instead of an unrepresentable Date when the rate is vanishingly small", () => {
+    const completedFraction = 1 / 5_000_000; // ₪0.01 toward a ₪50,000 goal
+    expect(projectCompletionDate(startDate, 30, completedFraction)).toBeNull();
+  });
+
+  it("returns null for a zero, negative, or non-finite completed fraction", () => {
+    expect(projectCompletionDate(startDate, 30, 0)).toBeNull();
+    expect(projectCompletionDate(startDate, 30, -0.5)).toBeNull();
+    expect(projectCompletionDate(startDate, 30, Number.NaN)).toBeNull();
+  });
+
+  it("returns null before any time has elapsed", () => {
+    expect(projectCompletionDate(startDate, 0, 0.5)).toBeNull();
+  });
+
+  it("never returns a Date that would throw on toISOString()", () => {
+    const fractions = [1, 0.5, 1e-3, 1e-6, 1e-9, 1e-12, Number.MIN_VALUE];
+    for (const fraction of fractions) {
+      const projected = projectCompletionDate(startDate, 30, fraction);
+      if (projected !== null) expect(() => projected.toISOString()).not.toThrow();
+    }
   });
 });

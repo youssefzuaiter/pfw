@@ -42,6 +42,10 @@ export function BackendStatusBadge() {
           return;
         }
         const data: unknown = await response.json();
+        // Re-checked AFTER this second await, not just after the fetch:
+        // the effect can be torn down while the body is still being read,
+        // and the guard above has already been passed by then.
+        if (cancelled) return;
         const online = typeof data === "object" && data !== null && "online" in data && (data as { online: unknown }).online === true;
         setStatus(online ? "online" : "offline");
       } catch {

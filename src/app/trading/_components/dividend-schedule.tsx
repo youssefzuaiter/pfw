@@ -23,9 +23,20 @@ function daysUntil(date: Date, asOf: Date): number {
  * inline here rather than via that shared component because this row's
  * secondary line carries an extra per-share × quantity breakdown
  * `<CurrencyAmount>`'s generic two-figure shape doesn't have room for. */
-export function DividendSchedule({ payouts }: { payouts: UpcomingPayout[] }) {
+/**
+ * `asOf` is passed in from the server rather than read as `new Date()`
+ * here, for two reasons. It's a hydration mismatch otherwise — this is a
+ * Client Component, so it also renders on the server, and the "in Nd"
+ * countdown is computed from the server clock during SSR and the
+ * browser's clock at hydration; any device-clock skew that crosses a
+ * `Math.ceil` day boundary makes those two renders disagree. It's also an
+ * internal inconsistency: every projected amount in these rows was
+ * already computed server-side against `buildPortfolioData`'s own `asOf`,
+ * so measuring the countdown from a different instant means the amount
+ * and the date beside it describe two slightly different moments.
+ */
+export function DividendSchedule({ payouts, asOf }: { payouts: UpcomingPayout[]; asOf: Date }) {
   const mode = useCurrencyDisplayMode();
-  const asOf = new Date();
   const projectedTotal = addAgorot(...payouts.map((payout) => payout.projectedAgorot));
 
   return (

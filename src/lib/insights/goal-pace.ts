@@ -1,3 +1,4 @@
+import { projectCompletionDate } from "../goal-progress";
 import { formatAgorot, multiplyAgorot, type Agorot } from "../money";
 import { computeRank, type Insight } from "./types";
 
@@ -55,14 +56,17 @@ export function generateGoalPaceInsights(goals: readonly GoalPaceInput[]): Insig
     const severity = paceRatio < CRITICAL_PACE_RATIO ? "critical" : "warning";
     const shortfallPercent = (1 - paceRatio) * 100;
 
-    // Extrapolate a projected completion date from the actual rate achieved so far.
+    // Extrapolate a projected completion date from the actual rate
+    // achieved so far. `projectCompletionDate` returns null — rather
+    // than an unrepresentable `Invalid Date` whose `.toISOString()`
+    // throws and takes this whole screen down — when the rate is too
+    // slow to project meaningfully; see its doc comment for the real
+    // crash this prevents.
     const actualFraction = goal.currentAmount / goal.targetAmount;
-    let projectionNote = "";
-    if (actualFraction > 0) {
-      const projectedTotalDays = elapsedDays / actualFraction;
-      const projectedCompletion = new Date(goal.startDate.getTime() + projectedTotalDays * 24 * 60 * 60 * 1000);
-      projectionNote = ` At the current pace, projected completion is around ${projectedCompletion.toISOString().slice(0, 10)}.`;
-    }
+    const projectedCompletion = projectCompletionDate(goal.startDate, elapsedDays, actualFraction);
+    const projectionNote = projectedCompletion
+      ? ` At the current pace, projected completion is around ${projectedCompletion.toISOString().slice(0, 10)}.`
+      : "";
 
     insights.push({
       type: "goal_off_pace",

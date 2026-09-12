@@ -94,4 +94,28 @@ describe("generateGoalPaceInsights()", () => {
     ]);
     expect(insights[0].severity).toBe("critical");
   });
+
+  // Regression: a contribution tiny enough relative to the target made the
+  // linear extrapolation (elapsedDays / completedFraction) overflow the
+  // ±8.64e15 ms Date range, so `new Date(...)` became `Invalid Date` and the
+  // `.toISOString()` in the projection note threw `RangeError: Invalid time
+  // value` — taking down all of /dashboard, since generateInsights() has no
+  // try/catch anywhere up its call chain and the app has no error boundary.
+  it("still produces an insight, without a projection note, when the rate is too slow to project", () => {
+    const insights = generateGoalPaceInsights([
+      {
+        goalId: "goal-7",
+        goalName: "Barely Started",
+        targetAmount: agorot(5_000_000), // ₪50,000
+        currentAmount: agorot(1), // ₪0.01 — fraction of 2e-7
+        startDate: new Date("2026-08-01"),
+        targetDate: new Date("2027-08-01"),
+        today: new Date("2026-08-31"),
+      },
+    ]);
+
+    expect(insights).toHaveLength(1);
+    expect(insights[0].severity).toBe("critical");
+    expect(insights[0].description).not.toContain("projected completion");
+  });
 });

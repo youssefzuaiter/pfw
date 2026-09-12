@@ -58,12 +58,25 @@ class HealthResponse(BaseModel):
 
 class AnomalyTransaction(BaseModel):
     occurred_at_iso: str
-    amount_agorot: float
+    # ge=0 is load-bearing, not decorative. `amount_agorot` is documented
+    # as a POSITIVE expense magnitude (the Node caller negates signed
+    # amounts before sending -- see getRecentExpenseTransactionsForAnomalyDetection),
+    # and anomaly_features.normalize_window() feeds these straight into
+    # math.log1p(), which raises `ValueError: math domain error` for any
+    # value <= -1. Unconstrained, a single negative amount turned into a
+    # task that always came back {"ok": false, "error": "invalid_input"}
+    # -- a silent, permanently-failing pipeline rather than a clear 422 at
+    # the boundary where the bad input actually entered.
+    amount_agorot: float = Field(..., ge=0)
     category_slug: str
 
 
 class AnomalyDetectRequest(BaseModel):
-    transactions: list[AnomalyTransaction] = Field(..., max_length=MAX_ANOMALY_TRANSACTIONS)
+    # min_length=1 for the same reason: an empty window has no baseline to
+    # z-score against, so it can only ever produce a meaningless result.
+    transactions: list[AnomalyTransaction] = Field(
+        ..., min_length=1, max_length=MAX_ANOMALY_TRANSACTIONS
+    )
     window_end_date_key: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 

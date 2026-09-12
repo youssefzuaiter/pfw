@@ -85,7 +85,7 @@ export default async function PortfolioPage() {
             No dividends scheduled. Positions in non-distributing assets (crypto and growth stocks) pay none.
           </p>
         ) : (
-          <DividendSchedule payouts={data.upcomingPayouts} />
+          <DividendSchedule payouts={data.upcomingPayouts} asOf={data.asOf} />
         )}
       </section>
 
