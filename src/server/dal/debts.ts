@@ -34,6 +34,25 @@ export async function createDebt(
   return withUserScope(userId, (tx) => tx.debt.create({ data: { userId, ...input } }));
 }
 
+export type DeleteDebtResult = { ok: true; name: string } | { ok: false; error: "not_found" };
+
+/**
+ * Hard delete — removes the debt and, via `DebtPayment.debt`'s
+ * `onDelete: Cascade` (schema.prisma), every one of its recorded
+ * payments with it. Returns `{ ok: false, error: "not_found" }` for both
+ * a nonexistent debt and one belonging to someone else (IDOR-safe, same
+ * convention as `getDebtById`).
+ */
+export async function deleteDebt(userId: string, debtId: string): Promise<DeleteDebtResult> {
+  return withUserScope(userId, async (tx) => {
+    const existing = await tx.debt.findFirst({ where: { id: debtId, userId } });
+    if (!existing) return { ok: false, error: "not_found" };
+
+    await tx.debt.delete({ where: { id: debtId } });
+    return { ok: true, name: existing.name };
+  });
+}
+
 export type RecordDebtPaymentResult = Awaited<ReturnType<typeof getDebtById>>;
 
 /**

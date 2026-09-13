@@ -48,6 +48,25 @@ export async function addGoalContribution(
   });
 }
 
+export type DeleteGoalResult = { ok: true; name: string } | { ok: false; error: "not_found" };
+
+/**
+ * Hard delete — removes the goal and, via `GoalContribution.goal`'s
+ * `onDelete: Cascade` (schema.prisma), every one of its contributions
+ * with it. Returns `{ ok: false, error: "not_found" }` for both a
+ * nonexistent goal and one belonging to someone else (IDOR-safe, same
+ * convention as `getGoalById`/`deleteCryptoWallet`).
+ */
+export async function deleteGoal(userId: string, goalId: string): Promise<DeleteGoalResult> {
+  return withUserScope(userId, async (tx) => {
+    const existing = await tx.goal.findFirst({ where: { id: goalId, userId } });
+    if (!existing) return { ok: false, error: "not_found" };
+
+    await tx.goal.delete({ where: { id: goalId } });
+    return { ok: true, name: existing.name };
+  });
+}
+
 /**
  * Overwrites one contribution's note with a new zero-knowledge ciphertext
  * blob — used by the vault-setup migration flow to re-encrypt a legacy

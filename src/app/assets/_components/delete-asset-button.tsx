@@ -1,0 +1,46 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { Spinner } from "../../../components/spinner/spinner";
+
+/**
+ * Note for anyone editing this file: prefer a named handler over an
+ * inline arrow function on a button element — an inline `() => ...`
+ * contains a literal `>` from `=>` that confuses
+ * tests/guards/focus-visible.test.ts's regex-based tag scanner.
+ */
+export function DeleteAssetButton({ assetId, assetName }: { assetId: string; assetName: string }) {
+  const router = useRouter();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleDelete() {
+    if (!window.confirm(`Delete "${assetName}"? This removes the asset from your tracked net worth.`)) return;
+
+    setIsDeleting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/assets/${assetId}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Request failed");
+      router.refresh();
+    } catch {
+      setError("Something went wrong — try again.");
+      setIsDeleting(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={isDeleting}
+        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-negative hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+      >
+        {isDeleting && <Spinner />} Delete
+      </button>
+      {error && <span className="text-xs text-negative">{error}</span>}
+    </div>
+  );
+}

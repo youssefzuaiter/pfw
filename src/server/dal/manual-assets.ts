@@ -27,6 +27,25 @@ export async function createManualAsset(
   return withUserScope(userId, (tx) => tx.manualAsset.create({ data: { userId, ...input } }));
 }
 
+export type DeleteManualAssetResult = { ok: true; name: string } | { ok: false; error: "not_found" };
+
+/**
+ * Hard delete — `ManualAsset` has no child rows (a valuation is an
+ * in-place update on the row itself, not a history table), so this is a
+ * plain single-row removal. Returns `{ ok: false, error: "not_found" }`
+ * for both a nonexistent asset and one belonging to someone else
+ * (IDOR-safe, same convention as `getManualAssetById`).
+ */
+export async function deleteManualAsset(userId: string, id: string): Promise<DeleteManualAssetResult> {
+  return withUserScope(userId, async (tx) => {
+    const existing = await tx.manualAsset.findFirst({ where: { id, userId } });
+    if (!existing) return { ok: false, error: "not_found" };
+
+    await tx.manualAsset.delete({ where: { id } });
+    return { ok: true, name: existing.name };
+  });
+}
+
 /** Refreshing the valuation is the whole point of this mutation — it's what moves an asset from "stale" back to "fresh" (src/lib/valuation-freshness.ts). */
 export async function updateManualAssetValuation(
   userId: string,

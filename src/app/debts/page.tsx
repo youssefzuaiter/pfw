@@ -11,6 +11,7 @@ import { agorot, formatAgorot, parseShekelsToAgorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { listDebts } from "../../server/dal/debts";
 import { CreateDebtForm } from "./_components/create-debt-form";
+import { DeleteDebtButton } from "./_components/delete-debt-button";
 import { RecordPaymentForm } from "./_components/record-payment-form";
 
 export const instant = false;
@@ -91,7 +92,10 @@ export default async function DebtsPage({
                     {formatAgorot(balance)} at {formatBpsAsPercent(aprBps)} APR — min. payment {formatAgorot(minimumPayment)}
                   </p>
                 </div>
-                <RecordPaymentForm debtId={debt.id} />
+                <div className="flex items-start gap-2">
+                  <RecordPaymentForm debtId={debt.id} />
+                  <DeleteDebtButton debtId={debt.id} debtName={debt.name} />
+                </div>
               </div>
 
               {negativeAmortization && (

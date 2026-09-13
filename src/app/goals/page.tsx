@@ -8,6 +8,7 @@ import { getZkVaultStatus } from "../../server/dal/zk-vault";
 import { AddContributionForm } from "./_components/add-contribution-form";
 import { ContributionNote } from "./_components/contribution-note";
 import { CreateGoalForm } from "./_components/create-goal-form";
+import { DeleteGoalButton } from "./_components/delete-goal-button";
 import { SecureNotesPanel } from "./_components/secure-notes-panel";
 
 export const instant = false;
@@ -96,7 +97,10 @@ export default async function GoalsPage() {
                     {formatAgorot(currentAmount)} of {formatAgorot(targetAmount)}
                   </p>
                 </div>
-                <AddContributionForm goalId={goal.id} />
+                <div className="flex items-start gap-2">
+                  <AddContributionForm goalId={goal.id} />
+                  <DeleteGoalButton goalId={goal.id} goalName={goal.name} />
+                </div>
               </div>
               <div className="mt-3">
                 <Tickbar

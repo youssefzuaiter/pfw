@@ -6,6 +6,7 @@ import { getCurrentUser } from "../../server/auth/current-user";
 import { listManualAssets } from "../../server/dal/manual-assets";
 import { AddWalletForm } from "./_components/add-wallet-form";
 import { CreateAssetForm } from "./_components/create-asset-form";
+import { DeleteAssetButton } from "./_components/delete-asset-button";
 import { UpdateValuationForm } from "./_components/update-valuation-form";
 import { WalletBalanceRow } from "./_components/wallet-balance-row";
 
@@ -74,9 +75,12 @@ export default async function AssetsPage() {
                     {formatAgorot(agorot(Number(asset.currentValue)))}
                   </p>
                 </div>
-                <Badge variant={FRESHNESS_VARIANT[freshness]} pulse={freshness === "stale"}>
-                  {FRESHNESS_LABEL[freshness]}
-                </Badge>
+                <div className="flex flex-col items-end gap-2">
+                  <Badge variant={FRESHNESS_VARIANT[freshness]} pulse={freshness === "stale"}>
+                    {FRESHNESS_LABEL[freshness]}
+                  </Badge>
+                  <DeleteAssetButton assetId={asset.id} assetName={asset.name} />
+                </div>
               </div>
 
               <p className="mt-2 text-xs text-slate-400">Last valued {asset.valuedAt.toISOString().slice(0, 10)}</p>
