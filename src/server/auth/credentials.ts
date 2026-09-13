@@ -166,6 +166,28 @@ export async function registerUser(email: string, password: string, displayName:
     return { ok: true, userId: claimed.id, inherited: true };
   }
 
-  const created = await admin.user.create({ data: { email, displayName, passwordHash } });
+  // A real, previously-shipped bug (found via a production runtime-error
+  // report: "User X has no uncategorized category"): the demo-inheriting
+  // branch above gets a full seeded dataset — including the one
+  // `Category` row every user is unconditionally assumed to have
+  // (`Category.isUncategorized`, the categorization cascade's fallback
+  // target) — for free from the seed script. A genuinely NEW registration
+  // never got one at all, which meant `createTransaction`/
+  // `importTransactions`/`syncBankConnection`/`deleteCategoryWithReassignment`
+  // (every one of them calls `.findFirstOrThrow`/throws explicitly when
+  // it's missing) would 500 the moment such an account tried to record
+  // its very first transaction that didn't confidently match an existing
+  // category. Created in the SAME transaction as the `User` row — a user
+  // that exists but can never successfully record a transaction is a
+  // broken half-state, the same reasoning `linkBankConnection` (§3oo)
+  // already gives for creating a `BankAccount` and its `BankConnection`
+  // atomically.
+  const created = await admin.$transaction(async (tx) => {
+    const user = await tx.user.create({ data: { email, displayName, passwordHash } });
+    await tx.category.create({
+      data: { userId: user.id, slug: "uncategorized", name: "Uncategorized", isUncategorized: true },
+    });
+    return user;
+  });
   return { ok: true, userId: created.id, inherited: false };
 }

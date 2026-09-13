@@ -1,5 +1,5 @@
 import "server-only";
-import { withUserScope } from "../db/with-user-scope";
+import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
 /** Active (non-archived) categories — what every other screen's filters/selects use. */
 export async function listCategories(userId: string) {
@@ -18,9 +18,36 @@ export async function getCategoryById(userId: string, id: string) {
   return withUserScope(userId, (tx) => tx.category.findFirst({ where: { id, userId } }));
 }
 
-/** Every user has exactly one of these (schema.prisma's Category model) — created by the seed script for the demo user. */
+/** Every user has exactly one of these (schema.prisma's Category model) — created by the seed script for the demo user, and by `registerUser()` for a genuinely new one. */
 export async function getUncategorizedCategory(userId: string) {
   return withUserScope(userId, (tx) => tx.category.findFirstOrThrow({ where: { userId, isUncategorized: true } }));
+}
+
+/**
+ * Self-healing counterpart to the plain lookup above — takes the
+ * CALLER's own already-open `ScopedTransactionClient` (same pattern
+ * `appendLedgerCommit` uses, §3mm) rather than opening a second
+ * transaction, since every real call site here already has one open for
+ * the write it's about to make.
+ *
+ * A real, previously-shipped bug this exists to close: `registerUser()`'s
+ * "genuinely new user" branch never created this category before, so
+ * every account registered before that fix has none — and every one of
+ * this function's callers used to `throw` outright when it was missing,
+ * which is exactly what surfaced in production as
+ * "User X has no uncategorized category" the moment such an account
+ * tried to record its first transaction. Creating it on the spot here,
+ * instead of throwing, repairs an already-broken account the next time
+ * it's touched, with no manual intervention or backfill script needed —
+ * idempotent by construction (a second call finds the row the first one
+ * just created).
+ */
+export async function getOrCreateUncategorizedCategory(tx: ScopedTransactionClient, userId: string) {
+  const existing = await tx.category.findFirst({ where: { userId, isUncategorized: true } });
+  if (existing) return existing;
+  return tx.category.create({
+    data: { userId, slug: "uncategorized", name: "Uncategorized", isUncategorized: true },
+  });
 }
 
 export type CreateCategoryResult = { ok: true; category: Awaited<ReturnType<typeof getCategoryById>> } | { ok: false; error: "slug_taken" };
@@ -78,7 +105,7 @@ export async function deleteCategoryWithReassignment(userId: string, id: string)
     if (!existing) return { ok: false, error: "not_found" };
     if (existing.isUncategorized) return { ok: false, error: "is_uncategorized" };
 
-    const uncategorized = await tx.category.findFirstOrThrow({ where: { userId, isUncategorized: true } });
+    const uncategorized = await getOrCreateUncategorizedCategory(tx, userId);
 
     const { count } = await tx.notableTransaction.updateMany({
       where: { userId, categoryId: id },

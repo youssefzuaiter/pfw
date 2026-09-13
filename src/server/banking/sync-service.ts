@@ -8,6 +8,7 @@ import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { assignDedupeKeys, buildProviderTransactionId } from "../../lib/transaction-dedupe";
 import { withUserScope } from "../db/with-user-scope";
+import { getOrCreateUncategorizedCategory } from "../dal/categories";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { fetchActiveRulesForEvaluation } from "../dal/transaction-rules";
 
@@ -112,8 +113,11 @@ export async function syncBankConnection(userId: string, connectionId: string): 
     userId,
     async (tx) => {
       const categories = await tx.category.findMany({ where: { userId, archivedAt: null } });
-      const uncategorized = categories.find((category) => category.isUncategorized);
-      if (!uncategorized) throw new Error(`User ${userId} has no uncategorized category`);
+      let uncategorized = categories.find((category) => category.isUncategorized);
+      if (!uncategorized) {
+        uncategorized = await getOrCreateUncategorizedCategory(tx, userId);
+        categories.push(uncategorized);
+      }
       const categoryIdBySlug = new Map(categories.map((category) => [category.slug, category.id]));
 
       const activeRules = await fetchActiveRulesForEvaluation(tx, userId);

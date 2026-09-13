@@ -6,6 +6,7 @@ import type { CanonicalImportRow } from "../../lib/csv-import/types";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { buildProviderTransactionId as buildSharedProviderTransactionId } from "../../lib/transaction-dedupe";
 import { withUserScope } from "../db/with-user-scope";
+import { getOrCreateUncategorizedCategory } from "./categories";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
 /** Bulk imports write row-by-row (see with-user-scope.ts) — well above Prisma's 5s default. */
@@ -87,8 +88,11 @@ export async function importTransactions(
       if (!account) throw new BankAccountNotFoundError();
 
       const categories = await tx.category.findMany({ where: { userId, archivedAt: null } });
-      const uncategorized = categories.find((category) => category.isUncategorized);
-      if (!uncategorized) throw new Error(`User ${userId} has no uncategorized category`);
+      let uncategorized = categories.find((category) => category.isUncategorized);
+      if (!uncategorized) {
+        uncategorized = await getOrCreateUncategorizedCategory(tx, userId);
+        categories.push(uncategorized);
+      }
 
       const categoryIdBySlug = new Map(categories.map((category) => [category.slug, category.id]));
 

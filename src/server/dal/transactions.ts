@@ -10,6 +10,7 @@ import { agorot } from "../../lib/money";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { parsePgVectorLiteral, toPgVectorLiteral } from "../../lib/vector-math";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
+import { getOrCreateUncategorizedCategory } from "./categories";
 import { appendLedgerCommit, buildLedgerState } from "./ledger-commits";
 import { BankAccountNotFoundError } from "./transaction-import";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
@@ -351,8 +352,11 @@ export async function createTransaction(userId: string, input: CreateTransaction
     if (!account) throw new BankAccountNotFoundError();
 
     const categories = await tx.category.findMany({ where: { userId, archivedAt: null } });
-    const uncategorized = categories.find((category) => category.isUncategorized);
-    if (!uncategorized) throw new Error(`User ${userId} has no uncategorized category`);
+    let uncategorized = categories.find((category) => category.isUncategorized);
+    if (!uncategorized) {
+      uncategorized = await getOrCreateUncategorizedCategory(tx, userId);
+      categories.push(uncategorized);
+    }
     const categoryIdBySlug = new Map(categories.map((category) => [category.slug, category.id]));
 
     const description = neutralizeFormulaInjection(input.description);
