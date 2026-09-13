@@ -4,6 +4,7 @@ import { getCurrentUser } from "../../../server/auth/current-user";
 import { listBankAccounts } from "../../../server/dal/bank-accounts";
 import { listCategories } from "../../../server/dal/categories";
 import { listTransactions, type TransactionSort } from "../../../server/dal/transactions";
+import { AddTransactionModal } from "./_components/add-transaction-modal";
 import { FilterBar } from "./_components/filter-bar";
 import { ImportCsvForm } from "./_components/import-csv-form";
 import { ReceiptScannerModal } from "./_components/receipt-scanner-modal";
@@ -83,6 +84,7 @@ export default async function TransactionsPage({
       </div>
       <div className="flex flex-wrap items-start gap-3">
         <ImportCsvForm bankAccounts={accountOptions} />
+        <AddTransactionModal bankAccounts={accountOptions} />
         <ReceiptScannerModal bankAccounts={accountOptions} />
       </div>
       <FilterBar categories={categoryOptions} initialCategoryId={categoryId} initialSort={sort} />
