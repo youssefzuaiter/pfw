@@ -65,7 +65,7 @@ function serialize(data: UserSettingsData) {
 
 export async function GET() {
   const user = await getCurrentUser();
-  const rate = checkRateLimit(`user-settings:get:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`user-settings:get:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) return jsonTooManyRequests(rate.resetAt);
 
   try {

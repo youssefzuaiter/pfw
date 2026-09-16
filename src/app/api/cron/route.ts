@@ -4,6 +4,7 @@ import { getCronSecret } from "../../../server/env";
 import { syncExchangeRates } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
+import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
 
@@ -111,10 +112,21 @@ export async function GET(request: NextRequest) {
       deadMansSwitchCheck = { ok: false, error: message, staleData: false };
     }
 
+    // Sweeps `RateLimitBucket` windows that have fully elapsed (see that
+    // model's doc comment). Every check upserts its own row, so nothing
+    // depends on this running — it only keeps the table from growing
+    // without bound on a deployment that never restarts.
+    const rateLimitCleanup = await runJob("rate-limit-cleanup", async () => {
+      const removed = await deleteExpiredRateLimitBuckets();
+      console.log(`cron: rate-limit-cleanup ok — removed=${removed}`);
+      return { ok: true };
+    });
+
     return NextResponse.json({
       fxRateSync,
       cryptoPriceSync,
       deadMansSwitchCheck,
+      rateLimitCleanup,
     });
   } catch (error) {
     console.error("GET /api/cron failed unexpectedly", error);

@@ -71,6 +71,11 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       path.resolve(SRC_ROOT, "server", "auth", "webauthn-admin-ops.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "recovery-code-admin-ops.ts"),
       path.resolve(SRC_ROOT, "server", "auth", "account-lockout.ts"),
+      // Trader integration hardening (ad hoc): resolves the ONE account the
+      // Tier-0 agent's receipts are booked against, for callers that have
+      // no session (the signed webhooks) or a different session (the
+      // health probe) — see that file's own doc comment. Read-only.
+      path.resolve(SRC_ROOT, "server", "paper-trader", "resolve-paper-trading-user.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

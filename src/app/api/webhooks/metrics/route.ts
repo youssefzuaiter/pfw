@@ -1,13 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
+  IDEMPOTENCY_HEADER,
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
   verifyWebhookSignature,
 } from "../../../../lib/webhook-signature";
 import { jsonBadRequest, jsonForbidden, jsonServerError } from "../../../../server/api/responses";
 import { recordScenarioMetrics } from "../../../../server/dal/scenario-metrics";
-import { getPaperTradingUserId, getWebhookSecret } from "../../../../server/env";
+import { getWebhookSecret } from "../../../../server/env";
+import { resolvePaperTradingUser } from "../../../../server/paper-trader/resolve-paper-trading-user";
 
 /**
  * Structured AI-strategy telemetry from the Tier-0 paper-trading agent
@@ -25,10 +27,19 @@ import { getPaperTradingUserId, getWebhookSecret } from "../../../../server/env"
  * avoidable regression from this app's own established posture, not a
  * proportionate relaxation for lower stakes.
  *
- * Deliberately simpler than the trades webhook in one respect: no
- * idempotency-key dedup. A duplicate row on retry is an acceptable,
- * low-severity cost for analytics telemetry — unlike a trade receipt,
- * nothing here moves money or needs `@@unique` protection.
+ * Idempotent on the trader's `X-Idempotency-Key` (trader integration
+ * hardening, ad hoc). This route originally skipped dedup on purpose —
+ * "a duplicate analytics row on retry is a low-severity cost" — which
+ * held while a retry meant three attempts within ~1.5s. It stopped
+ * holding once the trader gained a durable outbox that replays a
+ * delivery whose response it never saw (a 5s client timeout on a cold
+ * Vercel lambda is enough): every replay would have added a second row
+ * for the same evaluated scenario. The header is NOT covered by the MAC,
+ * but here that is acceptable in a way it isn't for the trades route's
+ * dedupe key: the worst a forged/omitted key can do is make a duplicate
+ * row possible (the pre-hardening behaviour), never corrupt or replace
+ * an existing one, and only a caller who already holds WEBHOOK_SECRET
+ * gets this far at all.
  */
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
@@ -89,15 +100,25 @@ export async function POST(request: NextRequest) {
 
   // Same server-controlled-origin reasoning as /api/webhooks/trades:
   // never taken from the body, so a leaked secret can't become a write
-  // primitive against an arbitrary account.
-  const userId = getPaperTradingUserId();
-  if (!userId) {
-    console.error("POST /api/webhooks/metrics: PAPER_TRADING_USER_ID is not configured");
-    return jsonServerError();
+  // primitive against an arbitrary account. A 503 (retryable by the
+  // trader's outbox), not an opaque 500, when the account doesn't resolve.
+  const target = await resolvePaperTradingUser();
+  if (target.status !== "ok") {
+    console.error(
+      `POST /api/webhooks/metrics: paper-trading user ${target.status}` +
+        (target.status === "missing" ? ` (${target.configured} matches no User row)` : " (set PAPER_TRADING_USER_EMAIL)"),
+    );
+    return NextResponse.json(
+      { error: "paper_trading_user_unresolved", detail: "PFW has no valid paper-trading account configured" },
+      { status: 503 },
+    );
   }
+  const userId = target.userId;
+
+  const idempotencyKey = request.headers.get(IDEMPOTENCY_HEADER)?.trim().slice(0, 128) || null;
 
   try {
-    const created = await recordScenarioMetrics(userId, {
+    const result = await recordScenarioMetrics(userId, {
       ticker: metrics.ticker.toUpperCase(),
       hash: metrics.hash,
       predictedMovePct: metrics.predicted_move_pct,
@@ -105,9 +126,13 @@ export async function POST(request: NextRequest) {
       decision: metrics.decision,
       shadowPredictedMovePct: metrics.shadow_predicted_move_pct ?? null,
       shadowDecision: metrics.shadow_decision ?? null,
+      idempotencyKey,
     });
 
-    return NextResponse.json({ ok: true, id: created.id }, { status: 201 });
+    return NextResponse.json(
+      { ok: true, id: result.id, status: result.created ? "recorded" : "duplicate" },
+      { status: result.created ? 201 : 200 },
+    );
   } catch (error) {
     console.error("POST /api/webhooks/metrics failed", error);
     return jsonServerError();

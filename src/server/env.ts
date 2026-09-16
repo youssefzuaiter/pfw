@@ -200,6 +200,17 @@ export function getAppDatabaseUrl(): string {
   return readRequiredEnv("APP_DATABASE_URL");
 }
 
+/**
+ * A non-throwing presence check for callers that must choose a code path
+ * BEFORE any database access happens — today only `rate-limit.ts`'s
+ * store selection. Deliberately a plain presence test, not a validated
+ * read: a malformed URL should still fail loudly at the first real
+ * `getAppDatabaseUrl()` call, not be silently treated as "not configured."
+ */
+export function isAppDatabaseConfigured(): boolean {
+  return Boolean(process.env.APP_DATABASE_URL?.trim());
+}
+
 export function getEncryptionKey(): string {
   return readRequiredEnv("ENCRYPTION_KEY");
 }
@@ -221,56 +232,65 @@ export function getWebhookSecret(): string {
 }
 
 /**
- * Which user a signed trade receipt is booked against. Not a secret — a
- * user id grants nothing on its own, and the receipt's HMAC is what
- * actually authorizes the write — so this is a plain getter that returns
- * `null` when unset rather than throwing at import time.
+ * Which user a signed trade receipt is booked against. Not a secret — an
+ * email or a user id grants nothing on its own, and the receipt's HMAC is
+ * what actually authorizes the write — so these are plain getters that
+ * return `null` when unset rather than throwing at import time.
  *
  * Deliberately NOT taken from the receipt body, for the same reason
  * `getAppUrl()` above refuses to derive itself from the incoming Host
  * header: the target of a write is exactly the kind of value that must
  * come from something THIS server controls, not from request input. A
- * body-supplied `userId` would turn one leaked secret into a write
+ * body-supplied identity would turn one leaked secret into a write
  * primitive against every account in the database instead of one.
+ *
+ * Two ways to name the account, resolved by
+ * `src/server/paper-trader/resolve-paper-trading-user.ts`:
+ * `PAPER_TRADING_USER_EMAIL` is preferred — a real account's email is
+ * stable, whereas the raw id (`PAPER_TRADING_USER_ID`, kept as a legacy
+ * fallback) rotted silently on every `npm run db:seed` because each
+ * re-seed mints a fresh demo row with a new id, and every webhook then
+ * failed as an opaque foreign-key 500 (ad hoc, trader integration
+ * hardening — found live, not by inspection).
  */
+export function getPaperTradingUserEmail(): string | null {
+  const raw = process.env.PAPER_TRADING_USER_EMAIL?.trim().toLowerCase();
+  return raw ? raw : null;
+}
+
 export function getPaperTradingUserId(): string | null {
   const raw = process.env.PAPER_TRADING_USER_ID?.trim();
   return raw ? raw : null;
 }
 
 /**
- * Not a secret — the Tier-0 agent's own FastAPI service origin, a
- * separate local process on the same machine (same one
- * `AgentTelemetryTerminal`'s client-side polling already targets, see
- * its own doc comment). Used server-side by `POST /api/agent/halt` to
- * forward an HMAC-signed emergency-halt request — the browser never
- * talks to this origin directly for that action, unlike the read-only
- * telemetry poll, precisely because signing that request needs
- * `WEBHOOK_SECRET`, which must never reach client-side code.
+ * Not a secret — the Tier-0 agent's FastAPI service origin, and the ONE
+ * place this app names it. Every server-side interaction with the agent
+ * derives from this base: the `/health` probe behind `BackendStatusBadge`,
+ * the `/telemetry` proxy behind `AgentTelemetryTerminal`, and the
+ * HMAC-signed `/control/halt` forward. Defaults to the loopback address a
+ * locally-run `uvicorn main:app --port 8000` listens on; a hosted
+ * deployment sets it to that deployment's origin (e.g. the Render
+ * service). Before this (ad hoc, trader integration hardening) the three
+ * actions had three different defaults — the badge checked Render while
+ * halt and the agent page targeted localhost — so the header could say
+ * "online" about one process while the page said "unreachable" about
+ * another. The browser never talks to this origin directly anymore,
+ * which is also what let the CSP `connect-src` exception for it go.
  */
 export function getPaperTraderServiceUrl(): string {
   return process.env.PAPER_TRADER_SERVICE_URL?.trim() || "http://127.0.0.1:8000";
 }
 
 /**
- * Not a secret — the URL `BackendStatusBadge` (dashboard header) polls
- * server-side to show "AI Engine Online"/offline. Deliberately a
- * SEPARATE config from `getPaperTraderServiceUrl()` above: that one
- * targets whatever the LOCAL agent process is (used for the
- * authenticated halt/telemetry actions, defaults to loopback), while
- * this one targets the hosted Render deployment of the same Tier-0
- * agent that a live demo (or a machine with no local agent running)
- * actually wants to show status for. Checked server-side, not from the
- * browser, so no CSP `connect-src`/CORS exception is needed on this
- * app's side, and the check's reliability never depends on the agent's
- * own CORS configuration (unlike a direct client-side fetch would).
- * `/docs` (FastAPI's auto-generated Swagger page) is used as the
- * liveness probe in the absence of a dedicated `/health` endpoint on
- * that service — any 2xx response there proves the process is up and
- * serving requests.
+ * The agent's liveness probe. `PAPER_TRADER_HEALTH_URL` is an optional
+ * override kept for deployments that already set it; otherwise it is
+ * simply `${service}/health` — the agent's real JSON health endpoint
+ * (which also reports its undelivered-receipt backlog), not the `/docs`
+ * page an earlier version pinged.
  */
 export function getPaperTraderHealthCheckUrl(): string {
-  return process.env.PAPER_TRADER_HEALTH_URL?.trim() || "https://paper-trader-juwa.onrender.com/docs";
+  return process.env.PAPER_TRADER_HEALTH_URL?.trim() || `${getPaperTraderServiceUrl()}/health`;
 }
 
 /**

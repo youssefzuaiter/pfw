@@ -175,7 +175,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials?.password;
         if (typeof email !== "string" || typeof password !== "string") return null;
 
-        if (!checkLoginRateLimit(email)) throw new LoginRateLimitedError();
+        if (!(await checkLoginRateLimit(email))) throw new LoginRateLimitedError();
 
         const verification = await verifyCredentials(email, password);
         if (verification.outcome === "locked") throw new AccountLockedError();
@@ -249,7 +249,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        if (!checkLoginRateLimit(email)) throw new LoginRateLimitedError();
+        if (!(await checkLoginRateLimit(email))) throw new LoginRateLimitedError();
 
         const candidate = await findAuthenticationCandidate(email);
         if (!candidate) return null;
@@ -341,7 +341,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const code = credentials?.code;
         if (typeof email !== "string" || typeof code !== "string") return null;
 
-        if (!checkLoginRateLimit(email)) throw new LoginRateLimitedError();
+        if (!(await checkLoginRateLimit(email))) throw new LoginRateLimitedError();
 
         const user = await adminFindUserByEmail(email);
         if (!user) return null;

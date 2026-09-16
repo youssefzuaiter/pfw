@@ -42,11 +42,11 @@ export async function POST(request: NextRequest) {
   }
   const { email } = parsed.data;
 
-  const globalRate = checkRateLimit("auth:forgot-password:global", GLOBAL_RATE_LIMIT);
+  const globalRate = await checkRateLimit("auth:forgot-password:global", GLOBAL_RATE_LIMIT);
   if (!globalRate.allowed) {
     return jsonTooManyRequests(globalRate.resetAt);
   }
-  const emailRate = checkRateLimit(`auth:forgot-password:${email}`, PER_EMAIL_RATE_LIMIT);
+  const emailRate = await checkRateLimit(`auth:forgot-password:${email}`, PER_EMAIL_RATE_LIMIT);
   if (!emailRate.allowed) {
     return jsonTooManyRequests(emailRate.resetAt);
   }

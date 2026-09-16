@@ -233,17 +233,6 @@ export const proxy = auth((request) => {
   // touches; every exception here is independently justified, narrow (no
   // wildcard broader than one documented CDN subdomain shape per entry),
   // and audited together rather than one being addressed in isolation.
-  //
-  // http://127.0.0.1:8000 / http://localhost:8000 (Agent Telemetry
-  // Dashboard, /trading/agent): the Tier-0 paper-trading agent's own
-  // FastAPI service, running as a SEPARATE LOCAL PROCESS on the same
-  // developer machine — not a third-party host. A plain browser fetch()
-  // is blocked by connect-src regardless of that service's own CORS
-  // headers (CORS and CSP are independent, both-must-allow checks), so
-  // both are needed for AgentTelemetryTerminal's client-side polling to
-  // work at all. Deliberately plain http:// (this local agent has no
-  // TLS story — a real deployment wouldn't have this second process
-  // reachable at all, so this exception only ever matters in local dev).
   const csp = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';
@@ -251,7 +240,7 @@ export const proxy = auth((request) => {
     style-src 'self' 'nonce-${nonce}';
     img-src 'self' blob: data:;
     font-src 'self';
-    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co http://127.0.0.1:8000 http://localhost:8000;
+    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co;
     object-src 'none';
     base-uri 'self';
     form-action 'self';

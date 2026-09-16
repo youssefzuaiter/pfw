@@ -6,6 +6,8 @@ import { getMockDividendSchedule, getMockInstrument, listMockInstruments } from 
 import { accrueInterest, bps } from "../../src/lib/apr";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { encryptField } from "../../src/server/crypto/field-encryption";
+import { DEMO_LOGIN_EMAIL, DEMO_LOGIN_PASSWORD } from "../../src/lib/demo-credentials";
+import argon2 from "argon2";
 import {
   BANKS,
   CATEGORIES,
@@ -95,8 +97,26 @@ async function main() {
   await prisma.$executeRaw`ALTER TABLE "AuditLog" ENABLE TRIGGER audit_log_append_only`;
   await prisma.$executeRaw`ALTER TABLE "LedgerCommit" ENABLE TRIGGER ledger_commit_append_only`;
 
+  // Demo mode (trader integration hardening / demo-login repair, ad hoc):
+  // when NEXT_PUBLIC_DEMO_MODE=true the demo row is created ALREADY
+  // CLAIMED, with the Argon2id hash of the one shared demo password
+  // (`src/lib/demo-credentials.ts` — the same constant the login form's
+  // "Demo Login" button submits), so that button works on a freshly
+  // seeded database instead of failing "Invalid email or password"
+  // forever. The trade-off is deliberate and documented in .env.example:
+  // in demo mode a NEW registration gets a fresh, empty account instead
+  // of inheriting this seeded ledger (§3ff's claim path only fires for
+  // an UNCLAIMED demo row). With the flag off, nothing here changes.
+  const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+  if (demoMode && SEED_USER.email !== DEMO_LOGIN_EMAIL) {
+    throw new Error(`SEED_USER.email (${SEED_USER.email}) must match DEMO_LOGIN_EMAIL (${DEMO_LOGIN_EMAIL})`);
+  }
   const user = await prisma.user.create({
-    data: { email: SEED_USER.email, displayName: SEED_USER.displayName },
+    data: {
+      email: SEED_USER.email,
+      displayName: SEED_USER.displayName,
+      passwordHash: demoMode ? await argon2.hash(DEMO_LOGIN_PASSWORD, { type: argon2.argon2id }) : null,
+    },
   });
   const spouse = await prisma.user.create({
     data: { email: HOUSEHOLD_MEMBERS.spouse.email, displayName: HOUSEHOLD_MEMBERS.spouse.displayName },
@@ -661,6 +681,7 @@ async function main() {
 
   console.log("Seed complete:", {
     user: user.email,
+    demoLogin: demoMode ? "claimed with the shared demo password (NEXT_PUBLIC_DEMO_MODE=true)" : "unclaimed — first registration inherits this ledger",
     checking: checking.id,
     savings: savings.id,
     creditCard: creditCard.id,

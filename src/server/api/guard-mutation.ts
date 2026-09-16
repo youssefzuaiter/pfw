@@ -28,7 +28,7 @@ export async function guardMutation(
 
   const user = await getCurrentUser();
 
-  const result = checkRateLimit(`${routeName}:${user.id}`, rateLimit);
+  const result = await checkRateLimit(`${routeName}:${user.id}`, rateLimit);
   if (!result.allowed) {
     return { response: jsonTooManyRequests(result.resetAt) };
   }

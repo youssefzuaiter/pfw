@@ -15,7 +15,7 @@ const RATE_LIMIT = { windowMs: 60_000, maxRequests: 30 };
 export async function GET() {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`webauthn:list:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`webauthn:list:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

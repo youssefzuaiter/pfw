@@ -33,7 +33,7 @@ const QuerySchema = z.object({
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`analytics:monte-carlo:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`analytics:monte-carlo:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

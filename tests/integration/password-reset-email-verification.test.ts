@@ -40,7 +40,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)(
 
     beforeAll(async () => {
       admin = createAdminClient();
-      _resetRateLimitsForTests();
+      await _resetRateLimitsForTests("auth:");
     });
 
     afterAll(async () => {

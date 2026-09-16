@@ -1,7 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { nativeAmount } from "../../../../lib/currency";
-import { agorot } from "../../../../lib/money";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -10,7 +8,11 @@ import {
 import { jsonBadRequest, jsonForbidden, jsonServerError } from "../../../../server/api/responses";
 import { recordPendingPaperTrade, settlePaperTradeReceipt } from "../../../../server/dal/paper-trades";
 import { findTradeByIdempotencyKey } from "../../../../server/dal/portfolio";
-import { getPaperTradingUserId, getWebhookSecret } from "../../../../server/env";
+import { getLatestRateTable } from "../../../../server/dal/exchange-rates";
+import { getWebhookSecret } from "../../../../server/env";
+import { repriceReceipt } from "../../../../server/paper-trader/reprice-receipt";
+import { settleWithRaceRetry } from "../../../../server/paper-trader/settle-with-race-retry";
+import { resolvePaperTradingUser } from "../../../../server/paper-trader/resolve-paper-trading-user";
 
 /**
  * Signed trade receipts from the Tier-0 paper-trading agent (the local
@@ -42,6 +44,16 @@ import { getPaperTradingUserId, getWebhookSecret } from "../../../../server/env"
  * 2. **Never trust an unsigned header.** `X-Idempotency-Key` is sent for
  *    operator convenience but is NOT covered by the MAC, so the dedupe
  *    key is read from the signed body only.
+ * 3. **Never trust the trader's ILS figures.** The receipt's
+ *    `price_agorot`/`exchange_rate_at_entry` come from a fixed rate in
+ *    the agent's own `.env`; the execution price is re-derived from the
+ *    NATIVE amount at this app's synced rate (`reprice-receipt.ts`,
+ *    law #3) — the trader's numbers are accepted for compatibility and
+ *    compared, never booked.
+ * 4. **A misconfigured target account is a 503, not a 500.** The account
+ *    is resolved by `resolve-paper-trading-user.ts`; when it can't be,
+ *    the response says so in a way the agent's outbox treats as
+ *    retryable, instead of the opaque foreign-key failure it used to be.
  */
 
 /**
@@ -146,13 +158,33 @@ export async function POST(request: NextRequest) {
   }
 
   // Which user this books against comes from server configuration, never
-  // from the body — see `getPaperTradingUserId`'s own doc comment for
-  // why a body-supplied id would turn one leaked secret into a write
-  // primitive against every account in the database.
-  const userId = getPaperTradingUserId();
-  if (!userId) {
-    console.error("POST /api/webhooks/trades: PAPER_TRADING_USER_ID is not configured");
-    return jsonServerError();
+  // from the body — see `getPaperTradingUserEmail`'s doc comment in
+  // env.ts for why a body-supplied identity would turn one leaked secret
+  // into a write primitive against every account in the database.
+  const target = await resolvePaperTradingUser();
+  if (target.status !== "ok") {
+    console.error(
+      `POST /api/webhooks/trades: paper-trading user ${target.status}` +
+        (target.status === "missing" ? ` (${target.configured} matches no User row)` : " (set PAPER_TRADING_USER_EMAIL)"),
+    );
+    return NextResponse.json(
+      { error: "paper_trading_user_unresolved", detail: "PFW has no valid paper-trading account configured" },
+      { status: 503 },
+    );
+  }
+  const userId = target.userId;
+
+  // Law #3: convert once, at execution, at the REAL rate — ours, not the
+  // trader's fixed one (property 3 above).
+  const rateTable = await getLatestRateTable(executedAt);
+  const repriced = repriceReceipt({
+    nativePriceMinorUnits: receipt.native_price_amount,
+    currency: receipt.currency,
+    ourRate: rateTable[receipt.currency],
+    traderRate: exchangeRate,
+  });
+  if (repriced.driftWarning) {
+    console.warn(`POST /api/webhooks/trades: ${repriced.driftWarning} (receipt ${receipt.idempotency_key})`);
   }
 
   const receiptInput = {
@@ -161,10 +193,10 @@ export async function POST(request: NextRequest) {
     symbol: receipt.symbol.toUpperCase(),
     side: (receipt.side === "buy" ? "BUY" : "SELL") as "BUY" | "SELL",
     quantity,
-    priceAgorot: agorot(receipt.price_agorot),
-    nativePriceAmount: nativeAmount(receipt.native_price_amount),
+    priceAgorot: repriced.priceAgorot,
+    nativePriceAmount: repriced.nativePriceAmount,
     currency: receipt.currency,
-    exchangeRate,
+    exchangeRate: repriced.exchangeRate,
     executedAt,
     headline: receipt.signal?.headline ?? "",
   };
@@ -181,51 +213,72 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await settlePaperTradeReceipt(userId, receiptInput);
-
-    switch (result.status) {
-      case "duplicate":
-        // A redelivered receipt is a success, not a failure: the agent
-        // retries on transport errors and 5xx, and answering anything
-        // else would make it retry forever against an already-booked
-        // trade. 200 rather than 201 — nothing was created this time.
-        return NextResponse.json(
-          { ok: true, status: "duplicate", tradeId: result.tradeId },
-          { status: 200 },
-        );
-
-      case "rejected":
-        return jsonBadRequest(
-          result.reason === "no_bank_account"
-            ? "No bank account exists to book this trade against"
-            : "Insufficient shares for this sale",
-        );
-
-      case "recorded":
-        return NextResponse.json(
-          {
-            ok: true,
-            status: "recorded",
-            tradeId: result.tradeId,
-            transactionId: result.transactionId,
-            categoryId: result.categoryId,
-            amountAgorot: result.amountAgorot,
-          },
-          { status: 201 },
-        );
-    }
+    return respondToSettlement(await settleWithRaceRetry(userId, receiptInput));
   } catch (error) {
-    // A concurrent redelivery loses the race on
-    // `@@unique([userId, idempotencyKey])` (or the ledger row's own
-    // `@@unique([userId, providerTransactionId])`) and surfaces here as a
+    // A concurrent redelivery of a PENDING receipt loses the race on
+    // `@@unique([userId, idempotencyKey])` and surfaces here as a
     // constraint violation. That is still a duplicate, not a failure, so
     // it resolves the same way — the identical recovery `/api/trades`
     // already does for its own idempotency-key race.
-    const raced = await findTradeByIdempotencyKey(userId, receipt.idempotency_key).catch(() => null);
-    if (raced) {
-      return NextResponse.json({ ok: true, status: "duplicate", tradeId: raced.id }, { status: 200 });
+    //
+    // ONLY that case, though (trader integration hardening, ad hoc). This
+    // used to resolve ANY error to "duplicate" whenever a trade with the
+    // key existed — which for a SETTLEMENT is always, since the pending
+    // row is there by design. A genuine failure inside
+    // `settlePaperTradeReceipt` therefore answered 200, the trader logged
+    // "delivered", and the trade sat PENDING forever with nothing ever
+    // retrying it — observed live, not hypothetically. Anything that
+    // isn't a unique-constraint race is now a real 500, which is exactly
+    // what the trader's outbox retries. (A settlement's own race is
+    // handled inside `settleWithRaceRetry`, never here.)
+    if (receipt.status === "pending" && isUniqueConstraintViolation(error)) {
+      const raced = await findTradeByIdempotencyKey(userId, receipt.idempotency_key).catch(() => null);
+      if (raced) {
+        return NextResponse.json({ ok: true, status: "duplicate", tradeId: raced.id }, { status: 200 });
+      }
     }
     console.error("POST /api/webhooks/trades failed", error);
     return jsonServerError();
   }
+}
+
+function respondToSettlement(result: Awaited<ReturnType<typeof settleWithRaceRetry>>): NextResponse {
+  switch (result.status) {
+    case "race_unresolved":
+      return NextResponse.json(
+        { ok: false, error: "settlement_race", detail: "Pending receipt not yet committed; retry" },
+        { status: 503 },
+      );
+
+    case "duplicate":
+      // A redelivered receipt is a success, not a failure: the agent
+      // retries on transport errors and 5xx, and answering anything
+      // else would make it retry forever against an already-booked
+      // trade. 200 rather than 201 — nothing was created this time.
+      return NextResponse.json({ ok: true, status: "duplicate", tradeId: result.tradeId }, { status: 200 });
+
+    case "rejected":
+      return jsonBadRequest(
+        result.reason === "no_bank_account"
+          ? "No bank account exists to book this trade against"
+          : "Insufficient shares for this sale",
+      );
+
+    case "recorded":
+      return NextResponse.json(
+        {
+          ok: true,
+          status: "recorded",
+          tradeId: result.tradeId,
+          transactionId: result.transactionId,
+          categoryId: result.categoryId,
+          amountAgorot: result.amountAgorot,
+        },
+        { status: 201 },
+      );
+  }
+}
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002";
 }

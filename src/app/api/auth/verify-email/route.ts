@@ -36,11 +36,11 @@ export async function POST(request: NextRequest) {
   }
   const { token } = parsed.data;
 
-  const globalRate = checkRateLimit("auth:verify-email:global", GLOBAL_RATE_LIMIT);
+  const globalRate = await checkRateLimit("auth:verify-email:global", GLOBAL_RATE_LIMIT);
   if (!globalRate.allowed) {
     return jsonTooManyRequests(globalRate.resetAt);
   }
-  const tokenRate = checkRateLimit(`auth:verify-email:${token}`, PER_TOKEN_RATE_LIMIT);
+  const tokenRate = await checkRateLimit(`auth:verify-email:${token}`, PER_TOKEN_RATE_LIMIT);
   if (!tokenRate.allowed) {
     return jsonTooManyRequests(tokenRate.resetAt);
   }

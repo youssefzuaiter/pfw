@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { registerUser, verifyCredentials } from "../../src/server/auth/credentials";
 import { createAdminClient } from "../../src/server/db/admin-client";
 
@@ -15,6 +15,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Rea
   const testEmails: string[] = [];
   let demoUserId: string | null = null;
   let demoUserOriginalPasswordHash: string | null = null;
+  let demoUserOriginalDisplayName = "PFW Demo [דמו PFW]";
 
   beforeAll(async () => {
     admin = createAdminClient();
@@ -27,6 +28,19 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Rea
     if (demoUser) {
       demoUserId = demoUser.id;
       demoUserOriginalPasswordHash = demoUser.passwordHash;
+      demoUserOriginalDisplayName = demoUser.displayName;
+    }
+  });
+
+  beforeEach(async () => {
+    // Every case below exercises the inherit-on-first-registration path,
+    // which only fires for an UNCLAIMED demo row. In demo mode
+    // (`NEXT_PUBLIC_DEMO_MODE=true`) the seed now creates that row
+    // already claimed with the shared demo password, so un-claim it here
+    // for the duration of each case; `afterEach` restores whatever hash
+    // was there originally, demo mode or not.
+    if (demoUserId) {
+      await admin.user.update({ where: { id: demoUserId }, data: { passwordHash: null } });
     }
   });
 
@@ -43,7 +57,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Rea
     if (demoUserId) {
       await admin.user.update({
         where: { id: demoUserId },
-        data: { email: "demo@pfw.local", passwordHash: demoUserOriginalPasswordHash, displayName: "Demo User" },
+        data: { email: "demo@pfw.local", passwordHash: demoUserOriginalPasswordHash, displayName: demoUserOriginalDisplayName },
       });
     }
     if (testEmails.length > 0) {

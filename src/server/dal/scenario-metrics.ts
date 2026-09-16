@@ -20,6 +20,8 @@ export type RecordScenarioMetricsInput = {
   decision: string;
   shadowPredictedMovePct: number | null;
   shadowDecision: string | null;
+  /** The trader's `X-Idempotency-Key` for this delivery; `null` only for a caller that has none (nothing in this app today). */
+  idempotencyKey: string | null;
 };
 
 /**
@@ -42,20 +44,59 @@ export async function listScenarioMetrics(userId: string, since?: Date) {
   });
 }
 
-export async function recordScenarioMetrics(userId: string, input: RecordScenarioMetricsInput) {
-  return withUserScope(userId, (tx) =>
-    tx.scenarioMetrics.create({
-      data: {
-        userId,
-        ticker: input.ticker,
-        hash: input.hash,
-        predictedMovePct: input.predictedMovePct,
-        actualFillPrice: input.actualFillPrice,
-        decision: input.decision,
-        shadowPredictedMovePct: input.shadowPredictedMovePct,
-        shadowDecision: input.shadowDecision,
-      },
-      select: { id: true },
-    }),
-  );
+/**
+ * Idempotent on `idempotencyKey` (trader integration hardening, ad hoc):
+ * the trader's durable outbox REPLAYS any delivery whose response it
+ * never saw — a 5s client timeout on a cold Vercel lambda is enough to
+ * trigger one — and without this a single evaluated scenario would be
+ * counted twice on the "predicted move %" chart. Read-then-create
+ * inside the same user-scoped transaction, with the `@unique` constraint
+ * as the backstop: two concurrent replays of one key race only on the
+ * index, and the loser's `P2002` is resolved by re-reading the winner's
+ * row rather than surfacing as an error.
+ */
+export async function recordScenarioMetrics(
+  userId: string,
+  input: RecordScenarioMetricsInput,
+): Promise<{ id: string; created: boolean }> {
+  return withUserScope(userId, async (tx) => {
+    if (input.idempotencyKey) {
+      const existing = await tx.scenarioMetrics.findUnique({
+        where: { idempotencyKey: input.idempotencyKey },
+        select: { id: true },
+      });
+      if (existing) return { id: existing.id, created: false };
+    }
+
+    try {
+      const created = await tx.scenarioMetrics.create({
+        data: {
+          userId,
+          ticker: input.ticker,
+          hash: input.hash,
+          predictedMovePct: input.predictedMovePct,
+          actualFillPrice: input.actualFillPrice,
+          decision: input.decision,
+          shadowPredictedMovePct: input.shadowPredictedMovePct,
+          shadowDecision: input.shadowDecision,
+          idempotencyKey: input.idempotencyKey,
+        },
+        select: { id: true },
+      });
+      return { id: created.id, created: true };
+    } catch (error) {
+      if (input.idempotencyKey && isUniqueConstraintViolation(error)) {
+        const winner = await tx.scenarioMetrics.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+          select: { id: true },
+        });
+        if (winner) return { id: winner.id, created: false };
+      }
+      throw error;
+    }
+  });
+}
+
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002";
 }

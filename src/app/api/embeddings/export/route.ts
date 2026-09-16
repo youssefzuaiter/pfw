@@ -20,7 +20,7 @@ const RATE_LIMIT = { windowMs: 60_000, maxRequests: 20 };
 export async function GET() {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`embeddings:export:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`embeddings:export:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

@@ -41,8 +41,8 @@ export function loginRateLimitKey(email: string): string {
   return `auth:login:${email.trim().toLowerCase()}`;
 }
 
-export function checkLoginRateLimit(email: string): boolean {
-  return checkRateLimit(loginRateLimitKey(email), LOGIN_RATE_LIMIT).allowed;
+export async function checkLoginRateLimit(email: string): Promise<boolean> {
+  return (await checkRateLimit(loginRateLimitKey(email), LOGIN_RATE_LIMIT)).allowed;
 }
 
 export type VerifiedUser = { id: string; email: string; displayName: string; tokenVersion: number };

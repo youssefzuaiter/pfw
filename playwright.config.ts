@@ -1,7 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 import { STORAGE_STATE_PATH } from "./tests/e2e/global-setup";
 
-const PORT = 3100;
+// `E2E_PORT` overrides the default when 3100 is taken on a developer's
+// machine — with `reuseExistingServer` on locally, Playwright would
+// otherwise happily run this suite against whatever OTHER app happens to
+// be listening there (seen once: a sibling project's `next start`).
+const PORT = Number(process.env.E2E_PORT) || 3100;
 const BASE_URL = `http://localhost:${PORT}`;
 
 /**

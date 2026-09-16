@@ -4526,10 +4526,13 @@ the first draft, per explicit user instruction: `tokenVersion` starts at
   claimed, the one remaining gap before this is production-verified.
 - **Known limitations, left as such rather than silently expanded
   scope**: no WebAuthn/passkey second factor (TOTP only, matching this
-  app's existing Credentials-only auth strategy, §3ff); no MFA recovery
+  app's existing Credentials-only auth strategy, §3ff) — **superseded:
+  passkeys landed in §3nn**; no MFA recovery
   codes — losing the authenticator app before disabling MFA locks the
   account out with no self-service recovery, the same honest cost this
-  app's other credential-adjacent features already accept (§3m/§3t); the
+  app's other credential-adjacent features already accept (§3m/§3t) —
+  **superseded: hashed recovery codes and a persistent account lockout
+  landed in `b29fdfe` (the login page's "Use a backup code instead")**; the
   tax-simulate/monte-carlo ROUTES themselves were not wired to read
   `UserSettings` as their own defaults (they still default independently,
   per their own existing logic) — `UserSettings` is reachable and
@@ -4933,7 +4936,9 @@ verification of the color change itself.
 - **Known limitations, left as such**: the e2e suite still isn't wired
   into `.github/workflows/ci.yml` (§3z/§3aa's pinned Gitleaks/Semgrep
   jobs are; this Playwright suite remains manual/local-only, same
-  Phase-7-era limitation this pass didn't expand scope to close); no
+  Phase-7-era limitation this pass didn't expand scope to close) —
+  **superseded: `ci.yml` now runs the Playwright suite against a real
+  `next build && next start` (see its `npx playwright install` step)**; no
   visual/pixel screenshot regression testing exists for the new palette
   beyond axe's contrast checks — a human look at the rendered app is
   still worth doing, this pass verified computed contrast ratios, not
@@ -5705,9 +5710,13 @@ checkout during this pass (below) — not a fresh build, a backfill.
   Vercel project's environment variables (a managed Postgres instance
   backs `APP_DATABASE_URL` there — which provider isn't recorded
   anywhere in this repo's history, so it isn't claimed here either).
-  No `vercel.json` exists — Vercel's standard Next.js framework
-  detection is sufficient, no custom build/output configuration needed
-  beyond what's already in `next.config.ts`.
+  No `vercel.json` existed at the time — Vercel's standard Next.js
+  framework detection is sufficient, no custom build/output configuration
+  needed beyond what's already in `next.config.ts`. **Since then a
+  minimal `vercel.json` was added with one daily Cron trigger
+  (`0 0 * * *` → `GET /api/cron`), which runs the FX/crypto-price syncs,
+  the Dead Man's Switch inactivity check and — as of §3uu — the
+  rate-limit bucket sweep.**
 - **Two real, verified deploy-breaking bugs, both found by watching an
   actual Vercel build fail, not by inspection**:
   1. **`output: "standalone"` is incompatible with Vercel's builder.**
@@ -5751,9 +5760,9 @@ checkout during this pass (below) — not a fresh build, a backfill.
   actual production URL's current health was NOT re-checked here — only
   the local repository state that determines what the next push would
   deploy.
-- **Known limitations, stated plainly**: no `vercel.json` means no
-  custom cron, redirects, or region pinning are configured — none has
-  been needed yet. Environment variable values live only in the Vercel
+- **Known limitations, stated plainly**: beyond the one Cron trigger
+  above, no redirects or region pinning are configured — none has been
+  needed yet. Environment variable values live only in the Vercel
   project dashboard, not in this repository (correctly — see §1 law #6
   and `docs/SECURITY-CHECKLIST.md`'s secret-storage tiers), which means
   they are unverifiable from source alone; a deploy failing due to a
@@ -6222,6 +6231,266 @@ distinct bugs, every one reproduced before being believed.
   stored in the `Decimal` column, which would need a data migration and
   a look at `portfolio-math.ts`'s own arithmetic to actually correct.
 
+## 3uu. Trader integration hardening, durable rate limits & demo-login repair (ad hoc)
+
+Explicit user request ("what are the problems still in this website?" →
+"let's solve them"), scoped in plan mode with four decisions made by the
+user up front: Postgres-backed rate limiting (not Redis), the seed
+pre-claims the demo account in demo mode, delete the leftover test
+accounts, and make the trader's manual endpoints emit telemetry; a
+LedgerCommit genesis backfill was offered and declined. Real FinBERT
+weights, re-tokenizing the `slate-*` palette and real training data are
+deferred as their own projects. Every defect below was **reproduced live
+before being believed**, starting from the one that prompted the whole
+pass: getting the paper trader running for the first time this session.
+
+- **The defects, as found**: (1) the trader's webhook delivery gave up
+  after 3 attempts over ~1.5s — a GOOGL paper order landed at Alpaca
+  during a PFW restart and never reached PFW's ledger; (2)
+  `PAPER_TRADING_USER_ID` was a raw row id that rotted on every
+  `npm run db:seed` and failed every webhook as an opaque FK 500 — the
+  local `.env` pointed at an id with zero matching rows; (3) three
+  different "trader" targets — the dashboard badge probed the Render
+  deployment while `/api/agent/halt` and the Agent Activity page targeted
+  `127.0.0.1:8000`, and the page polled the agent **from the browser**
+  under a CSP `connect-src` hardcoded to loopback, so it could never work
+  on the hosted deployment at all; (4) paper trades were booked at the
+  trader's fixed `USD_ILS_RATE=3.7` while everything else in this app
+  converts at the Frankfurter-synced rate; (5) the rate limiter was a
+  per-process `Map` — a no-op on Vercel, where each lambda has its own
+  heap; (6) the Demo Login button hardcoded `demo@pfw.local`/
+  `demopassword123` while the seed created that row with no password, so
+  it failed "Invalid email or password" on every database it was ever
+  tried on; (7) 10 leftover test accounts (`*@example.com`,
+  `youssef.zuaiter2005+tag@gmail.com`), each holding a full copy of the
+  seeded ledger from prior sessions' claims.
+- **Durable rate limiting** (`RateLimitBucket`, migration
+  `20260916160000_rate_limit_buckets_and_metrics_idempotency`, generated
+  via `prisma migrate diff --from-config-datasource` — note `--from-url`
+  was removed in this Prisma version; `src/server/dal/rate-limit-buckets.ts`;
+  `src/server/api/rate-limit.ts` rewritten). Fixed-window now, not
+  sliding: a fixed window is what makes the shared increment ONE atomic
+  `INSERT … ON CONFLICT DO UPDATE … RETURNING count`, so two lambdas
+  race only on Postgres's row lock. The classic fixed-window edge (up to
+  2× across a boundary) is accepted and stated in the file. No RLS —
+  the same documented public-data exception as `ExchangeRate`;
+  `pfw_runtime`'s DML confirmed via `information_schema.role_table_grants`
+  (`DELETE,INSERT,SELECT,UPDATE`), not assumed. `checkRateLimit` became
+  async (25 call sites gained an `await`; `checkLoginRateLimit` too);
+  store selection per call — memory only under `RATE_LIMIT_STORE=memory`
+  (the unit projects) or with no `APP_DATABASE_URL`; a DB error degrades
+  to memory for that call, fail-open and logged once per key/minute. The
+  daily `/api/cron` sweeps expired windows.
+  - **A parallel-worker race caught by the new integration suite's very
+    first run, not assumed**: the test reset originally deleted the WHOLE
+    table, and Vitest runs integration files in parallel workers against
+    one shared database — another suite's `beforeAll` reset wiped this
+    suite's in-flight increments mid-assertion. `_resetRateLimitsForTests`
+    now takes a REQUIRED key prefix and deletes only its own rows.
+  - **Verified live the only way that means anything**: 16 requests
+    against `GET /api/agent/health` (20/min), the dev server fully
+    restarted, then `200, 200, 429` with `Retry-After: 12` — the count
+    carried across the restart (DB row: 21). With the old `Map` all six
+    post-restart requests would have been 200.
+- **One trader target, browser never touches the agent**
+  (`getPaperTraderServiceUrl()` is the single base; the Render default
+  for the health probe is gone — prod sets `PAPER_TRADER_SERVICE_URL`;
+  `GET /api/agent/telemetry` is a new same-origin proxy built on
+  `src/server/paper-trader/telemetry-client.ts`, 3s timeout; telemetry
+  types/parsing extracted to `src/lib/agent-telemetry.ts` so server and
+  client validate with one definition; `http://127.0.0.1:8000
+  http://localhost:8000` removed from `connect-src` in `proxy.ts`).
+  ARCHITECTURE.md's "the browser never talks to paper-trader directly"
+  is now true without exception. `GET /api/agent/health` reports
+  `{ online, outboxPending, paperTradingUser }` and `BackendStatusBadge`
+  gained an amber "degraded" state ("trader account not linked" / "N
+  undelivered receipts") — both were invisible-from-the-UI failures
+  before. Verified in the browser pane: Agent Activity "Connected" with
+  the full `Wake → Evaluate → Execute → Settle → Sleep` stream through
+  the proxy, response CSP no longer mentions `8000`, zero `connect-src`
+  console violations.
+- **Paper-trading account resolved by email**
+  (`src/server/paper-trader/resolve-paper-trading-user.ts`, the app's
+  sixth allowlisted admin-client file — a machine caller with no session,
+  or a signed-in user who is not that account, can't `withUserScope` its
+  way to a different user's row under `User`'s self-or-household RLS
+  policy; read-only, cached 60s). `PAPER_TRADING_USER_EMAIL` preferred,
+  the legacy id honoured as a fallback. Both webhooks answer **503**
+  `paper_trading_user_unresolved` (retryable by the trader's outbox)
+  instead of an opaque FK 500.
+- **Receipts re-priced at PFW's own rate** (law #3):
+  `src/server/paper-trader/reprice-receipt.ts` (pure, unit-tested)
+  derives `priceAgorot` from the NATIVE amount at `getLatestRateTable()`'s
+  rate; the trader's `price_agorot`/`exchange_rate_at_entry` stay in the
+  schema for compatibility, are compared (a >2% drift is logged) and
+  never booked. Verified live on a real autonomous TSLA order:
+  `36491 × 2.97274 = 108478` agorot stored, rate `2.972740` — the synced
+  Frankfurter rate, not the trader's 3.7.
+- **Scenario metrics idempotent** (`ScenarioMetrics.idempotencyKey
+  @unique`; `recordScenarioMetrics` is read-then-create with `P2002`
+  resolved by re-reading the winner). The route's own earlier "no dedup,
+  a duplicate analytics row is a low-severity cost" note was right while
+  a retry meant three attempts in 1.5s and wrong the moment replays
+  existed; the doc comment now says so. Verified: same signed payload
+  twice → `201 recorded` then `200 duplicate`, same id, one row.
+- **A masking bug in the trades webhook, found only because the live
+  TSLA settlement sat `PENDING` after the trader logged it "delivered
+  (HTTP 200)"**: the route's `catch` resolved ANY thrown error to a 200
+  "duplicate" whenever a trade with the key existed — which for a
+  settlement is always, since the pending row is there by design. A
+  genuine failure inside `settlePaperTradeReceipt` therefore looked like
+  success and nothing ever retried it. Narrowed to `P2002` only;
+  anything else is a real 500, which is exactly what the outbox retries.
+  Replaying that settlement against a fresh server booked it correctly
+  (`201 recorded`, ledger entry `-₪23.45`) — the original failure was the
+  stale generated Prisma client in the long-running dev server's module
+  graph (regenerated on disk after it started), i.e. an artifact of this
+  session, but the masking would have hidden any cause.
+- **Two more real bugs, found only by leaving the trader running and
+  reading its log while writing the docs** — both would have shipped
+  otherwise: (1) **the settlement race.** Alpaca fills a paper order
+  within milliseconds and the trader's settlement stream is an
+  independent task, so the "settled" receipt can reach PFW BEFORE the
+  "pending" receipt's transaction commits; the settle path then finds no
+  pending row, tries to CREATE a settled trade, and collides with the
+  pending insert on `@@unique([userId, idempotencyKey])`. The old catch
+  answered "duplicate" (and even the narrowed `P2002`-only catch above
+  would have) — so the trade sat `PENDING` with no ledger row while the
+  trader logged "delivered". Three of four real trades in one evening
+  (settlements 14–16ms behind the pending 201; the one at 77ms was
+  fine). Fixed in `src/server/paper-trader/settle-with-race-retry.ts`:
+  a unique-constraint collision on a settlement means exactly one thing
+  — the pending row exists NOW — so the settle is retried once on it,
+  and if that still fails the route answers a retryable **503**
+  `settlement_race`, never a false 200. Unit-tested against a scripted
+  `P2002` (every branch) plus a live 6-round concurrent invariant check
+  in `tests/integration/paper-trade-settlement.test.ts` — the first
+  tests the pending/settled flow has ever had. The three stranded
+  settlements were replayed by hand from the trader's log and booked
+  (`201 recorded` each). (2) **A regression this pass introduced and
+  caught the same way**: the trader keyed a metrics delivery by
+  `sha256(ticker|headline)` — the SCENARIO's identity — which was fine
+  while PFW ignored the key and wrong the moment PFW deduped on it:
+  three genuine MSFT evaluations at 20:03/20:06/20:10 became `201, 200,
+  200` and one row. `build_scenario_metrics` now mints a `uuid4` per
+  evaluation event (carried unchanged through the outbox, so a replay of
+  that delivery still dedupes); the scenario identity still travels as
+  `hash`.
+- **Demo Login repaired** (`src/lib/demo-credentials.ts` — the ONE
+  definition both the login form and `prisma/seed/index.ts` use; the
+  seed hashes it with Argon2id onto the demo row when
+  `NEXT_PUBLIC_DEMO_MODE=true` and says so in its summary). The stated
+  trade-off, documented in `.env.example`: in demo mode a fresh
+  registration gets an empty account instead of inheriting the seeded
+  ledger (§3ff's claim path only fires for an UNCLAIMED row; with the
+  flag off nothing changes). `tests/integration/auth-credentials.test.ts`
+  now un-claims the row per case and — a pre-existing residue bug made
+  visible by this — restores the original `displayName` instead of
+  hardcoding "Demo User" over the seeded one. Verified: one click on
+  ⚡ Demo Login in the browser pane lands on `/dashboard`.
+- **Local DB cleanup, one transaction as `pfw_app`**: the two append-only
+  triggers bracketed exactly as the seed script does, `DELETE 10`,
+  triggers back to `O`, the two real accounts' transaction counts
+  identical before and after (68 / 67), then `npm run db:seed` — 5
+  users remain (demo, dana, avi, josephzuaiter, youssef.zuaiter2005).
+  `.env` now binds `PAPER_TRADING_USER_EMAIL="josephzuaiter@gmail.com"`.
+- **Trader side (`~/paper-trader`, separate repo)**: new `outbox.py` —
+  a JSONL queue (`outbox/pending.jsonl`, gitignored) with atomic
+  rewrites under an `asyncio.Lock`, replayed every 30s with capped
+  exponential backoff (30s → 5min), dead-lettered on a permanent 4xx or
+  after 7 days; `webhook.py` split into `send_once` (**re-signs with a
+  fresh timestamp per attempt** — PFW's 300s replay window makes a
+  byte-for-byte header replay a guaranteed 403) and `_deliver` (the 3
+  inline attempts, then `enqueue`); the lifespan runs the replay loop
+  unconditionally like the settlement stream; `/health` reports
+  `outbox_pending`; the settlement stream's "will NOT be retried" branch
+  now marks the order synced because the outbox owns delivery.
+  `scheduler.run_signal_cycle` is the one pipeline behind the autonomous
+  loop AND `POST /signals/evaluate|execute` — a manual call now emits
+  telemetry (`(dry run)`-labelled) and posts metrics; before, with
+  `AUTONOMOUS_MODE` off, the Agent Activity page stayed empty however
+  much the trader was used. First tests in that repo:
+  `tests/test_outbox.py` (8 cases, `requirements-dev.txt`, `pytest.ini`).
+  - **The outbox proved itself live and unplanned**: the first metrics
+    webhook after the trader restarted hit the stale-client 500 three
+    times, was queued (`1 pending`), and was replayed at the next pass
+    against the restarted server — `201 Created`, `still_pending=0`,
+    exactly one row. Outbox replay, metrics idempotency and the health
+    badge's `outboxPending` were all exercised by a real failure, not
+    a staged one.
+- **Verified**: `npm run check` with the DB live — 1273 passed, 3
+  skipped (the embedding sidecar); new suites
+  `tests/integration/rate-limit-buckets.test.ts`,
+  `tests/integration/paper-trader-webhooks.test.ts`,
+  `src/server/paper-trader/reprice-receipt.test.ts`, rewritten
+  `rate-limit.test.ts`/`credentials.test.ts`; trader `pytest` 8/8. Live:
+  everything itemised above, in the browser pane and against the real
+  local Postgres and the real running trader. `npm run build` clean;
+  `verify:client-bundle-secrets` clean (71 files, 7 real secret values,
+  none found). Gitleaks `v8.30.1` and Semgrep `1.174.0` (the exact
+  pinned CI invocations, run in Docker against a `git ls-files` export —
+  what a CI checkout actually contains, since scanning the working tree
+  with `node_modules`/`.next` in it takes minutes and finds only
+  build-output noise) — 0 findings each on PFW; the trader repo's one
+  Gitleaks hit was a sample `idempotency_key` in its README's example
+  receipt, replaced with an obvious placeholder.
+- **e2e suite: 36/36, but only after two repairs it forced**: (1)
+  `tests/e2e/global-setup.ts` REGISTERED `demo@pfw.local` to take it
+  over, which only works while the row is unclaimed — under demo mode
+  the register call 409'd and the sign-in used the wrong password; and
+  `global-teardown.ts` hard-reset the row to unclaimed with a hardcoded
+  name, which would have killed Demo Login after every run. Both now
+  snapshot/restore the row (`.auth/demo-row-snapshot.json`, gitignored
+  with the session state) and set the suite's own Argon2id hash
+  directly — mode-independent. (2) `accessibility.spec.ts` audited
+  `/dashboard` while its `loading.tsx` skeleton (added in `bf0180e`,
+  after §3tt's last recorded e2e run) was still showing — `networkidle`
+  fires arbitrarily early on a page with that many client-side polls —
+  and failed `page-has-heading-one`; it now waits for the real page's
+  h1 first. Also: `E2E_PORT` overrides the hardcoded 3100, because with
+  `reuseExistingServer` on locally Playwright would have run the whole
+  suite against a sibling project's `next start` that happened to be
+  listening there (`~/nexus`) — checked before killing anything, which
+  is why it wasn't killed.
+- **Reconciliation against Alpaca's order history — built after all**
+  (`~/paper-trader/reconcile.py`, a follow-up in the same session when
+  the user asked to close the remaining gaps rather than accept them).
+  The outbox makes a receipt durable from the moment delivery fails; it
+  cannot help with a settlement the trader THOUGHT was delivered (the
+  race above, pre-fix) or one it never generated (PFW down at submit
+  time). Alpaca is the source of truth for fills, so a pass lists every
+  CLOSED order in a 24h window, rebuilds each FILLED one's settlement
+  receipt with the same `build_settlement_receipt(order)` the live
+  WebSocket path uses, and re-sends it — PFW's existing idempotency
+  makes every outcome safe: settled → `200 duplicate`, stranded
+  `PENDING` → settled (`201`), never-seen → created as settled (`201`).
+  Runs 15s after startup, then hourly, and on demand via
+  `POST /control/reconcile` (HMAC-verified through a
+  `_verify_control_request` helper now shared with `/control/halt`). A
+  `201` is logged as `RECOVERED` and surfaced on the Agent Activity page
+  as a `settle (reconciled)` event. **First pass, live**: 11 fills seen,
+  **3 recovered** — the two stranded pre-fix trades AND the very first
+  GOOGL order of the day, which PFW had no row for at all; the next pass
+  23s later found all 12 already booked. `tests/test_reconcile.py`
+  (4 cases: selection guards, tallies + callback, broker outage is a
+  no-op, lookback plumbing); trader pytest 12/12. After this,
+  `josephzuaiter@gmail.com` has 13/13 real trades `SETTLED`, zero
+  pending.
+- **Known limitations, left as such**: the reconciliation window is 24h
+  and hourly — a fill lost for longer than a day (PFW down for a full
+  day) needs a manual `POST /control/reconcile` with a larger
+  `lookback_hours` (up to 30 days); the Alpaca paper account is shared
+  with the hosted Render instance of this trader, so a local
+  reconciliation pass would also import any fills THAT instance made —
+  correct for the account's true state, but worth knowing; the trader's sentiment model is still the
+  `placeholder-finbert-v0` stub; rate limiting is fixed-window; the local
+  dev database never runs `/api/cron`, so its FX rate is whatever the
+  last manual `npm run sync:rates` left (the TSLA trade above booked at
+  an Aug-28 rate for exactly that reason); the desktop preview tool
+  stops the dev server between turns, which is what created every
+  "PFW down" window this session — run `npm run dev` in your own
+  terminal when the trader needs PFW up continuously.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
@@ -6521,10 +6790,12 @@ src/proxy.ts                 CSP nonce generation; also redirects "/" -> "/dashb
 src/app/globals.css           design tokens, tabular-figures utility, motion guard
 src/app/layout.tsx             fonts, nav shell, forces dynamic rendering (see §3)
 src/app/page.tsx                fallback redirect (proxy.ts is the real one)
-src/app/dashboard/              page.tsx + _components/ (hero, feed, 3 charts)
-src/app/transactions/           page.tsx + _components/ (filter bar, table, category select)
+src/app/(finance)/              route group (shared layout) for dashboard, transactions,
+                                  budgets, analytics — paths below are relative to it
+src/app/(finance)/dashboard/    page.tsx + _components/ (hero, feed, charts, backend-status-badge)
+src/app/(finance)/transactions/ page.tsx + _components/ (filter bar, table, category select)
 src/app/categories/             create/rename/archive/delete-with-reassignment
-src/app/budgets/                per-category limits, month-progress proration, Tickbar
+src/app/(finance)/budgets/      envelope allocations (§3ss), rolling balances, Tickbar
 src/app/goals/                  progress summary, contribution log
 src/app/debts/                  payoff timeline, negative-amortization flag, avalanche/snowball
 src/app/assets/                 valuation freshness (Fresh/Aging/Stale)

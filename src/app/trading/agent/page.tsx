@@ -10,8 +10,9 @@ export const instant = false;
  * Two genuinely different data sources on one page, kept honestly
  * distinct rather than blended: the live wake/evaluate/reject/execute
  * event stream still comes from the Tier-0 agent's own FastAPI process
- * (`AgentTelemetryTerminal`, unchanged — see its own doc comment), which
- * this app's database has no record of at all. The new predicted-move
+ * (`AgentTelemetryTerminal`, now via the same-origin `GET /api/agent/telemetry`
+ * proxy — see its own doc comment), which this app's database has no
+ * record of at all. The new predicted-move
  * chart below it (Phase 2, ad hoc) is the first read this page has ever
  * done against PFW's own `ScenarioMetrics` table — the persisted,
  * webhook-recorded history of every scenario the agent has evaluated,
@@ -30,7 +31,7 @@ export default async function AgentActivityPage() {
 
       <p className="text-sm text-muted">
         Real-time view into the Tier-0 autonomous paper-trading agent — wake/evaluate/reject/execute/sleep events,
-        polled directly from its FastAPI process every few seconds.
+        relayed from its FastAPI process through this app&rsquo;s own server every few seconds.
       </p>
 
       <section className="rounded-lg border border-border bg-surface p-4">

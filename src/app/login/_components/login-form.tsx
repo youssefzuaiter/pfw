@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { DEMO_LOGIN_EMAIL, DEMO_LOGIN_PASSWORD } from "../../../lib/demo-credentials";
 
 /**
  * Device-Bound Biometrics via Passkeys (ad hoc) — "Sign in with Passkey"
@@ -71,8 +72,9 @@ async function signInWithRecoveryCode(email: string, code: string): Promise<{ ok
 
 /**
  * Demo Login (ad hoc, built for live/trade-show demos) — auto-fills and
- * instantly submits the seeded `demo@pfw.local` credentials
- * (`prisma/seed/israeli-data.ts`'s `SEED_USER`) against the SAME
+ * instantly submits the seeded demo credentials (`src/lib/demo-credentials.ts`,
+ * the one definition the seed script also hashes onto the demo row when
+ * `NEXT_PUBLIC_DEMO_MODE=true`) against the SAME
  * `credentials` provider the password form below uses, so it's subject
  * to the exact same rate-limiting/lockout/CSRF handling as a real login,
  * never a bypass of any of it. Gated on `NEXT_PUBLIC_DEMO_MODE` — see
@@ -81,8 +83,6 @@ async function signInWithRecoveryCode(email: string, code: string): Promise<{ ok
  * be visible and usable by anyone who reaches the public login page, not
  * just an audience at a supervised demo.
  */
-const DEMO_LOGIN_EMAIL = "demo@pfw.local";
-const DEMO_LOGIN_PASSWORD = "demopassword123";
 const DEMO_MODE_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
 /**

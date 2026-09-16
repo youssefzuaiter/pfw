@@ -26,7 +26,7 @@ const RATE_LIMIT = { windowMs: 60_000, maxRequests: 10 };
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
 
-  const limit = checkRateLimit(`dead-mans-switch:recover:status:${token}`, RATE_LIMIT);
+  const limit = await checkRateLimit(`dead-mans-switch:recover:status:${token}`, RATE_LIMIT);
   if (!limit.allowed) return jsonTooManyRequests(limit.resetAt);
 
   try {
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { token } = await params;
 
-  const limit = checkRateLimit(`dead-mans-switch:recover:submit:${token}`, RATE_LIMIT);
+  const limit = await checkRateLimit(`dead-mans-switch:recover:submit:${token}`, RATE_LIMIT);
   if (!limit.allowed) return jsonTooManyRequests(limit.resetAt);
 
   let rawBody: unknown;

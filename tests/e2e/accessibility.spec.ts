@@ -18,6 +18,14 @@ test.describe("accessibility", () => {
     test(`${route} has no axe violations`, async ({ page }) => {
       await page.goto(route);
       await page.waitForLoadState("networkidle");
+      // Every primary screen renders a `loading.tsx` skeleton (bf0180e)
+      // while its Server Component streams, and the skeleton has no
+      // heading. `networkidle` can fire while the skeleton is still up
+      // (the dashboard's many client-side polls make the timing
+      // arbitrary), so axe would audit the placeholder and fail
+      // `page-has-heading-one` — seen once on /dashboard. Wait for the
+      // real page's h1 so the audit is of the screen, not the skeleton.
+      await page.getByRole("heading", { level: 1 }).first().waitFor({ state: "visible" });
 
       const results = await new AxeBuilder({ page }).analyze();
 

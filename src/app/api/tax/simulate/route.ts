@@ -36,7 +36,7 @@ const QuerySchema = z.object({
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`tax:simulate:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`tax:simulate:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

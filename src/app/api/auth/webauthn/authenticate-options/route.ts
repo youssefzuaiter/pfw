@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
   }
   const { email } = parsed.data;
 
-  const rate = checkRateLimit(loginRateLimitKey(email), LOGIN_RATE_LIMIT);
+  const rate = await checkRateLimit(loginRateLimitKey(email), LOGIN_RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

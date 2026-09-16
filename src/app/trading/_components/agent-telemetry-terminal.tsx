@@ -3,35 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, type BadgeVariant } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
-
-/** Mirrors scheduler.py's TelemetryAction in the Tier-0 paper-trading agent. */
-type TelemetryAction =
-  | "wake"
-  | "evaluate"
-  | "reject"
-  | "execute"
-  | "settle"
-  | "sleep"
-  | "error"
-  | "critical_alert";
-
-type TelemetryEvent = {
-  timestamp: string;
-  action: TelemetryAction;
-  ticker: string | null;
-  status: string;
-  details: string;
-};
+import { parseTelemetryEvents, type TelemetryAction, type TelemetryEvent } from "../../../lib/agent-telemetry";
 
 /**
- * The Tier-0 agent's own FastAPI service, running as a SEPARATE LOCAL
- * PROCESS on the same machine — not part of this Next.js app or its
- * database. See src/proxy.ts's connect-src comment for why this exact
- * origin is CSP-allowlisted; this only ever works when that process is
- * also running locally (`uvicorn main:app --port 8000` in ~/paper-trader).
+ * The Tier-0 agent's live wake/evaluate/reject/execute event feed,
+ * polled through this app's OWN `GET /api/agent/telemetry` (a same-origin
+ * server-side proxy — see `src/server/paper-trader/telemetry-client.ts`
+ * for why the browser no longer fetches the agent's origin directly).
+ * Whether that's a local `uvicorn main:app --port 8000` or the hosted
+ * deployment is purely the server's `PAPER_TRADER_SERVICE_URL` concern;
+ * this component has no idea, which is the point.
  */
-const AGENT_TELEMETRY_URL =
-  process.env.NEXT_PUBLIC_AGENT_TELEMETRY_URL ?? "http://127.0.0.1:8000/telemetry";
+const AGENT_TELEMETRY_URL = "/api/agent/telemetry";
 
 const POLL_INTERVAL_MS = 4000;
 
@@ -69,49 +52,6 @@ const ACTION_VARIANT: Record<TelemetryAction, BadgeVariant> = {
 };
 
 type ConnectionState = "connecting" | "connected" | "unreachable";
-
-const TELEMETRY_ACTIONS = new Set<string>([
-  "wake",
-  "evaluate",
-  "reject",
-  "execute",
-  "settle",
-  "sleep",
-  "error",
-  "critical_alert",
-]);
-
-/**
- * The agent is a SEPARATE process this app doesn't control or deploy in
- * lockstep, so its response is untrusted input crossing a trust boundary
- * — exactly the treatment `rate-sync.ts`/`price-sync.ts` already give
- * Frankfurter and CoinGecko. A bare `as TelemetryEvent[]` cast was a real
- * crash, not a style nit: any non-array body (a FastAPI `{"detail": ...}`
- * error served with a 200 by a proxy, a `null`, or a future
- * `{events: [...]}` reshape) reached `[...events].reverse()` below and
- * threw `TypeError: events is not iterable` during render, which with no
- * `error.tsx` boundary in this app blanks the whole /trading/agent page.
- *
- * An unrecognized `action` is dropped rather than rendered: it would
- * otherwise index `ACTION_LABEL`/`ACTION_VARIANT` to `undefined`, which
- * renders an unlabelled row with `class="... undefined"` — a silent
- * mis-render that's harder to notice than a missing row.
- */
-function parseTelemetryEvents(body: unknown): TelemetryEvent[] {
-  if (!Array.isArray(body)) return [];
-  return body.filter((item): item is TelemetryEvent => {
-    if (typeof item !== "object" || item === null) return false;
-    const candidate = item as Record<string, unknown>;
-    return (
-      typeof candidate.timestamp === "string" &&
-      typeof candidate.action === "string" &&
-      TELEMETRY_ACTIONS.has(candidate.action) &&
-      typeof candidate.status === "string" &&
-      typeof candidate.details === "string" &&
-      (candidate.ticker === null || typeof candidate.ticker === "string")
-    );
-  });
-}
 
 function formatTimestamp(iso: string): string {
   try {
@@ -177,10 +117,15 @@ export function AgentTelemetryTerminal() {
       abortRef.current = controller;
 
       try {
-        const response = await fetch(AGENT_TELEMETRY_URL, { signal: controller.signal });
-        if (!response.ok) throw new Error(`Agent returned ${response.status}`);
+        const response = await fetch(AGENT_TELEMETRY_URL, { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error(`Telemetry proxy returned ${response.status}`);
         const body: unknown = await response.json();
-        setEvents(parseTelemetryEvents(body));
+        const online = typeof body === "object" && body !== null && (body as { online?: unknown }).online === true;
+        if (!online) {
+          setConnection("unreachable");
+          return;
+        }
+        setEvents(parseTelemetryEvents((body as { events?: unknown }).events));
         setConnection("connected");
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -222,8 +167,8 @@ export function AgentTelemetryTerminal() {
 
       {connection === "unreachable" && (
         <p className="rounded-md border border-border bg-bg p-3 text-sm text-muted">
-          Could not reach the Tier-0 agent at{" "}
-          <code className="font-mono text-xs">{AGENT_TELEMETRY_URL}</code>. Make sure the FastAPI service is running
+          The server could not reach the Tier-0 agent at its configured{" "}
+          <code className="font-mono text-xs">PAPER_TRADER_SERVICE_URL</code>. Make sure the FastAPI service is running
           (<code className="font-mono text-xs">uvicorn main:app --port 8000</code> in <code className="font-mono text-xs">paper-trader</code>).
         </p>
       )}

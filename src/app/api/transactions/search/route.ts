@@ -66,7 +66,7 @@ function serializeRow(row: SearchRow) {
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`transactions:semantic-search:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`transactions:semantic-search:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

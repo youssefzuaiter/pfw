@@ -23,7 +23,7 @@ const RATE_LIMIT = { windowMs: 60_000, maxRequests: 30 };
 export async function GET() {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`zk:notes:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`zk:notes:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

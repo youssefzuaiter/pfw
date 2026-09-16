@@ -1190,10 +1190,45 @@ model ScenarioMetrics {
   /// anything, so its verdict must never be spelled the same way a real
   /// one is.
   shadowDecision         String?
+  /// The trader's `X-Idempotency-Key` for this delivery (ad hoc, trader
+  /// integration hardening). Nullable only because rows written before
+  /// this column existed carry no key; every new write stamps one, and
+  /// `recordScenarioMetrics` returns the existing row instead of creating
+  /// a second one when a key repeats. Load-bearing now that the trader
+  /// has a durable outbox that REPLAYS a delivery whose response it never
+  /// saw (a 5s client timeout on a cold Vercel lambda is enough) — without
+  /// this, one evaluated scenario could be counted twice.
+  idempotencyKey   String?  @unique
   createdAt        DateTime @default(now())
 
   @@index([userId, ticker, createdAt])
   @@index([hash])
+}
+
+/// Fixed-window request counters backing `src/server/api/rate-limit.ts`
+/// (ad hoc, trader integration hardening). Deliberately NOT user-scoped
+/// and NOT RLS-protected — the same documented exception `ExchangeRate`
+/// takes: a bucket key is an opaque string a route chose (`"agent:health:
+/// <userId>"`, `"auth:login:<email>"`, `"register:global"`), not a row
+/// that belongs to a user, and several keys legitimately have no user at
+/// all. Why a table and not process memory: the live deployment is
+/// Vercel serverless (AGENTS.md §3pp), where every lambda instance has
+/// its own heap — an in-memory `Map` there meant every limit in this app
+/// was effectively unenforced in production. `pfw_runtime` already holds
+/// DML on new tables via the blanket `ALTER DEFAULT PRIVILEGES` grant
+/// from the rls_and_runtime_role migration (confirmed the same way §3k
+/// did for `ExchangeRate`). Rows expire at `expiresAt` and are swept by
+/// the daily `/api/cron` job; the primary key is what makes the
+/// increment a single atomic `INSERT … ON CONFLICT DO UPDATE`.
+model RateLimitBucket {
+  key         String
+  /// Unix ms of the window's start, i.e. `floor(now / windowMs) * windowMs`.
+  windowStart BigInt
+  count       Int
+  expiresAt   DateTime
+
+  @@id([key, windowStart])
+  @@index([expiresAt])
 }
 
 /// Historical only — "today" is always computed live by the DAL, never

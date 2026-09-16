@@ -21,7 +21,7 @@ const RATE_LIMIT = { windowMs: 60_000, maxRequests: 30 };
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
 
-  const rate = checkRateLimit(`transactions:ledger:${user.id}`, RATE_LIMIT);
+  const rate = await checkRateLimit(`transactions:ledger:${user.id}`, RATE_LIMIT);
   if (!rate.allowed) {
     return jsonTooManyRequests(rate.resetAt);
   }

@@ -1,30 +1,30 @@
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { Client } from "pg";
-import { E2E_EMAIL } from "./global-setup";
+import { DEMO_ROW_SNAPSHOT_PATH, E2E_EMAIL, type DemoRowSnapshot } from "./global-setup";
 
 /**
- * Restores the seeded `demo@pfw.local` row to its original unclaimed
- * state (`prisma/seed/israeli-data.ts`'s `SEED_USER`) after
- * `global-setup.ts` claims it for the run — same reasoning
- * `tests/integration/auth-credentials.test.ts`'s own `afterEach` already
- * gives for this exact row: leave the shared local dev DB no worse than
- * found, so a developer running `npm run test:e2e` doesn't wake up to a
- * "claimed" demo account they never registered themselves.
- *
- * Matched by id, not by the CURRENT email — global-setup claims the row
- * via its ORIGINAL `demo@pfw.local` email (Auth.js's `registerUser`
- * only ever targets that literal address), so it's still findable by
- * that same email here, unlike the household-member rows this same
- * pattern is careful never to touch.
+ * Puts the seeded `demo@pfw.local` row back exactly as `global-setup.ts`
+ * found it — its original `passwordHash` (NULL when the seed left it
+ * unclaimed; the Argon2id hash of the shared demo password when
+ * `NEXT_PUBLIC_DEMO_MODE=true`, §3uu) and `displayName` — so a developer
+ * running the suite locally never wakes up to a demo account that stopped
+ * working, in either mode. The previous version hard-reset the row to
+ * unclaimed with a hardcoded name, which silently broke Demo Login after
+ * every run once the seed started pre-claiming the row.
  */
 export default async function globalTeardown() {
+  if (!existsSync(DEMO_ROW_SNAPSHOT_PATH)) return; // setup never got as far as taking the row over
+  const snapshot = JSON.parse(readFileSync(DEMO_ROW_SNAPSHOT_PATH, "utf8")) as DemoRowSnapshot;
+
   const db = new Client({ connectionString: process.env.DATABASE_URL });
   await db.connect();
   try {
     await db.query(
-      'UPDATE "User" SET email = $1, "passwordHash" = NULL, "displayName" = $2 WHERE email = $3',
-      [E2E_EMAIL, "PFW Demo [דמו PFW]", E2E_EMAIL],
+      'UPDATE "User" SET email = $1, "passwordHash" = $2, "displayName" = $3 WHERE id = $4',
+      [E2E_EMAIL, snapshot.passwordHash, snapshot.displayName, snapshot.id],
     );
   } finally {
     await db.end();
+    unlinkSync(DEMO_ROW_SNAPSHOT_PATH);
   }
 }

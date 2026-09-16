@@ -139,10 +139,28 @@ they run in opposite directions and use different trust mechanisms:
   the agent pushes signed trade receipts and scenario telemetry. No user
   session exists on this path — the trust boundary is entirely an
   HMAC-SHA256 signature over the raw request body (`WEBHOOK_SECRET`, shared
-  by both services' `.env` files, never sent in a request).
-- **PFW → paper-trader** (`GET /api/agent/health`, `POST /api/agent/halt`):
-  the *browser* never talks to paper-trader directly. `/api/agent/health` is
-  a server-side proxy the dashboard polls every 30s; `/api/agent/halt` is
+  by both services' `.env` files, never sent in a request). Delivery is
+  durable on the agent side: a receipt PFW doesn't acknowledge is queued in
+  `~/paper-trader/outbox.py` and re-signed/replayed with backoff until it
+  is, and both PFW routes dedupe on the receipt's idempotency key so a
+  replay can never double-book (AGENTS.md §3uu). `~/paper-trader/reconcile.py`
+  closes what the outbox can't: hourly (and at startup) it re-derives a
+  settlement receipt for every fill Alpaca reports in the last 24h and
+  re-sends it — PFW's idempotency makes that safe, and a fill PFW had
+  lost or never seen gets booked. PFW re-prices every
+  receipt's native USD amount at its OWN synced FX rate — the agent's
+  `exchange_rate_at_entry`/agorot fields are informational only.
+- **PFW → paper-trader** (`GET /api/agent/health`, `GET /api/agent/telemetry`,
+  `POST /api/agent/halt`): the *browser* never talks to paper-trader directly
+  — true without exception since the trader-integration hardening pass
+  (AGENTS.md §3uu; before it, the Agent Activity page polled the agent's
+  origin from the browser, which needed a loopback CSP exception and could
+  never work against the hosted deployment). All three derive the agent's
+  origin from ONE setting, `PAPER_TRADER_SERVICE_URL`. `/api/agent/health` is
+  a server-side proxy the dashboard polls every 30s (it also reports whether
+  the paper-trading account resolves and how many receipts the agent has
+  queued but not delivered); `/api/agent/telemetry` relays the agent's
+  in-memory event feed to the Agent Activity page every 4s; `/api/agent/halt` is
   signed **server-side**, after `guardMutation()` has already confirmed a
   real authenticated PFW session, specifically so `WEBHOOK_SECRET` never has
   to reach client-side JavaScript (see `src/app/api/agent/halt/route.ts`'s
@@ -414,8 +432,11 @@ POSTed to /api/webhooks/metrics)                          |
                                                                 v
                                               recordScenarioMetrics() -->
                                               ScenarioMetrics table -->
-                                              agent-telemetry-terminal.tsx
-                                              / agent-predicted-move-chart.tsx
+                                              agent-predicted-move-chart.tsx
+                                              (the live event feed itself reaches
+                                              agent-telemetry-terminal.tsx via
+                                              GET /api/agent/telemetry, a server-
+                                              side relay of the agent's deque)
 ```
 
 ### 4.4 Async anomaly-detection offload (built this session, `sidecar/`)
