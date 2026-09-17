@@ -6452,6 +6452,20 @@ pass: getting the paper trader running for the first time this session.
   suite against a sibling project's `next start` that happened to be
   listening there (`~/nexus`) — checked before killing anything, which
   is why it wasn't killed.
+- **CI caught the OTHER half of the race that local Postgres never
+  produced**: the first CI run after the push failed exactly one test —
+  the 6-round concurrent invariant check — with `P2002` on
+  `Trade_userId_idempotencyKey_key` thrown from the PENDING side. On the
+  runner's Postgres the settlement won the race for real (it never did
+  locally in a dozen runs), created the trade as SETTLED, and the late
+  pending insert then collided. The route had always handled that
+  inline (`catch` → `200 duplicate`), but the DAL call the test made
+  directly had no such tolerance. Fixed the same way as the settle side:
+  `recordPendingWithRaceTolerance` (also in `settle-with-race-retry.ts`,
+  both dependencies injectable) resolves a P2002-with-an-existing-row to
+  `duplicate` and rethrows everything else; the route uses it and its
+  own pending-side `catch` is gone; the concurrent test uses it; four
+  deterministic unit cases cover every branch. `npm run check` 1285/3.
 - **Reconciliation against Alpaca's order history — built after all**
   (`~/paper-trader/reconcile.py`, a follow-up in the same session when
   the user asked to close the remaining gaps rather than accept them).

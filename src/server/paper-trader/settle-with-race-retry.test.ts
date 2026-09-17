@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { agorot } from "../../lib/money";
 import { nativeAmount } from "../../lib/currency";
 import type { PaperTradeReceiptInput } from "../dal/paper-trades";
-import { settleWithRaceRetry, type SettleFn } from "./settle-with-race-retry";
+import {
+  recordPendingWithRaceTolerance,
+  settleWithRaceRetry,
+  type FindTradeFn,
+  type RecordPendingFn,
+  type SettleFn,
+} from "./settle-with-race-retry";
 
 const input: PaperTradeReceiptInput = {
   idempotencyKey: "race-key",
@@ -51,5 +57,39 @@ describe("settleWithRaceRetry()", () => {
     const settle = vi.fn<SettleFn>().mockResolvedValueOnce({ status: "duplicate", tradeId: "t1" });
     expect(await settleWithRaceRetry("u1", input, settle)).toEqual({ status: "duplicate", tradeId: "t1" });
     expect(settle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recordPendingWithRaceTolerance()", () => {
+  const settledRow = { id: "t-settled" } as Awaited<ReturnType<FindTradeFn>>;
+
+  it("resolves a pending insert that lost to an already-booked row as a duplicate (the CI-caught interleaving)", async () => {
+    const recordPending = vi.fn<RecordPendingFn>().mockRejectedValueOnce(p2002);
+    const findExisting = vi.fn<FindTradeFn>().mockResolvedValueOnce(settledRow);
+    expect(await recordPendingWithRaceTolerance("u1", input, recordPending, findExisting)).toEqual({
+      status: "duplicate",
+      tradeId: "t-settled",
+    });
+    expect(findExisting).toHaveBeenCalledWith("u1", "race-key");
+  });
+
+  it("rethrows a unique-constraint error when no trade with that key can be found (not a race, a real fault)", async () => {
+    const recordPending = vi.fn<RecordPendingFn>().mockRejectedValueOnce(p2002);
+    const findExisting = vi.fn<FindTradeFn>().mockResolvedValueOnce(null);
+    await expect(recordPendingWithRaceTolerance("u1", input, recordPending, findExisting)).rejects.toBe(p2002);
+  });
+
+  it("rethrows anything that is not a unique-constraint violation without looking anything up", async () => {
+    const recordPending = vi.fn<RecordPendingFn>().mockRejectedValueOnce(new Error("connection reset"));
+    const findExisting = vi.fn<FindTradeFn>();
+    await expect(recordPendingWithRaceTolerance("u1", input, recordPending, findExisting)).rejects.toThrow("connection reset");
+    expect(findExisting).not.toHaveBeenCalled();
+  });
+
+  it("passes a first-try success straight through", async () => {
+    const recordPending = vi.fn<RecordPendingFn>().mockResolvedValueOnce({ status: "recorded", tradeId: "t1" });
+    const findExisting = vi.fn<FindTradeFn>();
+    expect(await recordPendingWithRaceTolerance("u1", input, recordPending, findExisting)).toEqual({ status: "recorded", tradeId: "t1" });
+    expect(findExisting).not.toHaveBeenCalled();
   });
 });

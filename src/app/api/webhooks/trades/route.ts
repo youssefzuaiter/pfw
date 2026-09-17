@@ -6,12 +6,10 @@ import {
   verifyWebhookSignature,
 } from "../../../../lib/webhook-signature";
 import { jsonBadRequest, jsonForbidden, jsonServerError } from "../../../../server/api/responses";
-import { recordPendingPaperTrade, settlePaperTradeReceipt } from "../../../../server/dal/paper-trades";
-import { findTradeByIdempotencyKey } from "../../../../server/dal/portfolio";
 import { getLatestRateTable } from "../../../../server/dal/exchange-rates";
 import { getWebhookSecret } from "../../../../server/env";
 import { repriceReceipt } from "../../../../server/paper-trader/reprice-receipt";
-import { settleWithRaceRetry } from "../../../../server/paper-trader/settle-with-race-retry";
+import { recordPendingWithRaceTolerance, settleWithRaceRetry } from "../../../../server/paper-trader/settle-with-race-retry";
 import { resolvePaperTradingUser } from "../../../../server/paper-trader/resolve-paper-trading-user";
 
 /**
@@ -206,7 +204,7 @@ export async function POST(request: NextRequest) {
     // envelope/ledger impact at all) — see paper-trades.ts's module doc
     // comment for why. Never 201s a ledger effect that hasn't happened.
     if (receipt.status === "pending") {
-      const pendingResult = await recordPendingPaperTrade(userId, receiptInput);
+      const pendingResult = await recordPendingWithRaceTolerance(userId, receiptInput);
       return NextResponse.json(
         { ok: true, status: pendingResult.status, tradeId: pendingResult.tradeId },
         { status: pendingResult.status === "recorded" ? 201 : 200 },
@@ -215,28 +213,18 @@ export async function POST(request: NextRequest) {
 
     return respondToSettlement(await settleWithRaceRetry(userId, receiptInput));
   } catch (error) {
-    // A concurrent redelivery of a PENDING receipt loses the race on
-    // `@@unique([userId, idempotencyKey])` and surfaces here as a
-    // constraint violation. That is still a duplicate, not a failure, so
-    // it resolves the same way — the identical recovery `/api/trades`
-    // already does for its own idempotency-key race.
-    //
-    // ONLY that case, though (trader integration hardening, ad hoc). This
-    // used to resolve ANY error to "duplicate" whenever a trade with the
-    // key existed — which for a SETTLEMENT is always, since the pending
-    // row is there by design. A genuine failure inside
-    // `settlePaperTradeReceipt` therefore answered 200, the trader logged
-    // "delivered", and the trade sat PENDING forever with nothing ever
-    // retrying it — observed live, not hypothetically. Anything that
-    // isn't a unique-constraint race is now a real 500, which is exactly
-    // what the trader's outbox retries. (A settlement's own race is
-    // handled inside `settleWithRaceRetry`, never here.)
-    if (receipt.status === "pending" && isUniqueConstraintViolation(error)) {
-      const raced = await findTradeByIdempotencyKey(userId, receipt.idempotency_key).catch(() => null);
-      if (raced) {
-        return NextResponse.json({ ok: true, status: "duplicate", tradeId: raced.id }, { status: 200 });
-      }
-    }
+    // Both sides of the pending/settled race are resolved INSIDE
+    // `settle-with-race-retry.ts` (a settlement that raced its own
+    // pending receipt is retried once; a pending receipt that lost to
+    // an already-settled row is a duplicate). What reaches here is a
+    // genuine failure — and it is answered as one. This used to resolve
+    // ANY error to "duplicate" whenever a trade with the key existed,
+    // which for a settlement is always, since the pending row is there
+    // by design: a real failure inside `settlePaperTradeReceipt` answered
+    // 200, the trader logged "delivered", and the trade sat PENDING
+    // forever with nothing ever retrying it — observed live, not
+    // hypothetically (trader integration hardening, ad hoc). A real 500
+    // is exactly what the trader's outbox retries.
     console.error("POST /api/webhooks/trades failed", error);
     return jsonServerError();
   }
@@ -277,8 +265,4 @@ function respondToSettlement(result: Awaited<ReturnType<typeof settleWithRaceRet
         { status: 201 },
       );
   }
-}
-
-function isUniqueConstraintViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002";
 }

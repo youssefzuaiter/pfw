@@ -3,7 +3,7 @@ import { createAdminClient } from "../../src/server/db/admin-client";
 import { agorot } from "../../src/lib/money";
 import { nativeAmount } from "../../src/lib/currency";
 import { recordPendingPaperTrade, settlePaperTradeReceipt, type PaperTradeReceiptInput } from "../../src/server/dal/paper-trades";
-import { settleWithRaceRetry } from "../../src/server/paper-trader/settle-with-race-retry";
+import { recordPendingWithRaceTolerance, settleWithRaceRetry } from "../../src/server/paper-trader/settle-with-race-retry";
 import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 /**
@@ -89,11 +89,16 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("pap
   it("the live race: pending and settled arriving concurrently always ends SETTLED (never stranded)", async () => {
     // Nondeterministic by nature — run it several times. Before the fix,
     // whichever interleaving hit P2002 on the settle side was answered
-    // "duplicate" and the trade stayed PENDING with no ledger row.
+    // "duplicate" and the trade stayed PENDING with no ledger row. The
+    // OTHER interleaving — settlement wins, the late pending insert
+    // collides with the already-SETTLED row — never fired locally but
+    // did on CI's Postgres on this test's first run there, which is how
+    // `recordPendingWithRaceTolerance` came to exist: the pending side
+    // needs the same race handling the route already gave it inline.
     for (let round = 0; round < 6; round++) {
       const key = `it-settle-race-${Date.now()}-${round}`;
       const [pending, settled] = await Promise.all([
-        recordPendingPaperTrade(userId, receipt(key)),
+        recordPendingWithRaceTolerance(userId, receipt(key)),
         settleWithRaceRetry(userId, receipt(key)),
       ]);
       expect(["recorded", "duplicate"]).toContain(pending.status);

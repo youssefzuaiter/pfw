@@ -1,5 +1,6 @@
 import "server-only";
-import { settlePaperTradeReceipt, type PaperTradeReceiptInput } from "../dal/paper-trades";
+import { recordPendingPaperTrade, settlePaperTradeReceipt, type PaperTradeReceiptInput } from "../dal/paper-trades";
+import { findTradeByIdempotencyKey } from "../dal/portfolio";
 
 /**
  * The settlement race, observed live (trader integration hardening, ad
@@ -44,6 +45,38 @@ export async function settleWithRaceRetry(
   }
 }
 
+
+export type RecordPendingFn = typeof recordPendingPaperTrade;
+export type FindTradeFn = typeof findTradeByIdempotencyKey;
+
+/**
+ * The OTHER side of the same race. When the settlement wins — it reached
+ * PFW first, found no pending row, and created the trade as SETTLED —
+ * the late pending receipt's own insert collides on
+ * `@@unique([userId, idempotencyKey])`. That is a duplicate, not a
+ * failure (the trade is already booked, and in its FINAL state), so it
+ * resolves to the same `duplicate` result a redelivered pending receipt
+ * gets. The route used to do this in its own `catch`; it lives here so
+ * every caller of the pending write — the route, and the concurrent
+ * integration test that first caught this interleaving on CI's
+ * Postgres (it never fired locally) — gets identical behaviour.
+ */
+export async function recordPendingWithRaceTolerance(
+  userId: string,
+  receiptInput: PaperTradeReceiptInput,
+  /** Both injectable for the same reason `settleWithRaceRetry`'s `settle` is. */
+  recordPending: RecordPendingFn = recordPendingPaperTrade,
+  findExisting: FindTradeFn = findTradeByIdempotencyKey,
+): Promise<Awaited<ReturnType<typeof recordPendingPaperTrade>>> {
+  try {
+    return await recordPending(userId, receiptInput);
+  } catch (error) {
+    if (!isUniqueConstraintViolation(error)) throw error;
+    const raced = await findExisting(userId, receiptInput.idempotencyKey).catch(() => null);
+    if (raced) return { status: "duplicate", tradeId: raced.id };
+    throw error;
+  }
+}
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002";
