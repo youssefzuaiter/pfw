@@ -285,6 +285,20 @@ jobs:
       - name: Run Playwright e2e suite
         run: npm run test:e2e
 
+      # Retained only on failure (`trace: "retain-on-failure"` in
+      # playwright.config.ts writes these under the default `test-results/`
+      # output dir, gitignored locally same as playwright-report/) — a
+      # downloadable trace is what actually shows WHAT broke, since this
+      # job's own red status only proves THAT something did. Carried over
+      # from the retired playwright.yml, which duplicated this whole job.
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v7.0.1
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 14
+
   gitleaks:
     name: Security · Gitleaks (credential leak scan)
     runs-on: ubuntu-latest

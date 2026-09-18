@@ -6792,6 +6792,18 @@ market price, daily, and the resolver's chain reads mock feed →
     passed the same commit seconds earlier. Fixed in the TEST, not the
     limiter: the burst now waits out the last 5 seconds of a window
     before starting (≤ ~5s of waiting, inside the case's 30s timeout).
+- **Two duplicates retired in the same sitting**: a second Vercel
+  project (`pfw-hk19`, linked to the same repo — Vercel's collision
+  suffix from a second import of `pfw` on 2026-09-08) that had built and
+  failed on all 19 pushes since (`Missing required server-only
+  environment variable: AUTH_SECRET` — it had no env vars) and never
+  served a byte; deleted by the user from the dashboard. And
+  `.github/workflows/playwright.yml`, which ran the identical Playwright
+  suite as `ci.yml`'s own e2e job on every push (an earlier session's
+  commit message had already flagged it as "fully redundant") — removed,
+  with its one unique step, the upload-traces-on-failure artifact,
+  carried over into `ci.yml` first, and its two `.gitleaksignore`
+  fingerprints dropped. One build and one e2e run per push now.
 - **Deploying it**: the migration reaches production through
   `deploy-migrations.yml` (the gated workflow, §3aa) — run it after this
   lands on `main`; until then production values TSLA at its last fill
