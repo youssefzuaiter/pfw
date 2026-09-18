@@ -74,44 +74,44 @@ export default async function AssetsPage() {
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-4 md:px-6">
-      <h1 className="font-display text-xl font-semibold text-slate-100">Assets</h1>
+      <h1 className="font-display text-xl font-semibold text-fg">Assets</h1>
 
       <section aria-labelledby="bank-accounts-heading" className="flex flex-col gap-4">
         <div>
           <h2
             id="bank-accounts-heading"
-            className="font-display text-sm font-semibold uppercase tracking-wide text-slate-400"
+            className="font-display text-sm font-semibold uppercase tracking-wide text-muted"
           >
             Bank Accounts
           </h2>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-muted">
             Manually recorded — this is the balance you report, not a live bank connection (unless it came from
             Settings → Open Banking).
           </p>
         </div>
 
         {bankAccountsWithIls.length > 0 && (
-          <p className="font-tabular-figures tracking-tight text-sm text-slate-400">
-            Total tracked balance: <span className="text-slate-100">{formatAgorot(agorot(bankAssetsTotal))}</span>
+          <p className="font-tabular-figures tracking-tight text-sm text-muted">
+            Total tracked balance: <span className="text-fg">{formatAgorot(agorot(bankAssetsTotal))}</span>
           </p>
         )}
 
-        <div className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <div className="rounded-lg border border-border bg-surface p-4">
           <CreateBankAccountForm />
         </div>
 
         {bankAccountsWithIls.length === 0 && (
-          <p className="text-sm text-slate-400">No bank accounts tracked yet — add one above.</p>
+          <p className="text-sm text-muted">No bank accounts tracked yet — add one above.</p>
         )}
 
         <ul className="flex flex-col gap-3">
           {bankAccountsWithIls.map((account) => (
-            <li key={account.id} className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+            <li key={account.id} className="rounded-lg border border-border bg-surface p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="font-medium text-slate-100">
+                  <p className="font-medium text-fg">
                     {account.nickname ?? account.institutionName}{" "}
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs text-muted">
                       ({account.institutionName} ••{account.last4} — {BANK_ACCOUNT_TYPE_LABEL[account.accountType]})
                     </span>
                   </p>
@@ -120,8 +120,8 @@ export default async function AssetsPage() {
                   agorotValue={account.agorotValue}
                   nativeValue={nativeAmount(Number(account.nativeBalance))}
                   currency={account.currency}
-                  primaryClassName="font-tabular-figures tracking-tight text-sm text-slate-100"
-                  secondaryClassName="font-tabular-figures tracking-tight text-xs text-slate-400"
+                  primaryClassName="font-tabular-figures tracking-tight text-sm text-fg"
+                  secondaryClassName="font-tabular-figures tracking-tight text-xs text-muted"
                 />
               </div>
             </li>
@@ -129,45 +129,45 @@ export default async function AssetsPage() {
         </ul>
       </section>
 
-      <section aria-labelledby="manual-assets-heading" className="flex flex-col gap-4 border-t border-slate-800/80 pt-4">
+      <section aria-labelledby="manual-assets-heading" className="flex flex-col gap-4 border-t border-border pt-4">
         <div>
           <h2
             id="manual-assets-heading"
-            className="font-display text-sm font-semibold uppercase tracking-wide text-slate-400"
+            className="font-display text-sm font-semibold uppercase tracking-wide text-muted"
           >
             Manual Assets
           </h2>
         </div>
 
         {assets.length > 0 && (
-          <p className="font-tabular-figures tracking-tight text-sm text-slate-400">
-            Total tracked value: <span className="text-slate-100">{formatAgorot(agorot(Number(totalValue)))}</span>
+          <p className="font-tabular-figures tracking-tight text-sm text-muted">
+            Total tracked value: <span className="text-fg">{formatAgorot(agorot(Number(totalValue)))}</span>
           </p>
         )}
 
-        <div className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <div className="rounded-lg border border-border bg-surface p-4">
           <CreateAssetForm />
         </div>
 
-        {assets.length === 0 && <p className="text-sm text-slate-400">No manual assets tracked yet — add one above.</p>}
+        {assets.length === 0 && <p className="text-sm text-muted">No manual assets tracked yet — add one above.</p>}
 
         <ul className="flex flex-col gap-4">
           {assets.map((asset) => {
             const freshness = deriveValuationFreshness(asset.valuedAt, now);
             return (
-              <li key={asset.id} className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+              <li key={asset.id} className="rounded-lg border border-border bg-surface p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="font-medium text-slate-100">
+                    <p className="font-medium text-fg">
                       {asset.name}{" "}
-                      <span className="text-xs text-slate-400">({ASSET_TYPE_LABEL[asset.assetType]})</span>
+                      <span className="text-xs text-muted">({ASSET_TYPE_LABEL[asset.assetType]})</span>
                       {asset.taxAdvantaged && (
                         <span className="ml-2">
                           <Badge variant="neutral">Tax-advantaged</Badge>
                         </span>
                       )}
                     </p>
-                    <p className="font-tabular-figures tracking-tight text-sm text-slate-400">
+                    <p className="font-tabular-figures tracking-tight text-sm text-muted">
                       {formatAgorot(agorot(Number(asset.currentValue)))}
                     </p>
                   </div>
@@ -179,7 +179,7 @@ export default async function AssetsPage() {
                   </div>
                 </div>
 
-                <p className="mt-2 text-xs text-slate-400">Last valued {asset.valuedAt.toISOString().slice(0, 10)}</p>
+                <p className="mt-2 text-xs text-muted">Last valued {asset.valuedAt.toISOString().slice(0, 10)}</p>
 
                 <div className="mt-3">
                   <UpdateValuationForm assetId={asset.id} />
@@ -190,29 +190,29 @@ export default async function AssetsPage() {
         </ul>
       </section>
 
-      <section aria-labelledby="crypto-wallets-heading" className="flex flex-col gap-4 border-t border-slate-800/80 pt-4">
+      <section aria-labelledby="crypto-wallets-heading" className="flex flex-col gap-4 border-t border-border pt-4">
         <div>
-          <h2 id="crypto-wallets-heading" className="font-display text-sm font-semibold uppercase tracking-wide text-slate-400">
+          <h2 id="crypto-wallets-heading" className="font-display text-sm font-semibold uppercase tracking-wide text-muted">
             Crypto Wallets
           </h2>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-muted">
             Track public wallet addresses — live balances fetched from a public Ethereum RPC endpoint, read-only, no
             private key ever involved.
           </p>
         </div>
 
         {walletBalances.wallets.length > 0 && (
-          <p className="font-tabular-figures tracking-tight text-sm text-slate-400">
-            Total tracked value: <span className="text-slate-100">{formatAgorot(walletBalances.totalValueAgorot)}</span>
+          <p className="font-tabular-figures tracking-tight text-sm text-muted">
+            Total tracked value: <span className="text-fg">{formatAgorot(walletBalances.totalValueAgorot)}</span>
           </p>
         )}
 
-        <div className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+        <div className="rounded-lg border border-border bg-surface p-4">
           <AddWalletForm />
         </div>
 
         {walletBalances.wallets.length === 0 && (
-          <p className="text-sm text-slate-400">No wallets tracked yet — add one above.</p>
+          <p className="text-sm text-muted">No wallets tracked yet — add one above.</p>
         )}
 
         <ul className="flex flex-col gap-4">

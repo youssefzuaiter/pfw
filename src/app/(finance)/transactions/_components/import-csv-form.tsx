@@ -75,18 +75,18 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
 
   if (bankAccounts.length === 0) {
     return (
-      <p className="rounded-lg border border-slate-800/80 bg-slate-900 p-4 text-sm text-slate-400">
+      <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
         Add a bank account before importing a statement.
       </p>
     );
   }
 
   return (
-    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="import-heading">
-      <h2 id="import-heading" className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+    <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="import-heading">
+      <h2 id="import-heading" className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
         Import statement
       </h2>
-      <p className="mb-3 text-xs text-slate-400">
+      <p className="mb-3 text-xs text-muted">
         Upload a .csv bank or credit-card statement. Duplicate rows from a statement you have already imported are
         detected and skipped automatically.
       </p>
@@ -107,14 +107,14 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
          * text on its own once the box is narrower than its content.
          */}
         <div className="flex min-w-0 flex-col gap-1">
-          <label htmlFor="import-account" className="text-xs font-medium text-slate-400">
+          <label htmlFor="import-account" className="text-xs font-medium text-muted">
             Account
           </label>
           <select
             id="import-account"
             value={bankAccountId}
             onChange={(event) => setBankAccountId(event.target.value)}
-            className="w-full min-w-0 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full min-w-0 rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {bankAccounts.map((account) => (
               <option key={account.id} value={account.id}>
@@ -125,7 +125,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         </div>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor="import-file" className="text-xs font-medium text-slate-400">
+          <label htmlFor="import-file" className="text-xs font-medium text-muted">
             Statement file
           </label>
           <input
@@ -134,7 +134,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
             type="file"
             accept=".csv,text/csv"
             onChange={handleFileChange}
-            className="max-w-[260px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 file:mr-3 file:rounded file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="max-w-[260px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg file:mr-3 file:rounded file:border-0 file:bg-elevated file:px-2 file:py-1 file:text-xs file:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
 
@@ -165,11 +165,11 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
               {result.rejectedCount > 0 && (
                 <Badge variant="warning">{result.rejectedCount} rows rejected</Badge>
               )}
-              <span className="text-xs text-slate-400">Detected format: {result.adapterLabel}</span>
+              <span className="text-xs text-muted">Detected format: {result.adapterLabel}</span>
             </div>
 
             {result.rejectedRows.length > 0 && (
-              <details className="text-xs text-slate-400">
+              <details className="text-xs text-muted">
                 <summary className="cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   Show rejected rows
                 </summary>

@@ -16,11 +16,11 @@ function IncomeExpenseTooltip({
 }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-xs shadow-lg">
-      <p className="text-slate-400">{label}</p>
+    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
+      <p className="text-muted">{label}</p>
       {payload.map((entry) =>
         entry.value === undefined ? null : (
-          <p key={entry.dataKey} className="font-tabular-figures font-medium tracking-tight text-slate-100">
+          <p key={entry.dataKey} className="font-tabular-figures font-medium tracking-tight text-fg">
             {entry.name}: {formatAgorot(agorot(Math.round(entry.value)))}
           </p>
         ),
@@ -31,7 +31,7 @@ function IncomeExpenseTooltip({
 
 export function IncomeExpenseChart({ history }: { history: readonly MonthPoint[] }) {
   if (history.length === 0) {
-    return <p className="text-sm text-slate-400">Not enough history yet.</p>;
+    return <p className="text-sm text-muted">Not enough history yet.</p>;
   }
 
   return (

@@ -164,7 +164,7 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
           aria-expanded={open}
           aria-controls="notification-bell-panel"
           aria-label={hasUnread ? `Notifications (${unreadCount} unread)` : "Notifications"}
-          className="relative flex items-center justify-center rounded-md border border-slate-800 p-2 text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          className="relative flex items-center justify-center rounded-md border border-border p-2 text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Bell className="h-4 w-4" aria-hidden="true" />
           {hasUnread && (
@@ -182,7 +182,7 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
           aria-haspopup="true"
           aria-expanded={open}
           aria-controls="notification-bell-panel"
-          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Notifications
           {hasUnread && <Badge variant="critical">{unreadCount}</Badge>}
@@ -195,24 +195,24 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
           id="notification-bell-panel"
           role="region"
           aria-label="Notifications"
-          className="absolute bottom-full left-0 z-20 mb-2 w-80 rounded-md border border-slate-800 bg-slate-950 p-2 shadow-lg"
+          className="absolute bottom-full left-0 z-20 mb-2 w-80 rounded-md border border-border bg-bg p-2 shadow-lg"
         >
           {dismissError && <p className="mb-2 px-2 text-xs text-negative">{dismissError}</p>}
           {notifications.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-slate-400">No unread notifications.</p>
+            <p className="px-2 py-3 text-sm text-muted">No unread notifications.</p>
           ) : (
             <ul className="flex flex-col gap-1">
               {notifications.map((notification) => (
                 <li
                   key={notification.id}
-                  className="flex items-start justify-between gap-2 rounded-md px-2 py-2 text-sm hover:bg-slate-700"
+                  className="flex items-start justify-between gap-2 rounded-md px-2 py-2 text-sm hover:bg-elevated-hover"
                 >
-                  <span className="text-slate-100">{notification.message}</span>
+                  <span className="text-fg">{notification.message}</span>
                   <button
                     type="button"
                     data-notification-id={notification.id}
                     onClick={handleDismissClick}
-                    className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                    className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-muted transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     Dismiss
                   </button>

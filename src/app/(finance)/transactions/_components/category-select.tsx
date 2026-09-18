@@ -73,7 +73,7 @@ export function CategorySelect({
         value={value}
         onChange={handleChange}
         disabled={isPending}
-        className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-xs text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="rounded-md border border-border bg-elevated px-2 py-1 text-xs text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {categories.map((category) => (
           <option key={category.id} value={category.id}>

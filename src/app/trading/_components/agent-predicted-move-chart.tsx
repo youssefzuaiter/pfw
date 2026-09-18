@@ -30,7 +30,7 @@ function toStrictlyAscendingSeconds(rows: readonly ScenarioMetricRow[]): { time:
 
 export function AgentPredictedMoveChart({ rows }: { rows: ScenarioMetricRow[] }) {
   if (rows.length === 0) {
-    return <p className="text-sm text-neutral-500">No evaluated scenarios yet — nothing to chart.</p>;
+    return <p className="text-sm text-muted">No evaluated scenarios yet — nothing to chart.</p>;
   }
 
   const series: AreaSeriesSpec[] = [{ type: "area", data: toStrictlyAscendingSeconds(rows) }];

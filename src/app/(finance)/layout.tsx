@@ -2,17 +2,23 @@
  * The `(finance)` group's shared institutional-terminal shell.
  *
  * Revision 2 (user feedback: the first pass measured out as genuinely
- * flat — `bg-slate-900` panels on a `bg-slate-950` page composite
+ * flat — `bg-surface` panels on a `bg-bg` page composite
  * to a ~1.08:1 contrast ratio, confirmed by sampling actual rendered
  * pixels, not just eyeballing a screenshot — and read as cold/monochrome
  * on top of that). Two concrete fixes, not a vibe-only pass:
  *
- * 1. **Real elevation.** The page is `slate-950`; panels (see each
- *    component) are solid `slate-900` — a deliberate, measured ~1.3:1
- *    lift, not a translucent blend of the same color. `slate`, not
- *    `neutral`, throughout this subtree from here on: a true gray reads
- *    sterile next to this app's sky-blue accent (`--pfw-accent`), a
- *    cool-toned gray doesn't.
+ * 1. **Real elevation.** The page is `bg-bg`; panels (see each
+ *    component) are solid `bg-surface`, controls on them `bg-elevated` —
+ *    deliberate, measured lifts (1.15:1 page→panel, 1.26:1 panel→control,
+ *    every step verified with the WCAG formula, see `globals.css`), not a
+ *    translucent blend of one color. Revision 2 had reached for raw
+ *    `slate-950`/`slate-900` classes to get that lift, because at the time
+ *    the tokens measured ~1.08:1; the §3kk navy re-theme fixed the tokens
+ *    themselves, and the palette re-tokenization pass (AGENTS.md §3vv)
+ *    moved every screen back onto them — one contrast-verified color
+ *    system instead of two. The cool navy hue is kept for the same reason
+ *    slate was chosen over neutral: a true gray reads sterile next to
+ *    this app's sky-blue accent (`--pfw-accent`), a cool-toned one doesn't.
  * 2. **A single, restrained ambient light source**, not scattered
  *    decoration: one large, very low-opacity radial glow in the accent
  *    color, anchored top-center, fixed to the viewport (`bg-fixed` so it
@@ -48,7 +54,7 @@
  */
 export default function FinanceLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative min-h-full bg-slate-950 text-slate-100">
+    <div className="relative min-h-full bg-bg text-fg">
       {/*
         The one ambient light source described above. A Tailwind
         arbitrary-value class, not an inline `style` prop — this app's

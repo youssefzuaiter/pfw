@@ -29,9 +29,9 @@ const STATUS_VARIANT: Record<NonNullable<DeadMansSwitchSummaryProps["status"]>, 
  */
 export function DeadMansSwitchSummary({ isSetUp, status }: DeadMansSwitchSummaryProps) {
   return (
-    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="dead-mans-switch-heading">
+    <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="dead-mans-switch-heading">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 id="dead-mans-switch-heading" className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        <h2 id="dead-mans-switch-heading" className="text-xs font-medium uppercase tracking-wide text-muted">
           Emergency Vault
         </h2>
         <Link
@@ -42,7 +42,7 @@ export function DeadMansSwitchSummary({ isSetUp, status }: DeadMansSwitchSummary
         </Link>
       </div>
       {!isSetUp || !status ? (
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-muted">
           Not set up yet.{" "}
           <Link href="/vault" className="text-accent underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             Set up a cryptographic dead man&apos;s switch

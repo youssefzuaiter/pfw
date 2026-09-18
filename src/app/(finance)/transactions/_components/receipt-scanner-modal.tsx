@@ -214,7 +214,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
         ref={openButtonRef}
         type="button"
         onClick={handleOpen}
-        className="uv-btn-press rounded-md border border-slate-800/80 px-3 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="uv-btn-press rounded-md border border-border px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Scan a receipt
       </button>
@@ -232,22 +232,22 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
             role="dialog"
             aria-modal="true"
             aria-labelledby="receipt-scanner-title"
-            className="relative z-10 flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg border border-slate-800/80 bg-slate-950 p-5 shadow-2xl"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg border border-border bg-bg p-5 shadow-2xl"
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 id="receipt-scanner-title" className="font-display text-lg font-semibold text-slate-100">
+              <h2 id="receipt-scanner-title" className="font-display text-lg font-semibold text-fg">
                 Scan a receipt
               </h2>
               <button
                 type="button"
                 onClick={handleClose}
                 aria-label="Close"
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md p-1 text-muted hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 ✕
               </button>
             </div>
-            <p className="mb-4 text-xs text-slate-400">
+            <p className="mb-4 text-xs text-muted">
               The image is processed entirely on this device — it&apos;s never uploaded anywhere. Only the fields you
               review and confirm below are sent to add the transaction.
             </p>
@@ -258,10 +258,10 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 className={`flex flex-col items-center gap-2 rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
-                  isDraggingOver ? "border-accent bg-accent/5" : "border-slate-800/80"
+                  isDraggingOver ? "border-accent bg-accent/5" : "border-border"
                 }`}
               >
-                <p className="text-sm text-slate-400">Drag a receipt photo here, or</p>
+                <p className="text-sm text-muted">Drag a receipt photo here, or</p>
                 <button
                   type="button"
                   onClick={handleChooseFileClick}
@@ -283,8 +283,8 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
             {stage === "processing" && (
               <div className="flex flex-col items-center gap-3 py-8">
                 <Spinner />
-                <p className="text-sm text-slate-400">{progressStatus || "Reading the receipt…"}</p>
-                <div className="h-1.5 w-full rounded-full bg-slate-800">
+                <p className="text-sm text-muted">{progressStatus || "Reading the receipt…"}</p>
+                <div className="h-1.5 w-full rounded-full bg-elevated">
                   <div ref={progressBarRef} className="h-full rounded-full bg-accent transition-all" />
                 </div>
               </div>
@@ -294,43 +294,43 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
               <form onSubmit={handleSubmit} className="flex flex-col gap-3">
                 <Badge variant="neutral">Review the extracted details before adding</Badge>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-400">Merchant</span>
+                  <span className="text-xs font-medium text-muted">Merchant</span>
                   <input
                     value={merchantName}
                     onChange={(event) => setMerchantName(event.target.value)}
                     required
-                    className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </label>
                 <div className="flex gap-3">
                   <label className="flex flex-1 flex-col gap-1">
-                    <span className="text-xs font-medium text-slate-400">Date</span>
+                    <span className="text-xs font-medium text-muted">Date</span>
                     <input
                       type="date"
                       value={occurredAt}
                       onChange={(event) => setOccurredAt(event.target.value)}
                       required
-                      className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
                   <label className="flex flex-1 flex-col gap-1">
-                    <span className="text-xs font-medium text-slate-400">Total (₪)</span>
+                    <span className="text-xs font-medium text-muted">Total (₪)</span>
                     <input
                       inputMode="decimal"
                       value={amount}
                       onChange={(event) => setAmount(event.target.value)}
                       required
-                      className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
                 </div>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-400">Account</span>
+                  <span className="text-xs font-medium text-muted">Account</span>
                   <select
                     value={bankAccountId}
                     onChange={(event) => setBankAccountId(event.target.value)}
                     required
-                    className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {bankAccounts.map((account) => (
                       <option key={account.id} value={account.id}>
@@ -340,10 +340,10 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                   </select>
                 </label>
                 {parsed?.taxAgorot !== null && parsed?.taxAgorot !== undefined && (
-                  <p className="text-xs text-slate-400">Detected tax: {formatAgorot(parsed.taxAgorot)}</p>
+                  <p className="text-xs text-muted">Detected tax: {formatAgorot(parsed.taxAgorot)}</p>
                 )}
                 {parsed && parsed.lineItems.length > 0 && (
-                  <details className="text-xs text-slate-400">
+                  <details className="text-xs text-muted">
                     <summary className="cursor-pointer">{parsed.lineItems.length} line item(s) detected</summary>
                     <ul className="mt-1 flex flex-col gap-0.5">
                       {parsed.lineItems.map((item, index) => (
@@ -361,7 +361,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                     type="button"
                     onClick={handleRetry}
                     disabled={stage === "submitting"}
-                    className="rounded-md px-3 py-2 text-sm text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                    className="rounded-md px-3 py-2 text-sm text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                   >
                     Start over
                   </button>

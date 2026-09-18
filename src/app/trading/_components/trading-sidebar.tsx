@@ -34,17 +34,17 @@ export function TradingSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="sticky top-0 flex h-screen w-14 shrink-0 flex-col items-center gap-1 border-r border-neutral-800 bg-neutral-950 py-4">
+    <aside className="sticky top-0 flex h-screen w-14 shrink-0 flex-col items-center gap-1 border-r border-border bg-bg py-4">
       <Link
         href="/dashboard"
         title="Back to Dashboard"
         aria-label="Back to Dashboard"
-        className="mb-3 flex h-9 w-9 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        className="mb-3 flex h-9 w-9 items-center justify-center rounded-md text-muted hover:bg-elevated hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ArrowLeft className="h-5 w-5" aria-hidden="true" />
       </Link>
 
-      <div className="mb-2 h-px w-8 bg-neutral-800" />
+      <div className="mb-2 h-px w-8 bg-elevated" />
 
       {TRADING_LINKS.map((link) => {
         const Icon = link.icon;
@@ -56,8 +56,8 @@ export function TradingSidebar() {
             title={link.label}
             aria-label={link.label}
             aria-current={active ? "page" : undefined}
-            className={`flex h-9 w-9 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
-              active ? "bg-neutral-800 text-sky-400" : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-100"
+            className={`flex h-9 w-9 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              active ? "bg-elevated text-accent" : "text-muted hover:bg-elevated hover:text-fg"
             }`}
           >
             <Icon className="h-5 w-5" aria-hidden="true" />

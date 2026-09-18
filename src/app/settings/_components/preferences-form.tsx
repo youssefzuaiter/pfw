@@ -133,18 +133,18 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-6 rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-6 rounded-lg border border-border bg-surface p-4">
       <div>
-        <h3 className="text-sm font-semibold text-slate-100">Currency display</h3>
+        <h3 className="text-sm font-semibold text-fg">Currency display</h3>
         <div className="mt-2 flex flex-col gap-1">
-          <label htmlFor="pref-currency-display" className="text-xs font-medium text-slate-400">
+          <label htmlFor="pref-currency-display" className="text-xs font-medium text-muted">
             Preferred primary figure for foreign-currency amounts
           </label>
           <select
             id="pref-currency-display"
             value={form.preferredCurrencyDisplay}
             onChange={handleCurrencyDisplayChange}
-            className="w-56 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-56 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="ILS">₪ (base currency)</option>
             <option value="NATIVE">Native currency</option>
@@ -153,21 +153,21 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-slate-100">Tax simulator defaults</h3>
-        <p className="mt-1 text-xs text-slate-400">
+        <h3 className="text-sm font-semibold text-fg">Tax simulator defaults</h3>
+        <p className="mt-1 text-xs text-muted">
           Saved defaults for the tax simulator (/trading/tax) — a per-request query param there still overrides
           these.
         </p>
         <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-tax-jurisdiction" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-tax-jurisdiction" className="text-xs font-medium text-muted">
               Jurisdiction
             </label>
             <select
               id="pref-tax-jurisdiction"
               value={form.taxJurisdiction}
               onChange={handleTaxJurisdictionChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="US">United States</option>
               <option value="DE">Germany</option>
@@ -175,21 +175,21 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-tax-method" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-tax-method" className="text-xs font-medium text-muted">
               Cost-basis method
             </label>
             <select
               id="pref-tax-method"
               value={form.taxMethod}
               onChange={handleTaxMethodChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="FIFO">FIFO</option>
               <option value="LIFO">LIFO</option>
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-tax-other-income" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-tax-other-income" className="text-xs font-medium text-muted">
               Other ordinary income (₪)
             </label>
             <input
@@ -198,15 +198,15 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               step="0.01"
               value={form.taxOtherOrdinaryIncome}
               onChange={handleOtherIncomeChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
-          <label className="mt-5 flex items-center gap-2 text-xs font-medium text-slate-400">
+          <label className="mt-5 flex items-center gap-2 text-xs font-medium text-muted">
             <input type="checkbox" checked={form.taxIncludeNiit} onChange={handleIncludeNiitChange} />
             Include US Net Investment Income Tax surtax
           </label>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-tax-church-rate" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-tax-church-rate" className="text-xs font-medium text-muted">
               German church tax rate (0-1)
             </label>
             <input
@@ -217,11 +217,11 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               step="0.001"
               value={form.taxChurchTaxRate}
               onChange={handleChurchTaxRateChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-tax-annual-allowance" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-tax-annual-allowance" className="text-xs font-medium text-muted">
               Annual allowance override (₪, blank = default)
             </label>
             <input
@@ -230,11 +230,11 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               step="0.01"
               value={form.taxAnnualAllowance ?? ""}
               onChange={handleAnnualAllowanceChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-tax-flat-rate" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-tax-flat-rate" className="text-xs font-medium text-muted">
               Generic flat rate (0-1, blank = default)
             </label>
             <input
@@ -245,21 +245,21 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               step="0.001"
               value={form.taxFlatRatePercent ?? ""}
               onChange={handleFlatRateChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
         </div>
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-slate-100">Monte Carlo defaults</h3>
-        <p className="mt-1 text-xs text-slate-400">
+        <h3 className="text-sm font-semibold text-fg">Monte Carlo defaults</h3>
+        <p className="mt-1 text-xs text-muted">
           Saved defaults for the retirement widget (/analytics) — current age still has no saved default (this app
           never stores a date of birth).
         </p>
         <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-mc-retirement-age" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-mc-retirement-age" className="text-xs font-medium text-muted">
               Retirement age
             </label>
             <input
@@ -269,11 +269,11 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               max={120}
               value={form.monteCarloRetirementAge}
               onChange={handleRetirementAgeChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-mc-target-spend" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-mc-target-spend" className="text-xs font-medium text-muted">
               Target annual spend (₪, blank = derived from history)
             </label>
             <input
@@ -282,11 +282,11 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               step="0.01"
               value={form.monteCarloTargetAnnualSpend ?? ""}
               onChange={handleTargetSpendChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="pref-mc-volatility" className="text-xs font-medium text-slate-400">
+            <label htmlFor="pref-mc-volatility" className="text-xs font-medium text-muted">
               Volatility multiplier (0.25-3)
             </label>
             <input
@@ -297,23 +297,23 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
               step="0.05"
               value={form.monteCarloVolatilityMultiplier}
               onChange={handleVolatilityChange}
-              className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm font-tabular-figures tracking-tight text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border bg-elevated px-2 py-1 text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
         </div>
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-slate-100">Manual assets</h3>
+        <h3 className="text-sm font-semibold text-fg">Manual assets</h3>
         <div className="mt-2 flex flex-col gap-1">
-          <label htmlFor="pref-liquidity-tier" className="text-xs font-medium text-slate-400">
+          <label htmlFor="pref-liquidity-tier" className="text-xs font-medium text-muted">
             Default liquidity tier for new OTHER/CRYPTO assets
           </label>
           <select
             id="pref-liquidity-tier"
             value={form.defaultManualAssetLiquidityTier ?? ""}
             onChange={handleLiquidityTierChange}
-            className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">No default (use asset-type default)</option>
             <option value="LIQUID">Liquid</option>
@@ -331,7 +331,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
         >
           {isBusy && <Spinner />} Save preferences
         </button>
-        {statusMessage && <span className="text-xs text-slate-400">{statusMessage}</span>}
+        {statusMessage && <span className="text-xs text-muted">{statusMessage}</span>}
       </div>
       {error && <p className="text-xs text-negative">{error}</p>}
     </form>

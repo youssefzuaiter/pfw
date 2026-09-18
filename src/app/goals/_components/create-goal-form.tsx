@@ -46,7 +46,7 @@ export function CreateGoalForm() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
       <div className="flex flex-col gap-1">
-        <label htmlFor="goal-name" className="text-xs font-medium text-slate-400">
+        <label htmlFor="goal-name" className="text-xs font-medium text-muted">
           Goal name
         </label>
         <input
@@ -54,11 +54,11 @@ export function CreateGoalForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Emergency fund"
-          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[160px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="goal-target" className="text-xs font-medium text-slate-400">
+        <label htmlFor="goal-target" className="text-xs font-medium text-muted">
           Target (₪)
         </label>
         <input
@@ -67,11 +67,11 @@ export function CreateGoalForm() {
           value={targetAmount}
           onChange={(event) => setTargetAmount(event.target.value)}
           placeholder="10000.00"
-          className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-32 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="goal-target-date" className="text-xs font-medium text-slate-400">
+        <label htmlFor="goal-target-date" className="text-xs font-medium text-muted">
           Target date (optional)
         </label>
         <input
@@ -79,13 +79,13 @@ export function CreateGoalForm() {
           type="date"
           value={targetDate}
           onChange={(event) => setTargetDate(event.target.value)}
-          className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button
         type="submit"
         disabled={isSubmitting || !name.trim() || !targetAmount.trim()}
-        className="uv-btn-press flex items-center gap-2 rounded-md border border-slate-800/80 bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
         {isSubmitting ? "Adding…" : "Add goal"}

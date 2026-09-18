@@ -415,17 +415,17 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+      <section className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={status.status} />
           {status.status === "ACTIVE" && status.lastActivityAt && status.inactivityThresholdDays && (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted">
               Last activity {status.lastActivityAt.toLocaleDateString()}. Viewing this page counts as activity —
               enters a grace period after {status.inactivityThresholdDays} days of inactivity.
             </p>
           )}
           {status.status === "GRACE_PERIOD" && status.graceStartedAt && status.gracePeriodDays && (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted">
               Grace period started {status.graceStartedAt.toLocaleDateString()} —{" "}
               {daysBetween(now, new Date(status.graceStartedAt.getTime() + status.gracePeriodDays * MS_PER_DAY))} day(s)
               left before beneficiaries can begin recovery.
@@ -437,7 +437,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
               far.
             </p>
           )}
-          {status.status === "RECOVERED" && <p className="text-sm text-slate-400">Beneficiaries have recovered this vault.</p>}
+          {status.status === "RECOVERED" && <p className="text-sm text-muted">Beneficiaries have recovered this vault.</p>}
         </div>
 
         {status.status === "TRIGGERED" && (
@@ -455,36 +455,36 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
         )}
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted">
           Beneficiaries ({status.thresholdShares} of {status.totalShares} needed)
         </h2>
         <ul className="mt-2 flex flex-col gap-1">
           {status.beneficiaries.map((b) => (
-            <li key={b.id} className="text-sm text-slate-100">
-              {b.label} <span className="text-xs text-slate-400">(share #{b.shareIndex})</span>
+            <li key={b.id} className="text-sm text-fg">
+              {b.label} <span className="text-xs text-muted">(share #{b.shareIndex})</span>
             </li>
           ))}
         </ul>
 
         {status.status !== "ACTIVE" ? (
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-muted">
             Passphrase rotation and beneficiary changes are only available while the vault is Active — cancel any
             in-progress recovery first.
           </p>
         ) : managementMode === "none" ? (
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-800/80 pt-3">
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
             <button
               type="button"
               onClick={openRotate}
-              className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Rotate passphrase
             </button>
             <button
               type="button"
               onClick={openBeneficiaryManagement}
-              className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Add / remove beneficiaries
             </button>
@@ -492,16 +492,16 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
         ) : managementMode === "rotate" ? (
           rotateDistribution ? (
             <div className="mt-3 flex flex-col gap-3 border-t border-negative border-t-2 pt-3">
-              <p className="text-sm font-medium text-slate-100">New shares — distribute these now, they replace the old ones</p>
-              <p className="text-xs text-slate-400">
+              <p className="text-sm font-medium text-fg">New shares — distribute these now, they replace the old ones</p>
+              <p className="text-xs text-muted">
                 Each beneficiary&apos;s recovery link is unchanged — only give them their new share below to replace
                 their old one. The old shares no longer work.
               </p>
               <ul className="flex flex-col gap-2">
                 {rotateDistribution.map((packet) => (
-                  <li key={packet.label} className="rounded-md border border-slate-800/80 bg-slate-800 p-2">
-                    <p className="text-sm font-medium text-slate-100">{packet.label}</p>
-                    <p className="mt-1 break-all font-tabular-figures text-xs text-slate-400">New share: {packet.share}</p>
+                  <li key={packet.label} className="rounded-md border border-border bg-elevated p-2">
+                    <p className="text-sm font-medium text-fg">{packet.label}</p>
+                    <p className="mt-1 break-all font-tabular-figures text-xs text-muted">New share: {packet.share}</p>
                   </li>
                 ))}
               </ul>
@@ -514,9 +514,9 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
               </button>
             </div>
           ) : (
-            <form onSubmit={handleRotateSubmit} className="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-800/80 pt-3">
+            <form onSubmit={handleRotateSubmit} className="mt-3 flex flex-wrap items-end gap-2 border-t border-border pt-3">
               <div className="flex flex-col gap-1">
-                <label htmlFor="dms-rotate-old" className="text-xs font-medium text-slate-400">
+                <label htmlFor="dms-rotate-old" className="text-xs font-medium text-muted">
                   Current passphrase
                 </label>
                 <input
@@ -525,11 +525,11 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                   autoComplete="current-password"
                   value={rotateOldPassphrase}
                   onChange={(event) => setRotateOldPassphrase(event.target.value)}
-                  className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label htmlFor="dms-rotate-new" className="text-xs font-medium text-slate-400">
+                <label htmlFor="dms-rotate-new" className="text-xs font-medium text-muted">
                   New passphrase
                 </label>
                 <input
@@ -538,11 +538,11 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                   autoComplete="new-password"
                   value={rotateNewPassphrase}
                   onChange={(event) => setRotateNewPassphrase(event.target.value)}
-                  className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label htmlFor="dms-rotate-confirm" className="text-xs font-medium text-slate-400">
+                <label htmlFor="dms-rotate-confirm" className="text-xs font-medium text-muted">
                   Confirm new passphrase
                 </label>
                 <input
@@ -551,7 +551,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                   autoComplete="new-password"
                   value={rotateConfirmPassphrase}
                   onChange={(event) => setRotateConfirmPassphrase(event.target.value)}
-                  className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <button
@@ -564,11 +564,11 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
               <button
                 type="button"
                 onClick={closeManagement}
-                className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>
-              <p className="w-full text-xs text-slate-400">
+              <p className="w-full text-xs text-muted">
                 Every document is decrypted with your current passphrase and re-encrypted with the new one, and every
                 beneficiary&apos;s share is regenerated — entirely in your browser.
               </p>
@@ -577,19 +577,19 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
           )
         ) : resplitDistribution ? (
           <div className="mt-3 flex flex-col gap-3 border-t border-negative border-t-2 pt-3">
-            <p className="text-sm font-medium text-slate-100">
+            <p className="text-sm font-medium text-fg">
               Distribute these now — every beneficiary&apos;s link and share are brand new
             </p>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-muted">
               This replaces the ENTIRE roster, including anyone who was already a beneficiary — their old link and
               share no longer work, even if their label is unchanged.
             </p>
             <ul className="flex flex-col gap-2">
               {resplitDistribution.map((packet) => (
-                <li key={packet.label} className="rounded-md border border-slate-800/80 bg-slate-800 p-2">
-                  <p className="text-sm font-medium text-slate-100">{packet.label}</p>
-                  <p className="mt-1 break-all font-tabular-figures text-xs text-slate-400">Link: {packet.recoveryUrl}</p>
-                  <p className="mt-1 break-all font-tabular-figures text-xs text-slate-400">Share: {packet.share}</p>
+                <li key={packet.label} className="rounded-md border border-border bg-elevated p-2">
+                  <p className="text-sm font-medium text-fg">{packet.label}</p>
+                  <p className="mt-1 break-all font-tabular-figures text-xs text-muted">Link: {packet.recoveryUrl}</p>
+                  <p className="mt-1 break-all font-tabular-figures text-xs text-muted">Share: {packet.share}</p>
                 </li>
               ))}
             </ul>
@@ -602,9 +602,9 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleBeneficiariesSubmit} className="mt-3 flex flex-col gap-3 border-t border-slate-800/80 pt-3">
+          <form onSubmit={handleBeneficiariesSubmit} className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
             <fieldset className="flex flex-col gap-2">
-              <legend className="text-xs font-medium text-slate-400">Beneficiaries</legend>
+              <legend className="text-xs font-medium text-muted">Beneficiaries</legend>
               {beneficiaryLabels.map((label, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <input
@@ -612,14 +612,14 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                     placeholder={`Beneficiary ${index + 1}`}
                     value={label}
                     onChange={(event) => updateBeneficiaryLabel(index, event.target.value)}
-                    className="flex-1 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex-1 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                   {beneficiaryLabels.length > 2 && (
                     <button
                       type="button"
                       data-index={index}
                       onClick={handleRemoveBeneficiaryLabelClick}
-                      className="rounded-md px-2 py-1 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="rounded-md px-2 py-1 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       Remove
                     </button>
@@ -629,14 +629,14 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
               <button
                 type="button"
                 onClick={addBeneficiaryLabel}
-                className="uv-btn-press self-start rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="uv-btn-press self-start rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 + Add beneficiary
               </button>
             </fieldset>
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1">
-                <label htmlFor="dms-resplit-threshold" className="text-xs font-medium text-slate-400">
+                <label htmlFor="dms-resplit-threshold" className="text-xs font-medium text-muted">
                   Shares required to unlock
                 </label>
                 <input
@@ -646,11 +646,11 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                   max={beneficiaryLabels.length}
                   value={beneficiaryThreshold}
                   onChange={(event) => setBeneficiaryThreshold(Number(event.target.value))}
-                  className="w-24 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-24 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label htmlFor="dms-resplit-passphrase" className="text-xs font-medium text-slate-400">
+                <label htmlFor="dms-resplit-passphrase" className="text-xs font-medium text-muted">
                   Current passphrase
                 </label>
                 <input
@@ -659,7 +659,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                   autoComplete="current-password"
                   value={resplitPassphrase}
                   onChange={(event) => setResplitPassphrase(event.target.value)}
-                  className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <button
@@ -672,12 +672,12 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
               <button
                 type="button"
                 onClick={closeManagement}
-                className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>
             </div>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-muted">
               This re-splits your master key across the new roster above — every beneficiary, including anyone
               unchanged, gets a brand new link and share to replace their old one.
             </p>
@@ -686,41 +686,41 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
         )}
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Emergency documents</h2>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Emergency documents</h2>
 
-        {status.documents.length === 0 && <p className="text-sm text-slate-400">No documents yet.</p>}
+        {status.documents.length === 0 && <p className="text-sm text-muted">No documents yet.</p>}
         <ul className="flex flex-col gap-2">
           {status.documents.map((doc) => (
-            <li key={doc.id} className="rounded-md border border-slate-800/80 p-2">
+            <li key={doc.id} className="rounded-md border border-border p-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium text-slate-100">{doc.title}</p>
+                <p className="text-sm font-medium text-fg">{doc.title}</p>
                 <button
                   type="button"
                   data-document-id={doc.id}
                   onClick={handleDeleteDocumentClick}
-                  className="rounded-md px-2 py-1 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="rounded-md px-2 py-1 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   Delete
                 </button>
               </div>
               {unlocked ? (
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-400">{decrypted[doc.id] ?? "…"}</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{decrypted[doc.id] ?? "…"}</p>
               ) : (
-                <p className="mt-1 text-xs text-slate-400">Content locked — unlock below to view.</p>
+                <p className="mt-1 text-xs text-muted">Content locked — unlock below to view.</p>
               )}
             </li>
           ))}
         </ul>
 
         {unlocked ? (
-          <div className="mt-4 flex flex-col gap-3 border-t border-slate-800/80 pt-3">
+          <div className="mt-4 flex flex-col gap-3 border-t border-border pt-3">
             <div className="flex items-center gap-2">
               <Badge variant="positive">Unlocked</Badge>
               <button
                 type="button"
                 onClick={handleLock}
-                className="uv-btn-press ml-auto rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="uv-btn-press ml-auto rounded-md border border-border px-2 py-1 text-xs font-medium text-muted hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Lock
               </button>
@@ -731,14 +731,14 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                 placeholder="Title"
                 value={newDocTitle}
                 onChange={(event) => setNewDocTitle(event.target.value)}
-                className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <textarea
                 placeholder="Content"
                 rows={3}
                 value={newDocContent}
                 onChange={(event) => setNewDocContent(event.target.value)}
-                className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               <button
                 type="submit"
@@ -751,9 +751,9 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
             </form>
           </div>
         ) : (
-          <form onSubmit={handleUnlock} className="mt-4 flex flex-wrap items-end gap-2 border-t border-slate-800/80 pt-3">
+          <form onSubmit={handleUnlock} className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-3">
             <div className="flex flex-col gap-1">
-              <label htmlFor="dms-unlock-passphrase" className="text-xs font-medium text-slate-400">
+              <label htmlFor="dms-unlock-passphrase" className="text-xs font-medium text-muted">
                 Recovery passphrase
               </label>
               <input
@@ -762,7 +762,7 @@ export function VaultDashboard({ status }: { status: VaultDashboardProps }) {
                 autoComplete="current-password"
                 value={passphrase}
                 onChange={(event) => setPassphrase(event.target.value)}
-                className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <button

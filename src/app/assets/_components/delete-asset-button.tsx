@@ -36,7 +36,7 @@ export function DeleteAssetButton({ assetId, assetName }: { assetId: string; ass
         type="button"
         onClick={handleDelete}
         disabled={isDeleting}
-        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-negative hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-negative hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isDeleting && <Spinner />} Delete
       </button>

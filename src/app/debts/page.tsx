@@ -59,13 +59,13 @@ export default async function DebtsPage({
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-4 md:px-6">
-      <h1 className="font-display text-xl font-semibold text-slate-100">Debts</h1>
+      <h1 className="font-display text-xl font-semibold text-fg">Debts</h1>
 
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+      <section className="rounded-lg border border-border bg-surface p-4">
         <CreateDebtForm />
       </section>
 
-      {debts.length === 0 && <p className="text-sm text-slate-400">No debts tracked yet — add one above.</p>}
+      {debts.length === 0 && <p className="text-sm text-muted">No debts tracked yet — add one above.</p>}
 
       <ul className="flex flex-col gap-4">
         {debts.map((debt) => {
@@ -77,18 +77,18 @@ export default async function DebtsPage({
           const summary = summarizePayoff(schedule);
 
           return (
-            <li key={debt.id} className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+            <li key={debt.id} className="rounded-lg border border-border bg-surface p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="flex flex-wrap items-center gap-2 font-medium text-slate-100">
-                    {debt.name} <span className="text-xs text-slate-400">({DEBT_TYPE_LABEL[debt.debtType]})</span>
+                  <p className="flex flex-wrap items-center gap-2 font-medium text-fg">
+                    {debt.name} <span className="text-xs text-muted">({DEBT_TYPE_LABEL[debt.debtType]})</span>
                     {negativeAmortization && (
                       <Badge variant="critical" pulse>
                         Negative amortization
                       </Badge>
                     )}
                   </p>
-                  <p className="font-tabular-figures tracking-tight text-sm text-slate-400">
+                  <p className="font-tabular-figures tracking-tight text-sm text-muted">
                     {formatAgorot(balance)} at {formatBpsAsPercent(aprBps)} APR — min. payment {formatAgorot(minimumPayment)}
                   </p>
                 </div>
@@ -105,7 +105,7 @@ export default async function DebtsPage({
                 </p>
               )}
 
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-muted">
                 {summary.payoffAchieved
                   ? `At the minimum payment, payoff in ~${summary.monthsSimulated} months, paying ${formatAgorot(summary.totalInterestPaid)} in interest.`
                   : "At the minimum payment, this debt won't pay off within 50 years."}
@@ -113,12 +113,12 @@ export default async function DebtsPage({
 
               {debt.payments.length > 0 && (
                 <details className="mt-3">
-                  <summary className="cursor-pointer text-xs font-medium text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <summary className="cursor-pointer text-xs font-medium text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     Payment history ({debt.payments.length})
                   </summary>
                   <ul className="mt-2 flex flex-col gap-1">
                     {debt.payments.map((payment) => (
-                      <li key={payment.id} className="flex justify-between text-xs text-slate-400">
+                      <li key={payment.id} className="flex justify-between text-xs text-muted">
                         <span>{payment.paidAt.toISOString().slice(0, 10)}</span>
                         <span className="font-tabular-figures tracking-tight">{formatAgorot(agorot(Number(payment.amount)))}</span>
                       </li>
@@ -132,11 +132,11 @@ export default async function DebtsPage({
       </ul>
 
       {comparison && (
-        <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
-          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Avalanche vs. snowball</h2>
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">Avalanche vs. snowball</h2>
           <form method="GET" className="mb-4 flex items-end gap-3">
             <div className="flex flex-col gap-1">
-              <label htmlFor="extra-budget" className="text-xs font-medium text-slate-400">
+              <label htmlFor="extra-budget" className="text-xs font-medium text-muted">
                 Extra monthly budget (₪)
               </label>
               <input
@@ -145,33 +145,33 @@ export default async function DebtsPage({
                 inputMode="decimal"
                 defaultValue={extraBudgetInput}
                 placeholder="0.00"
-                className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="w-32 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <button
               type="submit"
-              className="rounded-md border border-slate-800/80 px-4 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-md border border-border px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Recalculate
             </button>
           </form>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <h3 className="text-sm font-medium text-slate-100">Avalanche (highest APR first)</h3>
-              <p className="mt-1 text-xs text-slate-400">
+              <h3 className="text-sm font-medium text-fg">Avalanche (highest APR first)</h3>
+              <p className="mt-1 text-xs text-muted">
                 Order: {comparison.avalanche.order.map((id) => debtNameById.get(id)).join(" → ")}
               </p>
-              <p className="mt-1 font-tabular-figures tracking-tight text-sm text-slate-100">
+              <p className="mt-1 font-tabular-figures tracking-tight text-sm text-fg">
                 Payoff in {comparison.avalanche.monthsToPayoff} months, {formatAgorot(comparison.avalanche.totalInterestPaid)}{" "}
                 interest
               </p>
             </div>
             <div>
-              <h3 className="text-sm font-medium text-slate-100">Snowball (smallest balance first)</h3>
-              <p className="mt-1 text-xs text-slate-400">
+              <h3 className="text-sm font-medium text-fg">Snowball (smallest balance first)</h3>
+              <p className="mt-1 text-xs text-muted">
                 Order: {comparison.snowball.order.map((id) => debtNameById.get(id)).join(" → ")}
               </p>
-              <p className="mt-1 font-tabular-figures tracking-tight text-sm text-slate-100">
+              <p className="mt-1 font-tabular-figures tracking-tight text-sm text-fg">
                 Payoff in {comparison.snowball.monthsToPayoff} months, {formatAgorot(comparison.snowball.totalInterestPaid)}{" "}
                 interest
               </p>

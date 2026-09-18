@@ -4,7 +4,7 @@
  */
 export default function ForgotPasswordLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative min-h-full bg-slate-950 text-slate-100">
+    <div className="relative min-h-full bg-bg text-fg">
       {/* Same single restrained ambient light source as (finance)/layout.tsx
           -- see that file's own doc comment for why this exists and why it's
           kept to one gradient, one color, one low alpha, and why it's a

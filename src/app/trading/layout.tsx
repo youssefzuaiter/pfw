@@ -21,7 +21,7 @@ import { TradingSidebar } from "./_components/trading-sidebar";
  */
 export default function TradingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-neutral-950 font-tabular text-neutral-100">
+    <div className="flex min-h-screen bg-bg font-tabular text-fg">
       <TradingSidebar />
       {/* Not a second `<main>` — the root layout (src/app/layout.tsx)
           already renders the page's one `<main>` landmark around this

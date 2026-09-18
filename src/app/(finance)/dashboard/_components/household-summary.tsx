@@ -19,9 +19,9 @@ export type HouseholdSummaryRow = {
  */
 export function HouseholdSummary({ households }: { households: HouseholdSummaryRow[] }) {
   return (
-    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="household-heading">
+    <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="household-heading">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 id="household-heading" className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        <h2 id="household-heading" className="text-xs font-medium uppercase tracking-wide text-muted">
           Household Spaces
         </h2>
         <Link
@@ -32,7 +32,7 @@ export function HouseholdSummary({ households }: { households: HouseholdSummaryR
         </Link>
       </div>
       {households.length === 0 ? (
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-muted">
           Not part of any household yet.{" "}
           <Link href="/budgets" className="text-accent underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             Create or join one
@@ -42,14 +42,14 @@ export function HouseholdSummary({ households }: { households: HouseholdSummaryR
       ) : (
         <ul className="flex flex-col gap-2">
           {households.map((household) => (
-            <li key={household.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 pt-2 first:border-t-0 first:pt-0">
+            <li key={household.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 first:border-t-0 first:pt-0">
               <Link
                 href={`/budgets?view=household&group=${household.id}`}
-                className="text-sm text-slate-100 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="text-sm text-fg underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {household.name}
               </Link>
-              <span className="flex items-center gap-2 text-xs text-slate-400">
+              <span className="flex items-center gap-2 text-xs text-muted">
                 {household.sharedEnvelopeCount} envelope{household.sharedEnvelopeCount === 1 ? "" : "s"} ·{" "}
                 {household.sharedAccountCount} account{household.sharedAccountCount === 1 ? "" : "s"}
                 <Badge variant={household.permission === "WRITE" ? "positive" : "neutral"}>

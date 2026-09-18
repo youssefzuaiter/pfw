@@ -19,8 +19,8 @@ export default async function AnalyticsPage() {
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-4 md:px-6">
       <div>
-        <h1 className="font-display text-xl font-semibold text-slate-100">Retirement analytics</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="font-display text-xl font-semibold text-fg">Retirement analytics</h1>
+        <p className="mt-1 text-sm text-muted">
           A probabilistic FIRE / retirement Monte Carlo projection — {analytics.result.numSimulations.toLocaleString()}
           {" "}simulated market paths, run fresh against your current net worth and asset allocation.
         </p>

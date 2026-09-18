@@ -64,7 +64,7 @@ export default function OfflinePage() {
   const isBackOnline = useSyncExternalStore(subscribeToOnlineStatus, getOnlineSnapshot, getServerOnlineSnapshot);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 bg-slate-950 px-4 py-24 text-center text-slate-100">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 bg-bg px-4 py-24 text-center text-fg">
       {/* eslint-disable-next-line @next/next/no-img-element -- a service-worker-precached static asset (public/sw.js), not something Next's image optimizer can process offline */}
       <img src="/icons/icon-192.png" alt="" width={64} height={64} className="rounded-xl" />
 
@@ -80,11 +80,11 @@ export default function OfflinePage() {
         )}
       </div>
 
-      <h1 className="font-display text-xl font-semibold text-slate-100">
+      <h1 className="font-display text-xl font-semibold text-fg">
         {isBackOnline ? "Connection restored" : "You’re offline"}
       </h1>
 
-      <p className="text-sm text-slate-400">
+      <p className="text-sm text-muted">
         {isBackOnline
           ? "Your connection is back — reload to pick up right where you left off."
           : "PFW couldn’t reach the network. Your budgets, balances, and transactions need a live connection to load — nothing here is ever shown from a stale cache."}

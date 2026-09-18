@@ -250,15 +250,15 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
   // Already unlocked this session.
   if (unlocked && mode !== "rotate") {
     return (
-      <section className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900 p-3 text-sm">
+      <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm">
         <Badge variant="positive">Secure notes unlocked</Badge>
-        {statusMessage && <span className="text-xs text-slate-400">{statusMessage}</span>}
+        {statusMessage && <span className="text-xs text-muted">{statusMessage}</span>}
         {legacyNoteCount > 0 && (
           <button
             type="button"
             disabled={isBusy}
             onClick={handleMigrateClick}
-            className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             {isBusy && <Spinner />} Migrate {legacyNoteCount} legacy note(s)
           </button>
@@ -266,14 +266,14 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
         <button
           type="button"
           onClick={handleOpenRotate}
-          className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Rotate passphrase
         </button>
         <button
           type="button"
           onClick={handleLockClick}
-          className="uv-btn-press ml-auto rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press ml-auto rounded-md border border-border px-2 py-1 text-xs font-medium text-muted hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Lock
         </button>
@@ -284,10 +284,10 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
 
   if (unlocked && mode === "rotate") {
     return (
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-3">
+      <section className="rounded-lg border border-border bg-surface p-3">
         <form onSubmit={handleRotateSubmit} className="flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
-            <label htmlFor="zk-rotate-current" className="text-xs font-medium text-slate-400">
+            <label htmlFor="zk-rotate-current" className="text-xs font-medium text-muted">
               Current passphrase
             </label>
             <input
@@ -296,11 +296,11 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
               autoComplete="current-password"
               value={currentPassphrase}
               onChange={(event) => setCurrentPassphrase(event.target.value)}
-              className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="zk-rotate-new" className="text-xs font-medium text-slate-400">
+            <label htmlFor="zk-rotate-new" className="text-xs font-medium text-muted">
               New passphrase
             </label>
             <input
@@ -309,11 +309,11 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
               autoComplete="new-password"
               value={newPassphrase}
               onChange={(event) => setNewPassphrase(event.target.value)}
-              className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="zk-rotate-confirm" className="text-xs font-medium text-slate-400">
+            <label htmlFor="zk-rotate-confirm" className="text-xs font-medium text-muted">
               Confirm new passphrase
             </label>
             <input
@@ -322,24 +322,24 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
               autoComplete="new-password"
               value={confirmNewPassphrase}
               onChange={(event) => setConfirmNewPassphrase(event.target.value)}
-              className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <button
             type="submit"
             disabled={isBusy || !currentPassphrase || !newPassphrase || !confirmNewPassphrase}
-            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             {isBusy && <Spinner />} Rotate
           </button>
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancel
           </button>
-          <p className="w-full text-xs text-slate-400">
+          <p className="w-full text-xs text-muted">
             Every existing secure note is decrypted with your current passphrase and re-encrypted with the new one,
             entirely in your browser, before anything is sent to the server.
           </p>
@@ -351,9 +351,9 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
 
   if (mode === "idle") {
     return (
-      <section className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/80 bg-slate-900 p-3 text-sm">
+      <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm">
         <Badge variant="neutral">Secure notes locked</Badge>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-muted">
           {isSetUp
             ? "Contribution notes are end-to-end encrypted with your passphrase — the server can never read them."
             : "Set up a master passphrase to attach end-to-end encrypted notes to contributions."}
@@ -361,7 +361,7 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
         <button
           type="button"
           onClick={handleOpenUnlockOrSetup}
-          className="uv-btn-press ml-auto rounded-md border border-slate-800/80 bg-accent px-3 py-1 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press ml-auto rounded-md border border-border bg-accent px-3 py-1 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {isSetUp ? "Unlock secure notes" : "Set up secure notes"}
         </button>
@@ -371,10 +371,10 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
 
   if (mode === "setup") {
     return (
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-3">
+      <section className="rounded-lg border border-border bg-surface p-3">
         <form onSubmit={handleSetup} className="flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
-            <label htmlFor="zk-passphrase" className="text-xs font-medium text-slate-400">
+            <label htmlFor="zk-passphrase" className="text-xs font-medium text-muted">
               Master passphrase
             </label>
             <input
@@ -383,11 +383,11 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
               autoComplete="new-password"
               value={passphrase}
               onChange={(event) => setPassphrase(event.target.value)}
-              className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="zk-passphrase-confirm" className="text-xs font-medium text-slate-400">
+            <label htmlFor="zk-passphrase-confirm" className="text-xs font-medium text-muted">
               Confirm passphrase
             </label>
             <input
@@ -396,24 +396,24 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
               autoComplete="new-password"
               value={confirmPassphrase}
               onChange={(event) => setConfirmPassphrase(event.target.value)}
-              className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <button
             type="submit"
             disabled={isBusy || !passphrase || !confirmPassphrase}
-            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             {isBusy && <Spinner />} Create vault
           </button>
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancel
           </button>
-          <p className="w-full text-xs text-slate-400">
+          <p className="w-full text-xs text-muted">
             This passphrase is never sent to the server and can&apos;t be recovered if forgotten — every encrypted note
             would become permanently unreadable.
           </p>
@@ -424,10 +424,10 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
   }
 
   return (
-    <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-3">
+    <section className="rounded-lg border border-border bg-surface p-3">
       <form onSubmit={handleUnlock} className="flex flex-wrap items-end gap-2">
         <div className="flex flex-col gap-1">
-          <label htmlFor="zk-unlock-passphrase" className="text-xs font-medium text-slate-400">
+          <label htmlFor="zk-unlock-passphrase" className="text-xs font-medium text-muted">
             Master passphrase
           </label>
           <input
@@ -436,20 +436,20 @@ export function SecureNotesPanel({ isSetUp, salt, iterations, canaryCiphertext, 
             autoComplete="current-password"
             value={passphrase}
             onChange={(event) => setPassphrase(event.target.value)}
-            className="w-48 rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-48 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         <button
           type="submit"
           disabled={isBusy || !passphrase}
-          className="uv-btn-press flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="uv-btn-press flex items-center gap-1.5 rounded-md border border-border bg-accent px-3 py-1.5 text-xs font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           {isBusy && <Spinner />} Unlock
         </button>
         <button
           type="button"
           onClick={handleCancel}
-          className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md px-2 py-1.5 text-xs text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           Cancel
         </button>

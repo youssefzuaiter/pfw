@@ -9,9 +9,9 @@ type Minimum = { date: Date; balance: number };
 function ForecastTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) {
   if (!active || !payload?.length || payload[0].value === undefined) return null;
   return (
-    <div className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-xs shadow-lg">
-      <p className="text-slate-400">{label}</p>
-      <p className="font-tabular-figures font-medium tracking-tight text-slate-100">
+    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
+      <p className="text-muted">{label}</p>
+      <p className="font-tabular-figures font-medium tracking-tight text-fg">
         {formatAgorot(agorot(Math.round(payload[0].value)))}
       </p>
     </div>
@@ -50,7 +50,7 @@ export function CashFlowChart({ days, minimum }: { days: readonly ForecastPoint[
           </AreaChart>
         </ResponsiveContainer>
       </div>
-      <p className="mt-2 text-xs text-slate-400">
+      <p className="mt-2 text-xs text-muted">
         Lowest projected balance:{" "}
         <span className="font-tabular-figures font-medium tracking-tight text-negative">
           {formatAgorot(agorot(minimum.balance))}

@@ -60,7 +60,7 @@ export function CreateDebtForm() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
       <div className="flex flex-col gap-1">
-        <label htmlFor="debt-name" className="text-xs font-medium text-slate-400">
+        <label htmlFor="debt-name" className="text-xs font-medium text-muted">
           Name
         </label>
         <input
@@ -68,18 +68,18 @@ export function CreateDebtForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Credit card debt"
-          className="min-w-[160px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[160px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="debt-type" className="text-xs font-medium text-slate-400">
+        <label htmlFor="debt-type" className="text-xs font-medium text-muted">
           Type
         </label>
         <select
           id="debt-type"
           value={debtType}
           onChange={(event) => setDebtType(event.target.value as (typeof DEBT_TYPES)[number]["value"])}
-          className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {DEBT_TYPES.map((type) => (
             <option key={type.value} value={type.value}>
@@ -89,7 +89,7 @@ export function CreateDebtForm() {
         </select>
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="debt-balance" className="text-xs font-medium text-slate-400">
+        <label htmlFor="debt-balance" className="text-xs font-medium text-muted">
           Balance (₪)
         </label>
         <input
@@ -98,11 +98,11 @@ export function CreateDebtForm() {
           value={currentBalance}
           onChange={(event) => setCurrentBalance(event.target.value)}
           placeholder="5000.00"
-          className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-28 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="debt-apr" className="text-xs font-medium text-slate-400">
+        <label htmlFor="debt-apr" className="text-xs font-medium text-muted">
           APR (%)
         </label>
         <input
@@ -111,11 +111,11 @@ export function CreateDebtForm() {
           value={aprPercent}
           onChange={(event) => setAprPercent(event.target.value)}
           placeholder="19.90"
-          className="w-20 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-20 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="debt-min-payment" className="text-xs font-medium text-slate-400">
+        <label htmlFor="debt-min-payment" className="text-xs font-medium text-muted">
           Min. payment (₪)
         </label>
         <input
@@ -124,13 +124,13 @@ export function CreateDebtForm() {
           value={minimumPayment}
           onChange={(event) => setMinimumPayment(event.target.value)}
           placeholder="300.00"
-          className="w-28 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-28 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button
         type="submit"
         disabled={isSubmitting}
-        className="uv-btn-press flex items-center gap-2 rounded-md border border-slate-800/80 bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
         {isSubmitting ? "Adding…" : "Add debt"}

@@ -45,19 +45,19 @@ export function ContributionNote({ ciphertext }: { ciphertext: string | null }) 
   if (!ciphertext) return null;
 
   if (!unlocked) {
-    return <span className="italic text-slate-400">🔒 locked</span>;
+    return <span className="italic text-muted">🔒 locked</span>;
   }
 
   if (failed) {
     return (
-      <span className="italic text-slate-400">
+      <span className="italic text-muted">
         {isZkCiphertext(ciphertext) ? "unable to decrypt" : "legacy note — unlock to migrate"}
       </span>
     );
   }
 
   if (plaintext === null) {
-    return <span className="italic text-slate-400">decrypting…</span>;
+    return <span className="italic text-muted">decrypting…</span>;
   }
 
   return <span>{plaintext}</span>;

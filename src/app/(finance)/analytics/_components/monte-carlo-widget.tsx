@@ -30,16 +30,16 @@ function ChartTooltip({
   if (!active || !payload?.length) return null;
   const byKey = Object.fromEntries(payload.map((p) => [p.dataKey, p.value]));
   return (
-    <div className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-xs shadow-lg">
-      <p className="text-slate-400">Age {label}</p>
+    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
+      <p className="text-muted">Age {label}</p>
       {byKey.p90 !== undefined && (
-        <p className="font-tabular-figures tracking-tight text-slate-100">Top 10%: {formatAgorot(agorot(Math.round(byKey.p90)))}</p>
+        <p className="font-tabular-figures tracking-tight text-fg">Top 10%: {formatAgorot(agorot(Math.round(byKey.p90)))}</p>
       )}
       {byKey.p50 !== undefined && (
-        <p className="font-tabular-figures font-medium tracking-tight text-slate-100">Median: {formatAgorot(agorot(Math.round(byKey.p50)))}</p>
+        <p className="font-tabular-figures font-medium tracking-tight text-fg">Median: {formatAgorot(agorot(Math.round(byKey.p50)))}</p>
       )}
       {byKey.p10 !== undefined && (
-        <p className="font-tabular-figures tracking-tight text-slate-100">Bottom 10%: {formatAgorot(agorot(Math.round(byKey.p10)))}</p>
+        <p className="font-tabular-figures tracking-tight text-fg">Bottom 10%: {formatAgorot(agorot(Math.round(byKey.p10)))}</p>
       )}
     </div>
   );
@@ -123,13 +123,13 @@ export function MonteCarloWidget({
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+      <section className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Probability of portfolio survival</p>
-            <p className="font-display text-3xl font-semibold tracking-tight text-slate-100">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">Probability of portfolio survival</p>
+            <p className="font-display text-3xl font-semibold tracking-tight text-fg">
               {probabilityPercent.toFixed(1)}%{" "}
-              <span className="text-base font-normal text-slate-400">to age {data.input.endAge}</span>
+              <span className="text-base font-normal text-muted">to age {data.input.endAge}</span>
             </p>
           </div>
           <Badge variant={status.badge} pulse={status.badge === "critical"}>
@@ -140,20 +140,20 @@ export function MonteCarloWidget({
           <Tickbar label="Chance of never running out of money" percent={probabilityPercent} status={status.tickbar} />
         </div>
         {isLoading && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
             <Spinner /> Recalculating…
           </p>
         )}
         {error && <p className="mt-2 text-xs text-negative">{error}</p>}
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
-        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Assumptions</h2>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">Assumptions</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label className="flex flex-col gap-1">
-            <span className="flex justify-between text-xs font-medium text-slate-400">
+            <span className="flex justify-between text-xs font-medium text-muted">
               <span>Retirement age</span>
-              <span className="font-tabular-figures tracking-tight text-slate-100">{retirementAge}</span>
+              <span className="font-tabular-figures tracking-tight text-fg">{retirementAge}</span>
             </span>
             <input
               type="range"
@@ -166,9 +166,9 @@ export function MonteCarloWidget({
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="flex justify-between text-xs font-medium text-slate-400">
+            <span className="flex justify-between text-xs font-medium text-muted">
               <span>Target annual spend</span>
-              <span className="font-tabular-figures tracking-tight text-slate-100">{formatAgorot(agorot(annualSpendAgorot))}</span>
+              <span className="font-tabular-figures tracking-tight text-fg">{formatAgorot(agorot(annualSpendAgorot))}</span>
             </span>
             <input
               type="range"
@@ -181,9 +181,9 @@ export function MonteCarloWidget({
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="flex justify-between text-xs font-medium text-slate-400">
+            <span className="flex justify-between text-xs font-medium text-muted">
               <span>Market volatility</span>
-              <span className="font-tabular-figures tracking-tight text-slate-100">{volatilityMultiplier.toFixed(2)}x</span>
+              <span className="font-tabular-figures tracking-tight text-fg">{volatilityMultiplier.toFixed(2)}x</span>
             </span>
             <input
               type="range"
@@ -197,9 +197,9 @@ export function MonteCarloWidget({
           </label>
         </div>
         <label className="mt-4 flex flex-col gap-1 sm:w-48">
-          <span className="flex justify-between text-xs font-medium text-slate-400">
+          <span className="flex justify-between text-xs font-medium text-muted">
             <span>Your current age</span>
-            <span className="font-tabular-figures tracking-tight text-slate-100">{currentAge}</span>
+            <span className="font-tabular-figures tracking-tight text-fg">{currentAge}</span>
           </span>
           <input
             type="range"
@@ -211,7 +211,7 @@ export function MonteCarloWidget({
             className="accent-accent"
           />
         </label>
-        <p className="mt-3 text-xs text-slate-400">
+        <p className="mt-3 text-xs text-muted">
           Starting net worth {data.derived.startingNetWorth.formatted} and{" "}
           {(data.derived.growthAllocationShare * 100).toFixed(0)}% growth allocation come from your real accounts.
           Annual savings default ({data.derived.historicalAnnualSavings.formatted}) is your recent average monthly
@@ -219,8 +219,8 @@ export function MonteCarloWidget({
         </p>
       </section>
 
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
-        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">Projected net worth range</h2>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">Projected net worth range</h2>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
@@ -286,7 +286,7 @@ export function MonteCarloWidget({
             </LineChart>
           </ResponsiveContainer>
         </div>
-        <p className="mt-2 text-xs text-slate-400">
+        <p className="mt-2 text-xs text-muted">
           Median final balance at age {data.input.endAge}: {data.medianFinalBalance.formatted}. In the worst 10% of
           simulated paths: {data.worstDecileFinalBalance.formatted}.
         </p>

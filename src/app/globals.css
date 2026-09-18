@@ -1,27 +1,53 @@
 @import "tailwindcss";
 
 /*
- * PFW design tokens.
+ * PFW design tokens — the ONE colour system in this app.
  *
- * A single, permanent theme (user request: removed the System/Light/Dark
- * toggle entirely rather than leave it wired to a theme nobody can
- * actually reach anymore). This app spent several passes converting
- * almost every screen to hardcoded `slate-*`/`neutral-*` Tailwind classes
- * for the institutional-terminal aesthetic — by the time that was done,
- * these tokens had almost no surface area left to actually toggle (only
- * a handful of files, mostly primary-CTA buttons and `/trading`, still
- * read them at all), so keeping a whole light/dark/system switching
- * mechanism alive for that shrinking footprint stopped being worth its
- * own complexity (a second CSS block, `theme-init-script.tsx`'s blocking
- * inline script, `ThemeToggle`'s client state). What's kept is exactly
- * the values every screenshot in this session was actually taken
- * against — the former "light" (default, no `data-theme` set) block —
- * not the separately-tuned, deeper "dark" block, which is now deleted
- * rather than left as dead, unreachable CSS.
+ * Every colour a screen renders goes through these tokens. Two guard
+ * tests keep it that way: `tests/guards/no-untokenized-hex.test.ts`
+ * (no `#hex` outside this file) and
+ * `tests/guards/no-raw-palette-classes.test.ts` (no `bg-slate-900`,
+ * `text-neutral-400`, … — Tailwind's built-in palette utilities). The
+ * second exists because of what happened once: the institutional-
+ * terminal redesign moved every screen except `/trading` onto raw
+ * `slate-*`/`neutral-*` classes, which contain no hex and so sailed past
+ * the first guard, and those raw defaults were never contrast-verified
+ * the way these tokens are — the §3tt axe sweep failing ten screens on
+ * one such shade was the bill. The palette re-tokenization pass
+ * (AGENTS.md §3vv) moved everything back onto these tokens and added
+ * `--pfw-elevated`/`--pfw-elevated-hover` for the two surface steps the
+ * raw palette had that the token set lacked.
+ *
+ * A single, permanent theme. The System/Light/Dark toggle was removed
+ * at the user's request (`ff5cad8`) at a time when, because of the
+ * drift above, these tokens had almost no surface area left to toggle;
+ * that premise no longer holds — every screen reads them again — but
+ * restoring the toggle was explicitly out of §3vv's scope. What's kept
+ * is the former "light" (default, no `data-theme` set) block, which is
+ * itself dark-shaped (navy, §3kk): the values every screenshot was
+ * actually taken against, not the separately-tuned deeper "dark" block,
+ * which was deleted rather than left as dead, unreachable CSS.
  */
 :root {
   --pfw-bg: #101a33;
   --pfw-surface: #182645;
+  /* The raised/control surface — inputs, selects, chips, secondary
+     buttons — sitting ON a surface card, plus its hover level (palette
+     re-tokenization pass, AGENTS.md §3vv). The raw slate palette these
+     replace had three surface steps (950/900/800) and a hover step (700)
+     where the token set had two; each value below was chosen by
+     MEASURING the slate palette's own lifts with the WCAG formula and
+     reproducing them in this hue, not by eye:
+       surface -> elevated  1.26:1 (slate 900 -> 800 was 1.22:1)
+       elevated -> hover    1.25:1 (slate 800 -> 700 was 1.41:1 — deliberately
+                            less, so muted text stays AA mid-hover: 4.55:1;
+                            slate's own hover step would have been 4.20:1)
+     Text on elevated: fg 10.48:1, muted 5.67:1 (the slate pairing it
+     replaces was 5.71:1), accent 6.22:1, positive 6.17:1. `negative` on
+     elevated is 4.29:1 — no element pairs the two today, and the e2e
+     axe suite is what would catch one. */
+  --pfw-elevated: #243660;
+  --pfw-elevated-hover: #2f4570;
   --pfw-fg: #eef1f7; /* 15.24:1 vs bg, 13.24:1 vs surface */
   --pfw-muted: #a9b4c7; /* 8.25:1 vs bg, 7.16:1 vs surface */
   --pfw-border: #253654; /* muted-on-border-as-fill (Badge's "neutral" variant): 5.79:1 */
@@ -34,6 +60,8 @@
 @theme inline {
   --color-bg: var(--pfw-bg);
   --color-surface: var(--pfw-surface);
+  --color-elevated: var(--pfw-elevated);
+  --color-elevated-hover: var(--pfw-elevated-hover);
   --color-fg: var(--pfw-fg);
   --color-muted: var(--pfw-muted);
   --color-border: var(--pfw-border);

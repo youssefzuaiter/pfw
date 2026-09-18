@@ -61,7 +61,7 @@ export function CreateBankAccountForm() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
       <div className="flex flex-col gap-1">
-        <label htmlFor="bank-institution" className="text-xs font-medium text-slate-400">
+        <label htmlFor="bank-institution" className="text-xs font-medium text-muted">
           Institution
         </label>
         <input
@@ -69,11 +69,11 @@ export function CreateBankAccountForm() {
           value={institutionName}
           onChange={(event) => setInstitutionName(event.target.value)}
           placeholder="Bank Leumi"
-          className="min-w-[140px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[140px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="bank-last4" className="text-xs font-medium text-slate-400">
+        <label htmlFor="bank-last4" className="text-xs font-medium text-muted">
           Last 4 digits
         </label>
         <input
@@ -83,11 +83,11 @@ export function CreateBankAccountForm() {
           value={last4}
           onChange={(event) => setLast4(event.target.value.replace(/\D/g, "").slice(0, 4))}
           placeholder="1234"
-          className="w-20 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-20 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="bank-nickname" className="text-xs font-medium text-slate-400">
+        <label htmlFor="bank-nickname" className="text-xs font-medium text-muted">
           Nickname (optional)
         </label>
         <input
@@ -95,18 +95,18 @@ export function CreateBankAccountForm() {
           value={nickname}
           onChange={(event) => setNickname(event.target.value)}
           placeholder="Everyday spending"
-          className="min-w-[140px] rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-[140px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="bank-type" className="text-xs font-medium text-slate-400">
+        <label htmlFor="bank-type" className="text-xs font-medium text-muted">
           Type
         </label>
         <select
           id="bank-type"
           value={accountType}
           onChange={(event) => setAccountType(event.target.value as (typeof ACCOUNT_TYPES)[number]["value"])}
-          className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {ACCOUNT_TYPES.map((type) => (
             <option key={type.value} value={type.value}>
@@ -116,14 +116,14 @@ export function CreateBankAccountForm() {
         </select>
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="bank-currency" className="text-xs font-medium text-slate-400">
+        <label htmlFor="bank-currency" className="text-xs font-medium text-muted">
           Currency
         </label>
         <select
           id="bank-currency"
           value={currency}
           onChange={(event) => setCurrency(event.target.value as (typeof CURRENCIES)[number])}
-          className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {CURRENCIES.map((code) => (
             <option key={code} value={code}>
@@ -133,7 +133,7 @@ export function CreateBankAccountForm() {
         </select>
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="bank-balance" className="text-xs font-medium text-slate-400">
+        <label htmlFor="bank-balance" className="text-xs font-medium text-muted">
           {accountType === "CREDIT_CARD" ? "Amount owed" : "Current balance"}
         </label>
         <input
@@ -142,13 +142,13 @@ export function CreateBankAccountForm() {
           value={nativeBalance}
           onChange={(event) => setNativeBalance(event.target.value)}
           placeholder="0.00"
-          className="w-32 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-32 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
       <button
         type="submit"
         disabled={isSubmitting}
-        className="uv-btn-press flex items-center gap-2 rounded-md border border-slate-800/80 bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
         {isSubmitting ? "Adding…" : "Add bank account"}

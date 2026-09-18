@@ -27,14 +27,14 @@ type HealthPayload = {
 };
 
 const DOT_CLASS: Record<BackendStatus, string> = {
-  checking: "bg-slate-500",
+  checking: "bg-muted",
   online: "bg-positive uv-badge-pulse",
   degraded: "bg-signature uv-badge-pulse",
   offline: "bg-negative",
 };
 
 const TEXT_CLASS: Record<BackendStatus, string> = {
-  checking: "text-slate-400",
+  checking: "text-muted",
   online: "text-positive",
   degraded: "text-signature",
   offline: "text-negative",
@@ -102,7 +102,7 @@ export function BackendStatusBadge() {
   }, []);
 
   return (
-    <div className="flex items-center gap-2 text-xs font-medium text-slate-400" role="status">
+    <div className="flex items-center gap-2 text-xs font-medium text-muted" role="status">
       <span aria-hidden="true" className={`h-2 w-2 rounded-full ${DOT_CLASS[view.status]}`} />
       <span className={TEXT_CLASS[view.status]}>{view.label}</span>
     </div>

@@ -59,7 +59,7 @@ export function FilterBar({
         id="transaction-category-filter"
         value={initialCategoryId}
         onChange={(event) => updateParams({ category: event.target.value })}
-        className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <option value="">All categories</option>
         {categories.map((category) => (
@@ -76,7 +76,7 @@ export function FilterBar({
         id="transaction-sort"
         value={initialSort}
         onChange={(event) => updateParams({ sort: event.target.value })}
-        className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {SORT_OPTIONS.map((option) => (
           <option key={option.value} value={option.value}>

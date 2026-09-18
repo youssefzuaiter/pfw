@@ -118,19 +118,19 @@ export function OpenBankingConnectionsPanel({
       {error && <p className="text-sm text-negative">{error}</p>}
 
       <section>
-        <h2 className="text-sm font-semibold text-slate-100">Connected accounts</h2>
+        <h2 className="text-sm font-semibold text-fg">Connected accounts</h2>
         {connections.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-400">No European bank connections yet — connect one below.</p>
+          <p className="mt-2 text-sm text-muted">No European bank connections yet — connect one below.</p>
         ) : (
           <ul className="mt-2 flex flex-col gap-2">
             {connections.map((connection) => (
               <li
                 key={connection.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-elevated px-3 py-2 text-sm"
               >
                 <div>
-                  <p className="font-medium text-slate-100">{connection.institutionName}</p>
-                  <p className="text-xs text-slate-400">
+                  <p className="font-medium text-fg">{connection.institutionName}</p>
+                  <p className="text-xs text-muted">
                     {connection.lastSyncedAt ? `Last synced ${new Date(connection.lastSyncedAt).toLocaleString()}` : "Never synced"}
                   </p>
                 </div>
@@ -141,7 +141,7 @@ export function OpenBankingConnectionsPanel({
                     data-id={connection.id}
                     onClick={handleSync}
                     disabled={busyId === connection.id || connection.status === "REVOKED"}
-                    className="uv-btn-press flex items-center gap-1 rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                    className="uv-btn-press flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                   >
                     {busyId === connection.id && <Spinner size="sm" />} Sync now
                   </button>
@@ -162,8 +162,8 @@ export function OpenBankingConnectionsPanel({
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold text-slate-100">Connect a European bank</h2>
-        <p className="mt-1 text-xs text-slate-400">
+        <h2 className="text-sm font-semibold text-fg">Connect a European bank</h2>
+        <p className="mt-1 text-xs text-muted">
           Simulated for demonstration only — no real bank is ever contacted, and no real financial data is transmitted.
         </p>
         <ul className="mt-2 flex flex-col gap-2">
@@ -172,11 +172,11 @@ export function OpenBankingConnectionsPanel({
             return (
               <li
                 key={institution.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-elevated px-3 py-2 text-sm"
               >
                 <div>
-                  <p className="font-medium text-slate-100">{institution.name}</p>
-                  <p className="text-xs text-slate-400">
+                  <p className="font-medium text-fg">{institution.name}</p>
+                  <p className="text-xs text-muted">
                     {institution.country} · {institution.currency}
                   </p>
                 </div>

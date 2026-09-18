@@ -35,17 +35,17 @@ export function PageSkeleton({
     >
       <span className="sr-only">Loading</span>
 
-      <div className="h-7 w-40 animate-pulse rounded-md bg-slate-800" />
+      <div className="h-7 w-40 animate-pulse rounded-md bg-elevated" />
 
       <div className="flex flex-col gap-4">
         {Array.from({ length: cardCount }).map((_, index) => (
           <div
             key={index}
-            className="flex flex-col gap-3 rounded-lg border border-slate-800/80 bg-slate-900 p-4"
+            className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
           >
-            <div className="h-4 w-1/3 animate-pulse rounded bg-slate-800" />
-            <div className="h-8 w-1/2 animate-pulse rounded bg-slate-800" />
-            <div className="h-3 w-2/3 animate-pulse rounded bg-slate-800" />
+            <div className="h-4 w-1/3 animate-pulse rounded bg-elevated" />
+            <div className="h-8 w-1/2 animate-pulse rounded bg-elevated" />
+            <div className="h-3 w-2/3 animate-pulse rounded bg-elevated" />
           </div>
         ))}
       </div>

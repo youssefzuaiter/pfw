@@ -12,9 +12,9 @@ const MAX_SLICES = 6;
 function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{ name?: string; value?: number }> }) {
   if (!active || !payload?.length || payload[0].value === undefined) return null;
   return (
-    <div className="rounded-md border border-slate-800/80 bg-slate-900 px-3 py-2 text-xs shadow-lg">
-      <p className="text-slate-100">{payload[0].name}</p>
-      <p className="font-tabular-figures font-medium tracking-tight text-slate-100">
+    <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
+      <p className="text-fg">{payload[0].name}</p>
+      <p className="font-tabular-figures font-medium tracking-tight text-fg">
         {formatAgorot(agorot(Math.round(payload[0].value)))}
       </p>
     </div>
@@ -23,7 +23,7 @@ function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{
 
 export function CategoryDonut({ breakdown }: { breakdown: readonly Slice[] }) {
   if (breakdown.length === 0) {
-    return <p className="text-sm text-slate-400">No categorized spending yet this month.</p>;
+    return <p className="text-sm text-muted">No categorized spending yet this month.</p>;
   }
 
   const data = breakdown.slice(0, MAX_SLICES);
@@ -50,7 +50,7 @@ export function CategoryDonut({ breakdown }: { breakdown: readonly Slice[] }) {
           </PieChart>
         </ResponsiveContainer>
       </div>
-      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
         {data.map((entry, index) => (
           <li key={entry.categoryName} className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${SLICE_DOT_CLASSES[index % SLICE_DOT_CLASSES.length]}`} aria-hidden="true" />

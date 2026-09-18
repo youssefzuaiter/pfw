@@ -54,8 +54,8 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 md:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
-        <h1 className="font-display text-xl font-semibold text-slate-100">Dashboard</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
+        <h1 className="font-display text-xl font-semibold text-fg">Dashboard</h1>
         <BackendStatusBadge />
       </div>
 
@@ -102,8 +102,8 @@ export default async function DashboardPage() {
 
       <OpenBankingSyncCard data={openBankingSync} />
 
-      <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="cash-flow-heading">
-        <h2 id="cash-flow-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+      <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="cash-flow-heading">
+        <h2 id="cash-flow-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
           60-day cash-flow forecast
         </h2>
         <CashFlowChart
@@ -118,15 +118,15 @@ export default async function DashboardPage() {
       />
 
       <div className="grid gap-4 md:grid-cols-2">
-        <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="category-spend-heading">
-          <h2 id="category-spend-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+        <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="category-spend-heading">
+          <h2 id="category-spend-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
             Category spending — this month
           </h2>
           <CategoryDonut breakdown={data.categorySpendBreakdown.map((c) => ({ categoryName: c.categoryName, amount: c.amount }))} />
         </section>
 
-        <section className="rounded-lg border border-slate-800/80 bg-slate-900 p-4" aria-labelledby="income-expense-heading">
-          <h2 id="income-expense-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+        <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="income-expense-heading">
+          <h2 id="income-expense-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
             Income vs. expense
           </h2>
           <IncomeExpenseChart

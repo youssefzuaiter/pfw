@@ -20,12 +20,12 @@ export default async function OpenBankingSettingsPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
-      <div className="border-b border-slate-800/80 pb-3">
+      <div className="border-b border-border pb-3">
         <Link href="/settings" className="text-xs text-accent underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           ← Settings
         </Link>
-        <h1 className="mt-1 font-display text-xl font-semibold text-slate-100">Open Banking</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="mt-1 font-display text-xl font-semibold text-fg">Open Banking</h1>
+        <p className="mt-1 text-sm text-muted">
           Connect European bank accounts via a simulated PSD2-style API and sync their transactions automatically.
         </p>
       </div>

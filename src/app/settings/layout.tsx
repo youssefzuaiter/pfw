@@ -1,7 +1,8 @@
 /**
  * `/settings`'s own fixed institutional-terminal shell — a fixed dark
- * canvas (Linear/Vercel-inspired: sharp-bordered `neutral-950/60` panels,
- * monospace figures, `neutral-400`/`neutral-100` text), same mechanism
+ * canvas (Linear/Vercel-inspired: sharp-bordered `bg-surface` panels on a
+ * `bg-bg` page, monospace figures, `text-muted`/`text-fg` text — the
+ * `--pfw-*` tokens, since the §3vv re-tokenization pass), same mechanism
  * (and reasoning) as `(finance)/layout.tsx`'s and `/trading/layout.tsx`'s
  * own fixed dark shells: a deliberate, fixed visual choice for this
  * screen, not something a user's light/dark theme preference should be
@@ -19,7 +20,7 @@
  */
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative min-h-full bg-slate-950 text-slate-100">
+    <div className="relative min-h-full bg-bg text-fg">
       {/* Same single restrained ambient light source as (finance)/layout.tsx
           -- see that file's own doc comment for why this exists and why it's
           kept to one gradient, one color, one low alpha, and why it's a

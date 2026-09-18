@@ -17,7 +17,7 @@ type Category = { id: string; name: string };
 
 function AmountCell({ amount }: { amount: Agorot }) {
   return (
-    <span className={`font-tabular-figures font-medium tracking-tight ${amount < 0 ? "text-slate-100" : "text-positive"}`}>
+    <span className={`font-tabular-figures font-medium tracking-tight ${amount < 0 ? "text-fg" : "text-positive"}`}>
       {formatAgorot(amount)}
     </span>
   );
@@ -31,15 +31,15 @@ export function TransactionsTable({
   categories: readonly Category[];
 }) {
   if (rows.length === 0) {
-    return <p className="p-6 text-center text-sm text-slate-400">No transactions match your filters.</p>;
+    return <p className="p-6 text-center text-sm text-muted">No transactions match your filters.</p>;
   }
 
   return (
     <>
-      <div className="hidden overflow-x-auto rounded-lg border border-slate-800/80 bg-slate-900 md:block">
+      <div className="hidden overflow-x-auto rounded-lg border border-border bg-surface md:block">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-slate-800/80 text-left text-xs uppercase tracking-wide text-slate-400">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
               <th scope="col" className="px-4 py-2 font-medium">
                 Date
               </th>
@@ -59,12 +59,12 @@ export function TransactionsTable({
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className="border-b border-slate-800/80 last:border-0">
-                <td className="whitespace-nowrap px-4 py-2 font-tabular-figures tracking-tight text-slate-400">
+              <tr key={row.id} className="border-b border-border last:border-0">
+                <td className="whitespace-nowrap px-4 py-2 font-tabular-figures tracking-tight text-muted">
                   {row.occurredAt.toISOString().slice(0, 10)}
                 </td>
                 <td className="px-4 py-2">
-                  <p className="font-medium text-slate-100">{row.merchantName ?? row.description}</p>
+                  <p className="font-medium text-fg">{row.merchantName ?? row.description}</p>
                   {row.needsReview && <span className="text-xs text-signature">Needs review</span>}
                 </td>
                 <td className="px-4 py-2">
@@ -89,11 +89,11 @@ export function TransactionsTable({
 
       <ul className="flex flex-col gap-3 md:hidden">
         {rows.map((row) => (
-          <li key={row.id} className="rounded-lg border border-slate-800/80 bg-slate-900 p-4">
+          <li key={row.id} className="rounded-lg border border-border bg-surface p-4">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="font-medium text-slate-100">{row.merchantName ?? row.description}</p>
-                <p className="font-tabular-figures text-xs tracking-tight text-slate-400">
+                <p className="font-medium text-fg">{row.merchantName ?? row.description}</p>
+                <p className="font-tabular-figures text-xs tracking-tight text-muted">
                   {row.occurredAt.toISOString().slice(0, 10)}
                 </p>
               </div>

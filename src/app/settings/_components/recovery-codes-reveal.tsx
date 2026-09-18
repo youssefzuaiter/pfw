@@ -27,14 +27,14 @@ export function RecoveryCodesReveal({ codes, onAcknowledge }: { codes: string[];
 
   return (
     <div className="mt-4 rounded-md border border-signature bg-signature/10 p-3">
-      <p className="text-xs font-semibold text-slate-100">Save your backup codes</p>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="text-xs font-semibold text-fg">Save your backup codes</p>
+      <p className="mt-1 text-xs text-muted">
         Each code works once, to sign in if you ever lose access to your authenticator app or passkey. They
         won&rsquo;t be shown again — save them somewhere safe now.
       </p>
-      <ul className="mt-2 grid grid-cols-2 gap-1.5 font-tabular-figures tracking-tight text-sm text-slate-100">
+      <ul className="mt-2 grid grid-cols-2 gap-1.5 font-tabular-figures tracking-tight text-sm text-fg">
         {codes.map((code) => (
-          <li key={code} className="rounded-md border border-slate-800/80 bg-slate-800 px-2 py-1 text-center">
+          <li key={code} className="rounded-md border border-border bg-elevated px-2 py-1 text-center">
             {code}
           </li>
         ))}
@@ -43,7 +43,7 @@ export function RecoveryCodesReveal({ codes, onAcknowledge }: { codes: string[];
         <button
           type="button"
           onClick={handleCopy}
-          className="uv-btn-press rounded-md border border-slate-800/80 px-3 py-1.5 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="uv-btn-press rounded-md border border-border px-3 py-1.5 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {copied ? "Copied" : "Copy all"}
         </button>

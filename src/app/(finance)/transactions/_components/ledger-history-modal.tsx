@@ -127,7 +127,7 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
         ref={openButtonRef}
         type="button"
         onClick={handleOpen}
-        className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-700 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-muted transition-colors hover:bg-elevated-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         History
       </button>
@@ -145,27 +145,27 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
             role="dialog"
             aria-modal="true"
             aria-labelledby="ledger-history-title"
-            className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-y-auto rounded-lg border border-slate-800/80 bg-slate-950 p-5 shadow-2xl"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-y-auto rounded-lg border border-border bg-bg p-5 shadow-2xl"
           >
             <div className="mb-1 flex items-center justify-between">
-              <h2 id="ledger-history-title" className="font-display text-lg font-semibold text-slate-100">
+              <h2 id="ledger-history-title" className="font-display text-lg font-semibold text-fg">
                 Change history
               </h2>
               <button
                 type="button"
                 onClick={handleClose}
                 aria-label="Close"
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md p-1 text-muted hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 ✕
               </button>
             </div>
-            <p className="mb-4 text-xs text-slate-400">{label}</p>
+            <p className="mb-4 text-xs text-muted">{label}</p>
 
             {stage === "loading" && (
               <div className="flex flex-col items-center gap-3 py-8">
                 <Spinner />
-                <p className="text-sm text-slate-400">Loading history…</p>
+                <p className="text-sm text-muted">Loading history…</p>
               </div>
             )}
 
@@ -188,7 +188,7 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
                     altered outside the normal application flow.
                   </p>
                 )}
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-muted">
                   This is a read-only, tamper-evident record — there is no way to undo or roll back a change from
                   here.
                 </p>
@@ -199,23 +199,23 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
                     return (
                       <li
                         key={commit.id}
-                        className={`rounded-md border p-3 text-sm ${isBroken ? "border-negative/40 bg-negative/10" : "border-slate-800/80 bg-slate-800"}`}
+                        className={`rounded-md border p-3 text-sm ${isBroken ? "border-negative/40 bg-negative/10" : "border-border bg-elevated"}`}
                       >
                         <div className="mb-1 flex flex-wrap items-center gap-2">
                           <Badge variant={commit.action === "CREATE" ? "positive" : "neutral"}>
                             {commit.action === "CREATE" ? "Created" : "Updated"}
                           </Badge>
-                          <span className="font-tabular-figures tracking-tight text-xs text-slate-400">
+                          <span className="font-tabular-figures tracking-tight text-xs text-muted">
                             {formatTimestamp(commit.createdAtIso)}
                           </span>
                         </div>
-                        <p className="text-slate-100">
+                        <p className="text-fg">
                           {commit.patchData.categoryName} ·{" "}
                           <span className="font-tabular-figures tracking-tight">
                             {formatAgorot(agorot(Number(commit.patchData.amountAgorot)))}
                           </span>
                         </p>
-                        <p className="mt-1 font-mono text-[11px] text-slate-400">
+                        <p className="mt-1 font-mono text-[11px] text-muted">
                           {shortHash(commit.previousHash)} → {shortHash(commit.currentHash)}
                         </p>
                       </li>

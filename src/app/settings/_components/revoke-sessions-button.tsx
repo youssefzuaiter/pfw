@@ -43,7 +43,7 @@ export function RevokeSessionsButton() {
       >
         {isBusy && <Spinner />} Sign out of all sessions
       </button>
-      <p className="text-xs text-slate-400">Signs this device and every other signed-in device out immediately.</p>
+      <p className="text-xs text-muted">Signs this device and every other signed-in device out immediately.</p>
       {error && <p className="text-xs text-negative">{error}</p>}
     </div>
   );

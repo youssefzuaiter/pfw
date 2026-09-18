@@ -51,7 +51,7 @@ export function SubscriptionStatusToggle({ merchantKey, status }: { merchantKey:
           type="button"
           onClick={handleReactivate}
           disabled={isSubmitting}
-          className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           {isSubmitting && <Spinner />} Reactivate
         </button>
@@ -62,7 +62,7 @@ export function SubscriptionStatusToggle({ merchantKey, status }: { merchantKey:
               type="button"
               onClick={handleMarkReviewed}
               disabled={isSubmitting}
-              className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             >
               Mark reviewed
             </button>
@@ -71,7 +71,7 @@ export function SubscriptionStatusToggle({ merchantKey, status }: { merchantKey:
             type="button"
             onClick={handleCancel}
             disabled={isSubmitting}
-            className="uv-btn-press rounded-md border border-slate-800/80 px-2 py-1 text-xs font-medium text-negative hover:bg-negative/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-negative hover:bg-negative/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
             {isSubmitting && <Spinner />} Cancel
           </button>

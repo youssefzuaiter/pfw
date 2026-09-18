@@ -45,16 +45,16 @@ const QUICK_LINKS: QuickLink[] = [
  */
 export function QuickLinksGrid() {
   return (
-    <nav aria-label="Quick links" className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 pb-3">
+    <nav aria-label="Quick links" className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
       {QUICK_LINKS.map((link) => {
         const Icon = link.icon;
         return (
           <Link
             key={link.href}
             href={link.href}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-800/80 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-700 hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-muted/40 hover:bg-elevated hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+            <Icon className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
             {link.label}
           </Link>
         );

@@ -12,7 +12,7 @@ type Point = { date: Date; netWorth: number };
 export function NetWorthSparkline({ history }: { history: readonly Point[] }) {
   if (history.length < 2) {
     return (
-      <div className="flex h-full items-center text-xs text-slate-400" role="status">
+      <div className="flex h-full items-center text-xs text-muted" role="status">
         Not enough history yet
       </div>
     );

@@ -38,7 +38,7 @@ export function VerifyEmailConfirm({ token }: { token: string }) {
 
   if (status === "verifying") {
     return (
-      <div className="mt-6 flex items-center gap-2 text-sm text-slate-400">
+      <div className="mt-6 flex items-center gap-2 text-sm text-muted">
         <Spinner /> Verifying your email…
       </div>
     );
@@ -47,7 +47,7 @@ export function VerifyEmailConfirm({ token }: { token: string }) {
   if (status === "success") {
     return (
       <div className="mt-6 flex flex-col gap-3">
-        <p className="text-sm text-slate-100">Your email address has been verified.</p>
+        <p className="text-sm text-fg">Your email address has been verified.</p>
         <Link
           href="/dashboard"
           className="text-sm text-accent-ink underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -61,7 +61,7 @@ export function VerifyEmailConfirm({ token }: { token: string }) {
   return (
     <div className="mt-6 flex flex-col gap-3">
       <p className="text-sm text-negative">This verification link is invalid or has expired.</p>
-      <p className="text-sm text-slate-400">You can request a new one from your account settings.</p>
+      <p className="text-sm text-muted">You can request a new one from your account settings.</p>
     </div>
   );
 }

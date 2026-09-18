@@ -6206,7 +6206,9 @@ distinct bugs, every one reproduced before being believed.
     already noted as the reason the theme toggle had nothing left to
     switch — and those raw defaults never went through the check the
     tokens did. This closes that gap for the muted-text role only; **the
-    two palettes still coexist**, and that remains real technical debt.
+    two palettes still coexist**, and that remains real technical debt —
+    **superseded: §3vv moved every screen back onto the tokens and added
+    a guard so the drift cannot recur.**
 
 - **A test-environment lesson worth keeping**: the integration suite
   failed 3 tests on first run, all in `auth-credentials.test.ts`, all
@@ -6225,7 +6227,8 @@ distinct bugs, every one reproduced before being believed.
 
 - **Known limitations, left as such**: the two coexisting color systems
   (tokenized `--pfw-*` vs. raw `slate-*`) are not reconciled — only the
-  one failing role was fixed; `error.tsx` is route-level only, with no
+  one failing role was fixed (**superseded by §3vv**); `error.tsx` is
+  route-level only, with no
   `global-error.tsx` for root-layout faults; and the `.toFixed(4)`
   quantity fix is a DISPLAY fix — the float imprecision is still what's
   stored in the `Decimal` column, which would need a data migration and
@@ -6505,15 +6508,139 @@ pass: getting the paper trader running for the first time this session.
   "PFW down" window this session — run `npm run dev` in your own
   terminal when the trader needs PFW up continuously.
 
+## 3vv. Palette re-tokenization: one colour system, guarded (ad hoc)
+
+Explicit user request ("let's go" on the deferred project §3uu named), planned
+in plan mode and built on branch `palette-retokenization`. The debt being
+retired is the one §3tt left standing: the institutional-terminal redesign
+had moved every screen except `/trading` onto raw Tailwind palette
+utilities (`bg-slate-950`, `text-slate-400`, `border-slate-800/80`, …), so
+two colour systems coexisted — the contrast-verified `--pfw-*` tokens and
+raw defaults nobody had ever run through that check. Measured before
+touching anything: **1,200 occurrences across 101 files, but only ~15
+distinct slate utilities** plus a handful of `neutral-*`/`sky-*` — the same
+card/input/button recipes repeated verbatim (46× one identical card class
+string), which is what made a mechanical, ordered rewrite safe rather than
+reckless. The tokenized `/trading` screens already wrote the same recipes in
+token vocabulary, so the target was established, not invented.
+
+- **Two new tokens, because slate had four surface steps and the token set
+  had two.** `bg-slate-800` was the raised control surface (every input,
+  select, chip, secondary button) and `hover:bg-slate-700` its hover step;
+  nothing in `bg`/`surface`/`border` played either role. Added
+  `--pfw-elevated: #243660` and `--pfw-elevated-hover: #2f4570`
+  (`globals.css`, exposed as `bg-elevated`/`hover:bg-elevated-hover`).
+  - **The first draft was wrong, and the file's own recorded history is
+    what caught it.** The plan's `#1c2b4a` (with hover going to
+    `bg-border`) measured 1.07:1 against `surface` and 1.02:1 on hover — a
+    no-op — which is the exact "genuinely flat, ~1.08:1" failure
+    `(finance)/layout.tsx`'s doc comment records the user rejecting in
+    revision 1. So instead of picking a shade, the slate palette's OWN
+    lifts were measured with the WCAG relative-luminance formula and
+    reproduced in this hue: page→panel 1.15:1 (slate 950→900 was 1.13),
+    panel→control **1.26:1** (900→800 was 1.22), control→hover **1.25:1**
+    (800→700 was 1.41 — deliberately less, so `muted` text stays AA
+    mid-hover at 4.55:1 where slate's own hover step would have dropped it
+    to 4.20:1). Text on `elevated`: `fg` 10.48:1, `muted` 5.67:1 (the
+    slate-400-on-slate-800 pairing it replaces was 5.71:1), `accent`
+    6.22:1, `positive` 6.17:1; `negative` on `elevated` is 4.29:1 — no
+    element pairs the two today, and the e2e axe suite is what would
+    catch one. All recorded in the token's own comment, matching the
+    per-token style §3kk established.
+- **The mapping** (one ordered ruleset, 1,236 replacements in 105 files;
+  prefixes like `placeholder:`/`focus-visible:`/`group-hover:` survive
+  because only the palette suffix is rewritten):
+
+  | from | to |
+  |---|---|
+  | `h-px flex-1 bg-slate-800` (dividers — runs first) | `bg-border` |
+  | `border-slate-800/80`, `border-slate-800`, `border-neutral-800` | `border-border` |
+  | `hover:border-slate-700` | `hover:border-muted/40` |
+  | `hover:bg-slate-700` (52 sites) | `hover:bg-elevated-hover` |
+  | `hover:bg-slate-800` | `hover:bg-elevated` |
+  | `hover:text-slate-100` | `hover:text-fg` |
+  | `bg-slate-950`, `bg-neutral-950` | `bg-bg` |
+  | `bg-slate-900` | `bg-surface` |
+  | `bg-slate-800`, `bg-neutral-800` | `bg-elevated` |
+  | `bg-slate-500` (the status badge's "checking" dot) | `bg-muted` |
+  | `text-slate-100`, `text-neutral-100` | `text-fg` |
+  | `text-slate-400`, `text-slate-300`, `text-neutral-500` | `text-muted` |
+  | `ring-sky-400` | `ring-ring` (already aliases `--pfw-accent`) |
+  | `text-sky-400` | `text-accent` |
+  | `bg-black/40`, `bg-black/50` | **kept** — a modal scrim is a true neutral overlay, not palette drift |
+
+  `PWA_THEME_COLOR` (`#080e1c`, browser chrome) is out of scope — an
+  allowlisted hex, not a Tailwind class. The two doc comments that
+  described the old scheme in prose (`(finance)/layout.tsx`,
+  `settings/layout.tsx`) were rewritten in token terms; the former keeps
+  its one mention of `slate-950`/`slate-900` as history of what revision 2
+  reached for and why.
+- **The durable half: `tests/guards/no-raw-palette-classes.test.ts`**, the
+  companion to `no-untokenized-hex.test.ts`. That guard stops a literal
+  `#hex`; this one stops the quieter route the drift actually took —
+  palette utilities contain no hex and sailed straight past it. Walks
+  `src/`, strips `/* */` and `//` comments first (a guard on code, not
+  prose — the `focus-visible` guard's long history of matching tag names
+  inside comments is exactly the trap avoided), and fails on any
+  `(bg|text|border|ring|…)-(slate|gray|zinc|neutral|…|sky|…)-NNN[/NN]`
+  utility, with a self-test pinning the shapes it must and must not
+  match. Calibrated against reality, not assumed: run against `main`'s
+  tree it flags **105 files** — exactly the 105 the rewrite touched — and
+  0 on this branch.
+- **`ff5cad8`'s reasoning is now obsolete.** The theme toggle was removed
+  because the tokens "had almost no surface area left to toggle"; after
+  this pass every screen reads them again, so a toggle would have full
+  surface area. Restoring it was explicitly NOT in scope (it was removed
+  at the user's request) — this pass makes it possible, nothing more.
+  `globals.css`'s header comment says so now instead of repeating the
+  stale premise.
+- **Verified**: `npm run check` — typecheck clean, lint 0 errors (one
+  pre-existing unused-variable warning in
+  `tests/integration/tax-simulation-dividends.test.ts`, untouched by this
+  branch); **1,288 passed, 3 skipped** (the embedding sidecar) with the
+  local Postgres live, including the new guard's 3 cases. Repo-wide grep:
+  zero raw palette classes in `src/` outside that one prose mention.
+  `E2E_PORT=3177 npm run test:e2e` against a fresh `next build && next
+  start` — **36/36**: the axe suite over every primary route is the
+  contrast oracle for a change like this, and it passed on the first
+  run; the keyboard-nav and security specs prove nothing structural
+  moved; `global-teardown` left `demo@pfw.local` exactly as the seed
+  made it (claimed, seeded display name), confirmed by direct query.
+  Then the part no test can do — Tailwind v4 emits only the utilities
+  it finds, so a typo'd token name silently produces NO css — a browser
+  walkthrough of the production build via ⚡ Demo Login at 1280px and
+  375px: `/dashboard`, `/transactions` with the receipt and
+  ledger-history modals open, `/settings`, `/budgets`, the mobile
+  "More" drawer; inputs read as raised against their card, a hovered
+  secondary button visibly lightens, nothing went black or invisible,
+  no horizontal overflow at 375px, zero CSP violations. And checked the
+  same thing without eyes: every token utility the rewrite introduced
+  (`bg-elevated`, `hover:bg-elevated-hover`, `hover:border-muted/40`,
+  `placeholder:text-muted`, `ring-ring`, …) resolves to a real rule in
+  the served stylesheet, and computed colours on the page are the
+  token hexes, not `transparent`.
+- **Known limitations, left as such**: the guard's palette list is the
+  Tailwind default families — a hand-written arbitrary value
+  (`bg-[#…]`) is the hex guard's job and `bg-[var(--something)]` is
+  neither guard's, so a genuinely new colour still needs a token and a
+  reviewer; `--pfw-elevated`'s 4.29:1 against `negative` is below AA and
+  relies on the axe suite to stay unpaired; and the theme toggle stays
+  gone (see above).
+
 ## 4. Design system (Phase 0)
 
-- **Tokens** (`src/app/globals.css`, light/dark each authored explicitly,
-  never derived by inverting the other): `--pfw-bg`, `--pfw-surface`,
-  `--pfw-fg`, `--pfw-muted`, `--pfw-border`, `--pfw-accent`, `--pfw-positive`,
+- **Tokens** (`src/app/globals.css`; originally light/dark each authored
+  explicitly, now one permanent dark theme — `ff5cad8`): `--pfw-bg`,
+  `--pfw-surface`, `--pfw-elevated`/`--pfw-elevated-hover` (the raised
+  control surface and its hover step, added in §3vv), `--pfw-fg`,
+  `--pfw-muted`, `--pfw-border`, `--pfw-accent`, `--pfw-positive`,
   `--pfw-negative`, `--pfw-signature`. Exposed to Tailwind via `@theme inline`
   as `bg-*`, `text-*`, `border-*` utilities (`bg-bg`, `text-fg`, `text-accent`,
   etc.) — never hand-write a hex literal outside `globals.css`
-  (`tests/guards/no-untokenized-hex.test.ts` enforces this).
+  (`tests/guards/no-untokenized-hex.test.ts` enforces this) and never
+  reach for a raw Tailwind palette utility (`bg-slate-900`,
+  `text-neutral-400`, …) either (`tests/guards/no-raw-palette-classes.test.ts`
+  enforces that — §3vv is why both guards exist).
 - **Typography**: Rubik (display + body, chosen partly because it has native
   Hebrew glyph support — merchant/category strings in the mock data are
   Hebrew) via `next/font/google`, weight-differentiated rather than a second

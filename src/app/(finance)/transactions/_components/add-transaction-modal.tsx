@@ -142,7 +142,7 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
         ref={openButtonRef}
         type="button"
         onClick={handleOpen}
-        className="uv-btn-press rounded-md border border-slate-800/80 px-3 py-2 text-sm font-medium text-slate-100 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="uv-btn-press rounded-md border border-border px-3 py-2 text-sm font-medium text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Add transaction
       </button>
@@ -160,17 +160,17 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-transaction-title"
-            className="relative z-10 flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg border border-slate-800/80 bg-slate-950 p-5 shadow-2xl"
+            className="relative z-10 flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-lg border border-border bg-bg p-5 shadow-2xl"
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 id="add-transaction-title" className="font-display text-lg font-semibold text-slate-100">
+              <h2 id="add-transaction-title" className="font-display text-lg font-semibold text-fg">
                 Add transaction
               </h2>
               <button
                 type="button"
                 onClick={handleClose}
                 aria-label="Close"
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-md p-1 text-muted hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 ✕
               </button>
@@ -184,45 +184,45 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
                 label={isIncome ? "Income" : "Expense"}
               />
               <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-slate-400">Description</span>
+                <span className="text-xs font-medium text-muted">Description</span>
                 <input
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
                   placeholder={isIncome ? "Salary" : "Groceries"}
                   required
-                  className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
               <div className="flex gap-3">
                 <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-400">Date</span>
+                  <span className="text-xs font-medium text-muted">Date</span>
                   <input
                     type="date"
                     value={occurredAt}
                     onChange={(event) => setOccurredAt(event.target.value)}
                     required
-                    className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </label>
                 <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs font-medium text-slate-400">Amount (₪)</span>
+                  <span className="text-xs font-medium text-muted">Amount (₪)</span>
                   <input
                     inputMode="decimal"
                     value={amount}
                     onChange={(event) => setAmount(event.target.value)}
                     placeholder="0.00"
                     required
-                    className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 font-tabular-figures tracking-tight text-sm text-slate-100 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </label>
               </div>
               <label className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-slate-400">Account</span>
+                <span className="text-xs font-medium text-muted">Account</span>
                 <select
                   value={bankAccountId}
                   onChange={(event) => setBankAccountId(event.target.value)}
                   required
-                  className="rounded-md border border-slate-800/80 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {bankAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -237,7 +237,7 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
                   type="button"
                   onClick={handleClose}
                   disabled={isSubmitting}
-                  className="rounded-md px-3 py-2 text-sm text-slate-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                  className="rounded-md px-3 py-2 text-sm text-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 >
                   Cancel
                 </button>

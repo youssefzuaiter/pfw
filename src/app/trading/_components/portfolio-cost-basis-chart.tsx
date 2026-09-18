@@ -13,7 +13,7 @@ import { LightweightChart, type AreaSeriesSpec } from "../../../components/chart
  */
 export function PortfolioCostBasisChart({ points }: { points: CostBasisByDatePoint[] }) {
   if (points.length === 0) {
-    return <p className="text-sm text-neutral-500">No open lots yet — nothing to chart.</p>;
+    return <p className="text-sm text-muted">No open lots yet — nothing to chart.</p>;
   }
 
   const series: AreaSeriesSpec[] = [
