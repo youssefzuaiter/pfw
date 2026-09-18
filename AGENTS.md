@@ -6674,10 +6674,8 @@ reached from `computeLiveNetWorth` → `buildDashboardData` → the page.
   "at cost") rather than passing it off as live.
 - **Not done, on purpose**: adding TSLA to the mock universe — the next
   headline names a different ticker, and the dashboard is back down. A
-  real quote feed for trader-booked symbols (Alpaca's own market-data
-  API is the obvious source, since the fills already come from there) is
-  the proper next step; until then "last fill" is the most recent real
-  price this app has, and the label is what keeps it honest.
+  real quote feed for trader-booked symbols is the proper fix — **built
+  next, §3xx**; "last fill" stays as the rung below it.
 - **Verified**: 5 unit cases (`src/lib/holding-price.test.ts`) and a
   4-case integration suite against real Postgres
   (`tests/integration/holding-price-fallback.test.ts`) that reproduces
@@ -6691,6 +6689,108 @@ reached from `computeLiveNetWorth` → `buildDashboardData` → the page.
   TSLA at its last fill (₪187.04, `last_fill`), every other row still
   `mock_feed`, 13 insights generated where the page used to throw.
   `npm run check` with the DB live: 1,297 passed, 3 skipped (the embedding sidecar), 0 failures.
+
+## 3xx. Live quotes for trader-booked tickers (ad hoc)
+
+The follow-up §3ww named, done in the same session at the user's
+"whatever is a must-do, do it". A holding the mock feed can't price was
+valued at its last fill — honest, but frozen: the P&L on a trader-booked
+position never moved after the fill. Now every such ticker gets a real
+market price, daily, and the resolver's chain reads mock feed →
+**newest real observation (stored quote vs. last fill)** → cost.
+
+- **The quote source is the trader, on purpose.** `~/paper-trader` is
+  the one component that holds Alpaca credentials and already has a
+  market-data client (`broker.get_real_quote`, IEX feed — the free tier
+  the paper keys allow). New `broker.get_latest_prices(symbols)` batches
+  `StockLatestTradeRequest` (one request per sync, `feed=IEX`; a symbol
+  Alpaca has no trade for is simply absent, never an error) behind a new
+  `POST /control/quotes` on the same HMAC trust boundary as
+  `/control/halt` and `/control/reconcile` (`_verify_control_request`).
+  PFW calls it from its server only — `src/server/paper-trader/quotes-client.ts`
+  signs the batch exactly as `/api/agent/halt` does — so Alpaca's keys
+  stay in exactly one place and the browser never sees the agent, the
+  single-trader-target rule §3uu established. The response is untrusted
+  input like Frankfurter's or CoinGecko's: Zod-validated, every price
+  re-checked positive and finite, every timestamp parsed, a symbol nobody
+  asked for never stored.
+- **`EquityQuote`** (migration `20260918120000_equity_quotes`, generated
+  with `prisma migrate diff --from-config-datasource`): public market
+  data — no `userId`, no RLS — the `ExchangeRate`/`CryptoAssetPrice`
+  shape, one row per symbol per day, plus `observedAt` (the trade's own
+  timestamp) because the resolver compares it against a fill's
+  `executedAt`. The runtime role's DML is GRANTed in the migration
+  itself: on Neon the default privileges did not cover `RateLimitBucket`
+  and that grant had to be applied by hand (§3uu) — not repeating that.
+  `src/server/dal/equity-quotes.ts` mirrors `crypto-prices.ts`;
+  `getLatestEquityQuotes` deliberately never throws (a deployment whose
+  migration hasn't run yet answers "no quote", logged once a minute, and
+  the chain falls back to the fill — the one failure this whole table
+  exists to end must not be reintroduced by the table's own absence).
+- **The sync** (`src/server/market-data/quote-sync.ts`, `npm run
+  sync:quotes`, and a new `equity-quote-sync` job in `/api/cron`
+  between the crypto sync and the Dead Man's Switch check): "which
+  tickers does ANY user hold outside the mock universe" is a scheduled
+  batch read with no session and no single `userId` — the
+  `inactivity-check.ts` shape — so it is the app's seventh allowlisted
+  admin-client file, for that one `SELECT DISTINCT` only; the writes go
+  through the ordinary DAL. Zero work when nobody holds a non-seeded
+  symbol. No stale-data circuit breaker, unlike the FX/crypto syncs,
+  and deliberately: those feed the runway engine silently, whereas a
+  stale quote is SHOWN — `describeHoldingPriceSource` captions a quote
+  older than a day with its date ("quote from 2026-09-15") on `/trading`
+  and `/trading/portfolio`, and a fill/cost valuation as before.
+- **Verified, all of it live**: the local trader started with
+  `AUTONOMOUS_MODE=False` (so verification could not place an order),
+  `npm run sync:quotes` → `POST /control/quotes 200` in the trader's
+  log, TSLA **$366.02 observed 2026-09-17T19:59:59Z** — Alpaca's real
+  IEX close — stored; the trading account's real `computeLiveNetWorth`/
+  `buildPortfolioData` now value TSLA at that quote (₪189.54, `quote`,
+  no caption because it is under a day old) because it is newer than
+  the 2026-09-16 fill, every seeded row still `mock_feed`. A forged
+  signature, missing headers and a stale timestamp against the new
+  endpoint: 403, 403, 403. The same startup also demonstrated §3uu's
+  documented shared-account behaviour — the local reconcile pass booked
+  two GOOGL fills the Render instance had made, correct for the
+  account's true state. Tests: trader `pytest` 16/16 (4 new in
+  `tests/test_market_data.py`, one of which caught a whitespace-only
+  symbol slipping through the first draft's filter); PFW unit — 9
+  resolver cases including the newest-observation rule both ways and
+  the caption wording, 5 quotes-client cases (the signed request is
+  verified with this app's own `verifyWebhookSignature`); integration —
+  the §3ww suite grew to 7: a quote older than the fill loses, a newer
+  one wins and the net-worth total follows, the sync stores what the
+  trader answers and lists only non-seeded symbols in its request, and
+  a trader outage is a reported failure, never a throw. `npm run check`
+  with the DB live: 1,309 passed, 3 skipped (the embedding sidecar), 0 failures.
+  - **A test-isolation lesson the first full run taught**: that suite's
+    "unknown" ticker was literally `TSLA`, and the live `sync:quotes`
+    minutes earlier had stored a REAL TSLA quote — newer than the
+    suite's fake fill — in the shared `EquityQuote` table, so the quote
+    correctly won and five "the fill wins" assertions failed. A global,
+    non-user-scoped table leaks real state into a test the same way
+    §3w's `CryptoAssetPrice` tomorrow-dated row once did; the suite now
+    uses a synthetic ticker (`TSLX`) no real sync can ever quote, and
+    its cleanup deletes only rows it wrote (`source: "test"`), never a
+    real quote.
+- **Deploying it**: the migration reaches production through
+  `deploy-migrations.yml` (the gated workflow, §3aa) — run it after this
+  lands on `main`; until then production values TSLA at its last fill
+  exactly as §3ww left it, by design of the never-throwing read. The
+  Render trader picks up `/control/quotes` on its next deploy of
+  `~/paper-trader`; Vercel's daily cron then keeps quotes current with
+  no further action.
+- **Known limitations, left as such**: one quote a day (the cron
+  cadence — an intraday figure would need the sync on a schedule Vercel
+  Cron's free tier doesn't offer, or an on-demand refresh); IEX is the
+  free feed, not SIP, so a quote is the last IEX trade, which can lag
+  the consolidated tape by cents; the mock universe's own ten symbols
+  stay on the deterministic mock feed even when the trader holds them
+  too (GOOGL, MSFT) — swapping those to real quotes would silently
+  reprice the simulated trading desk's own history, a separate
+  decision; the quotes endpoint is reachable only while the trader is
+  up, so a sleeping Render instance means that day's sync reports a
+  failure and the previous quote (or the fill) stands, captioned.
 
 ## 4. Design system (Phase 0)
 

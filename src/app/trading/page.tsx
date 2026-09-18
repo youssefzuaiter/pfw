@@ -6,6 +6,7 @@ import { nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getLatestRateTable } from "../../server/dal/exchange-rates";
+import { describeHoldingPriceSource } from "../../lib/holding-price";
 import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../../server/dal/portfolio";
 import { PriceChart } from "./_components/price-chart";
 import { TradeForm } from "./_components/trade-form";
@@ -142,7 +143,9 @@ export default async function TradingPage({
               const quantity = holding.quantity.toNumber();
               const costBasis = agorot(Number(holding.totalCostBasis));
               const nativeCostBasis = nativeAmount(Number(holding.nativeCostBasis));
-              const { priceAgorot: price, nativePrice, source: priceSource } = holdingPrices.get(holding.symbol)!;
+              const resolved = holdingPrices.get(holding.symbol)!;
+              const { priceAgorot: price, nativePrice } = resolved;
+              const priceCaption = describeHoldingPriceSource(resolved, now);
               const marketValue = multiplyAgorot(price, quantity);
               const pnl = unrealizedPnl(
                 { quantity, currency: holding.currency, totalCostBasis: costBasis, nativeCostBasis },
@@ -156,8 +159,7 @@ export default async function TradingPage({
                     <p className="font-medium text-fg">{holding.symbol}</p>
                     <p className="font-tabular-figures text-xs text-muted">
                       {holding.quantity.toFixed(4)} sh · cost basis {formatAgorot(costBasis)}
-                      {priceSource === "last_fill" && " · valued at last fill"}
-                      {priceSource === "cost_basis" && " · valued at cost"}
+                      {priceCaption && ` · ${priceCaption}`}
                     </p>
                   </div>
                   <div className="text-right">

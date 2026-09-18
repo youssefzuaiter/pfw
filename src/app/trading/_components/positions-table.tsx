@@ -1,14 +1,8 @@
 import { Badge, type BadgeVariant } from "../../../components/badge/badge";
 import { CurrencyAmount } from "../../../components/currency/currency-amount";
 import { formatAgorot } from "../../../lib/money";
-import type { HoldingPriceSource } from "../../../lib/holding-price";
 import type { AssetClass } from "../../../lib/portfolio-analytics";
 import type { PortfolioRow } from "../../../server/portfolio/build-portfolio-data";
-
-const PRICE_SOURCE_LABEL: Record<Exclude<HoldingPriceSource, "mock_feed">, string> = {
-  last_fill: "at last fill",
-  cost_basis: "at cost",
-};
 
 const CLASS_LABEL: Record<AssetClass, string> = {
   STOCK: "Stock",
@@ -79,11 +73,10 @@ export function PositionsTable({ rows }: { rows: PortfolioRow[] }) {
               <td className="py-3 pr-3 text-right">
                 <CurrencyAmount agorotValue={row.marketValue} nativeValue={row.nativeMarketValue} currency={row.currency} />
                 {/* A ticker the mock feed can't price (a paper-trader fill) is
-                    valued at its last fill or at cost — say so, rather than
-                    present a stale figure as a live quote. */}
-                {row.priceSource !== "mock_feed" && (
-                  <p className="text-xs text-muted">{PRICE_SOURCE_LABEL[row.priceSource]}</p>
-                )}
+                    valued at its newest real quote, its last fill, or at cost —
+                    say so when that isn't a live figure, rather than present a
+                    stale number as today's market. */}
+                {row.priceCaption && <p className="text-xs text-muted">{row.priceCaption}</p>}
               </td>
               <td className="py-3 pr-3 text-right">
                 <p className={`font-tabular-figures ${toneClass(row.unrealizedGain)}`}>

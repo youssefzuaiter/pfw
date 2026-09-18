@@ -3,7 +3,7 @@ import { cache } from "react";
 import { agorot } from "../../lib/money";
 import { nativeAmount } from "../../lib/currency";
 import { findMockInstrument } from "../../lib/mock-market-data";
-import type { HoldingPriceSource } from "../../lib/holding-price";
+import { describeHoldingPriceSource, type HoldingPriceSource } from "../../lib/holding-price";
 import {
   buildUpcomingPayouts,
   computeTrailingYield,
@@ -23,8 +23,10 @@ import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../dal/
 
 export type PortfolioRow = PositionReturn & {
   name: string;
-  /** Where `currentPrice` came from — `/trading/portfolio` labels anything that isn't the live mock feed. */
+  /** Where `currentPrice` came from. */
   priceSource: HoldingPriceSource;
+  /** The caveat `/trading/portfolio` shows beside a price that isn't a live figure ("valued at last fill", "quote from 2026-09-10"), or `null`. */
+  priceCaption: string | null;
   /** Trailing 12-month dividend yield, or null when market value is zero. */
   trailingYield: number | null;
 };
@@ -85,6 +87,7 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
       // instrument record — the bare symbol is the honest label.
       name: findMockInstrument(position.symbol)?.name ?? position.symbol,
       priceSource: holdingPrices.get(position.symbol)!.source,
+      priceCaption: describeHoldingPriceSource(holdingPrices.get(position.symbol)!, asOf),
       trailingYield: computeTrailingYield(summary, paid, asOf),
     };
   });

@@ -7,8 +7,10 @@ import {
   resolveHoldingPrices as resolveHoldingPricesPure,
   type LastFillPrice,
   type PricableHolding,
+  type QuotePrice,
   type ResolvedHoldingPrice,
 } from "../../lib/holding-price";
+import { getLatestEquityQuotes } from "./equity-quotes";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
 export async function listPortfolioHoldings(userId: string) {
@@ -63,48 +65,65 @@ export async function findLastFillPricesInTransaction(
     where: { userId, symbol: { in: unknownSymbols }, status: { not: "CANCELED" } },
     orderBy: { executedAt: "desc" },
     distinct: ["symbol"],
-    select: { symbol: true, priceAgorot: true, nativePriceAmount: true },
+    select: { symbol: true, priceAgorot: true, nativePriceAmount: true, executedAt: true },
   });
   return new Map(
     fills.map((fill) => [
       fill.symbol,
-      { priceAgorot: agorot(Number(fill.priceAgorot)), nativePrice: nativeAmount(Number(fill.nativePriceAmount)) },
+      {
+        priceAgorot: agorot(Number(fill.priceAgorot)),
+        nativePrice: nativeAmount(Number(fill.nativePriceAmount)),
+        executedAt: fill.executedAt,
+      },
     ]),
   );
 }
 
 /**
+ * The newest stored market quote (`EquityQuote`, §3xx) for each symbol
+ * the mock feed can't price — zero queries when every symbol is seeded.
+ * Public data, no scope needed; never throws (see `getLatestEquityQuotes`).
+ */
+export async function findLatestQuotes(symbols: readonly string[]): Promise<Map<string, QuotePrice>> {
+  const unknownSymbols = symbols.filter((symbol) => !isKnownMockSymbol(symbol));
+  if (unknownSymbols.length === 0) return new Map();
+  const quotes = await getLatestEquityQuotes(unknownSymbols);
+  return new Map([...quotes].map(([symbol, quote]) => [symbol, { priceUsd: quote.priceUsd, observedAt: quote.observedAt }]));
+}
+
+/**
  * Per-share prices for a set of holding rows, keyed by symbol — the ONE
  * way a holding gets valued anywhere in this app (`computeLiveNetWorth`,
- * the dashboard's concentration insight, `/trading/portfolio`, the
- * advisor's holdings tool). Seeded instruments come from the mock feed;
- * anything else is priced at this user's last fill, or at average cost
- * when no fill exists — and the result says which (`source`).
+ * the dashboard's concentration insight, `/trading`, `/trading/portfolio`,
+ * the advisor's holdings tool). Seeded instruments come from the mock
+ * feed; anything else at the newest real observation this app has for
+ * it — a stored market quote or this user's last fill, whichever is more
+ * recent — or at average cost when there is neither; the result says
+ * which (`source`).
  */
 export function priceHoldingRows(
   holdings: readonly PricableHoldingRow[],
   lastFillBySymbol: ReadonlyMap<string, LastFillPrice>,
+  quoteBySymbol: ReadonlyMap<string, QuotePrice>,
   asOf: Date,
   usdToIlsRate: number,
 ): Map<string, ResolvedHoldingPrice> {
-  return resolveHoldingPricesPure(holdings.map(toPricableHolding), lastFillBySymbol, asOf, usdToIlsRate);
+  return resolveHoldingPricesPure(holdings.map(toPricableHolding), lastFillBySymbol, quoteBySymbol, asOf, usdToIlsRate);
 }
 
-/** `findLastFillPricesInTransaction` + `priceHoldingRows` for callers that don't already hold a transaction. */
+/** `findLastFillPricesInTransaction` + `findLatestQuotes` + `priceHoldingRows` for callers that don't already hold a transaction. */
 export async function resolveHoldingPrices(
   userId: string,
   holdings: readonly PricableHoldingRow[],
   asOf: Date,
   usdToIlsRate: number,
 ): Promise<Map<string, ResolvedHoldingPrice>> {
-  const lastFills = await withUserScope(userId, (tx) =>
-    findLastFillPricesInTransaction(
-      tx,
-      userId,
-      holdings.map((h) => h.symbol),
-    ),
-  );
-  return priceHoldingRows(holdings, lastFills, asOf, usdToIlsRate);
+  const symbols = holdings.map((h) => h.symbol);
+  const [lastFills, quotes] = await Promise.all([
+    withUserScope(userId, (tx) => findLastFillPricesInTransaction(tx, userId, symbols)),
+    findLatestQuotes(symbols),
+  ]);
+  return priceHoldingRows(holdings, lastFills, quotes, asOf, usdToIlsRate);
 }
 
 /**

@@ -1404,6 +1404,33 @@ model CryptoAssetPrice {
   @@index([symbol, asOfDate])
 }
 
+/// The most recent real-market price this app has observed for an equity
+/// symbol OUTSIDE the mock universe — a ticker the paper trader booked from
+/// a real Alpaca fill (AGENTS.md §3xx). Public market data belonging to no
+/// user: no `userId`, no RLS, the same treatment as `ExchangeRate` and
+/// `CryptoAssetPrice`, and the same one-row-per-symbol-per-day shape.
+/// Synced daily (`/api/cron`, `npm run sync:quotes`) from the trader's
+/// HMAC-verified `POST /control/quotes` — Alpaca's IEX latest trade — so
+/// the Alpaca credentials stay in exactly one place. Read by the holding
+/// price resolver (`src/lib/holding-price.ts`), which prefers a quote over
+/// a last fill only when the quote is the MORE RECENT observation.
+model EquityQuote {
+  id         String   @id @default(cuid())
+  /// Uppercase ticker, e.g. "TSLA" — free text, always uppercased at the DAL write path.
+  symbol     String
+  /// USD per share, as the feed reported it.
+  priceUsd   Decimal  @db.Decimal(20, 6)
+  /// The calendar day this row is the quote for (one row per symbol per day).
+  asOfDate   DateTime @db.Date
+  /// When the feed observed the trade this price came from — the recency the resolver compares against a fill's `executedAt`.
+  observedAt DateTime
+  source     String
+  fetchedAt  DateTime @default(now())
+
+  @@unique([symbol, asOfDate])
+  @@index([symbol, observedAt])
+}
+
 /// A tracked public EVM (Ethereum-compatible) wallet address (AGENTS.md
 /// §3w) — read-only observation, never custody: this app never asks for,
 /// stores, or could even represent a private key or seed phrase (Tier 0

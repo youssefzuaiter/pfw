@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCronSecret } from "../../../server/env";
 import { syncExchangeRates } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
+import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { StaleDataError } from "../../../server/stale-data-error";
@@ -98,6 +99,13 @@ export async function GET(request: NextRequest) {
   try {
     const fxRateSync = await runJob("fx-rate-sync", syncExchangeRates);
     const cryptoPriceSync = await runJob("crypto-price-sync", syncCryptoPrices);
+    // Latest market price for every trader-booked ticker the mock feed
+    // can't price (AGENTS.md §3xx), via the agent's signed /control/quotes.
+    const equityQuoteSync = await runJob("equity-quote-sync", async () => {
+      const result = await syncEquityQuotes();
+      if (result.ok) console.log(`cron: equity-quote-sync ok — synced=${result.synced.join(",") || "-"} skipped=${result.skipped.join(",") || "-"}`);
+      return result;
+    });
 
     let deadMansSwitchCheck: JobResult;
     try {
@@ -125,6 +133,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       fxRateSync,
       cryptoPriceSync,
+      equityQuoteSync,
       deadMansSwitchCheck,
       rateLimitCleanup,
     });

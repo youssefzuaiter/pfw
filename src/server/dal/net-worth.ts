@@ -3,7 +3,7 @@ import { addAgorot, agorot, multiplyAgorot, subtractAgorot, type Agorot } from "
 import { nativeAmount } from "../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { classifyLiquidity, type LiquidityBreakdown } from "../../lib/liquidity-classification";
-import { findLastFillPricesInTransaction, priceHoldingRows } from "./portfolio";
+import { findLastFillPricesInTransaction, findLatestQuotes, priceHoldingRows } from "./portfolio";
 import { buildWalletBalances } from "../crypto/build-wallet-balances";
 import { withUserScope } from "../db/with-user-scope";
 import { getLatestRateTable } from "./exchange-rates";
@@ -87,7 +87,10 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
     .filter((a) => a.accountType === "CREDIT_CARD")
     .map((a) => toAgorot(a.nativeBalance, a.currency));
   const manualAssetAmounts = assets.map((a) => agorot(Number(a.currentValue)));
-  const holdingPrices = priceHoldingRows(holdings, lastFills, asOf, rateTable.USD);
+  // Stored market quotes for any non-seeded symbol (public data, no
+  // scope) — a no-op query-wise when every holding is a seeded instrument.
+  const quotes = await findLatestQuotes(holdings.map((h) => h.symbol));
+  const holdingPrices = priceHoldingRows(holdings, lastFills, quotes, asOf, rateTable.USD);
   const portfolioAmounts = holdings.map((h) =>
     multiplyAgorot(holdingPrices.get(h.symbol)!.priceAgorot, h.quantity.toNumber()),
   );
