@@ -14,6 +14,16 @@ name: Production smoke check
 # the event payload is passed through `env:` and quoted, never
 # interpolated into the script text (the shell-injection shape Semgrep
 # caught in deploy-migrations.yml's first draft, §3aa).
+#
+# Vercel is not the only thing that creates GitHub Deployments here:
+# any job that declares `environment: production` (deploy-migrations.yml)
+# gets one too, created by whoever dispatched it, whose `target_url` is
+# the workflow JOB PAGE — and GitHub's expression functions compare
+# strings case-insensitively, so an environment-name filter alone cannot
+# tell `production` (the migration gate) from `Production` (Vercel). The
+# first run after a migration deploy did exactly that: smoke-tested a
+# github.com Actions URL, four 404s, a failure email for a healthy site.
+# Hence the creator check, with the URL shape as a second guard.
 on:
   deployment_status:
 
@@ -26,7 +36,9 @@ jobs:
     name: Smoke-test the production deployment
     if: >-
       github.event.deployment_status.state == 'success' &&
-      startsWith(github.event.deployment.environment, 'Production')
+      github.event.deployment.creator.login == 'vercel[bot]' &&
+      startsWith(github.event.deployment_status.target_url, 'https://') &&
+      contains(github.event.deployment_status.target_url, '.vercel.app')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

@@ -6849,7 +6849,24 @@ being written up, the same bar as every section above.
   5/5 against production and fails, as it should, against a host that
   isn't PFW. The URL from the event payload goes through `env:` and is
   quoted, never spliced into the script — the shell-injection shape
-  §3aa's first draft had.
+  §3aa's first draft had. **First live trigger**: one second after
+  Vercel marked `c59330a` deployed, against that deployment's own host,
+  5/5.
+  - **And a false alarm on its first day, caught by the user's inbox**:
+    the first `deploy-migrations.yml` run after this shipped produced a
+    "Production smoke check: all jobs failed" email for a perfectly
+    healthy site. A job that declares `environment: production` gets a
+    GitHub Deployment of its own — created by whoever dispatched it,
+    `target_url` = the workflow JOB PAGE — and GitHub's expression
+    functions compare strings case-insensitively, so
+    `startsWith(environment, 'Production')` matched the migration
+    gate's `production` too: the script smoke-tested a github.com
+    Actions URL and reported four 404s. The workflow now requires
+    `deployment.creator.login == 'vercel[bot]'` and a
+    `https://…vercel.app` target URL. Verified against the API rather
+    than reasoned: Vercel's deployment has creator `vercel[bot]` and a
+    `pfw-<hash>-….vercel.app` URL; the migration run's has the user as
+    creator and the job page as its URL.
 - **Operator alert** (`src/server/ops/operator-alert.ts`, wired into
   `GET /api/cron`). The nightly cron already reported every job's
   outcome in its JSON response — which nobody reads at 00:00 UTC. Now a
