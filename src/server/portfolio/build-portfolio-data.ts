@@ -2,7 +2,8 @@ import "server-only";
 import { cache } from "react";
 import { agorot } from "../../lib/money";
 import { nativeAmount } from "../../lib/currency";
-import { getMockInstrument, getMockPriceAgorot, getMockPriceUsdCents } from "../../lib/mock-market-data";
+import { findMockInstrument } from "../../lib/mock-market-data";
+import type { HoldingPriceSource } from "../../lib/holding-price";
 import {
   buildUpcomingPayouts,
   computeTrailingYield,
@@ -18,10 +19,12 @@ import {
 } from "../../lib/portfolio-analytics";
 import { listAnnouncedDividends, listPaidDividends } from "../dal/dividends";
 import { getLatestRateTable } from "../dal/exchange-rates";
-import { listPortfolioHoldings, listTrades } from "../dal/portfolio";
+import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../dal/portfolio";
 
 export type PortfolioRow = PositionReturn & {
   name: string;
+  /** Where `currentPrice` came from — `/trading/portfolio` labels anything that isn't the live mock feed. */
+  priceSource: HoldingPriceSource;
   /** Trailing 12-month dividend yield, or null when market value is zero. */
   trailingYield: number | null;
 };
@@ -57,6 +60,7 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
     getLatestRateTable(asOf),
   ]);
 
+  const holdingPrices = await resolveHoldingPrices(userId, holdings, asOf, rateTable.USD);
   const positions: AnalyticsPosition[] = holdings.map((holding) => ({
     symbol: holding.symbol,
     assetClass: holding.assetClass,
@@ -64,8 +68,8 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
     quantity: holding.quantity.toNumber(),
     totalCostBasis: agorot(Number(holding.totalCostBasis)),
     nativeCostBasis: nativeAmount(Number(holding.nativeCostBasis)),
-    currentPrice: getMockPriceAgorot(holding.symbol, asOf, rateTable.USD),
-    nativeCurrentPrice: getMockPriceUsdCents(holding.symbol, asOf),
+    currentPrice: holdingPrices.get(holding.symbol)!.priceAgorot,
+    nativeCurrentPrice: holdingPrices.get(holding.symbol)!.nativePrice,
   }));
 
   // Closed-out positions are kept in the DB (deleting one would cascade
@@ -77,7 +81,10 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
     const summary = summarizePosition(position);
     return {
       ...summary,
-      name: getMockInstrument(position.symbol).name,
+      // A ticker outside the mock universe (a paper-trader fill) has no
+      // instrument record — the bare symbol is the honest label.
+      name: findMockInstrument(position.symbol)?.name ?? position.symbol,
+      priceSource: holdingPrices.get(position.symbol)!.source,
       trailingYield: computeTrailingYield(summary, paid, asOf),
     };
   });

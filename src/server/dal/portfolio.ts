@@ -2,6 +2,13 @@ import "server-only";
 import { multiplyAgorot, agorot, type Agorot } from "../../lib/money";
 import { multiplyNativeAmount, nativeAmount, type CurrencyCode, type NativeAmount } from "../../lib/currency";
 import { applyBuy, applySell, type HoldingPosition } from "../../lib/portfolio-math";
+import { isKnownMockSymbol } from "../../lib/mock-market-data";
+import {
+  resolveHoldingPrices as resolveHoldingPricesPure,
+  type LastFillPrice,
+  type PricableHolding,
+  type ResolvedHoldingPrice,
+} from "../../lib/holding-price";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
 export async function listPortfolioHoldings(userId: string) {
@@ -14,6 +21,90 @@ export async function getPortfolioHoldingBySymbol(userId: string, symbol: string
 
 export async function listTrades(userId: string) {
   return withUserScope(userId, (tx) => tx.trade.findMany({ where: { userId }, orderBy: { executedAt: "desc" } }));
+}
+
+/** The subset of a `PortfolioHolding` row the price resolver needs. */
+export type PricableHoldingRow = {
+  symbol: string;
+  quantity: { toNumber(): number };
+  totalCostBasis: bigint;
+  nativeCostBasis: bigint;
+};
+
+function toPricableHolding(row: PricableHoldingRow): PricableHolding {
+  return {
+    symbol: row.symbol,
+    quantity: row.quantity.toNumber(),
+    totalCostBasis: agorot(Number(row.totalCostBasis)),
+    nativeCostBasis: nativeAmount(Number(row.nativeCostBasis)),
+  };
+}
+
+/**
+ * This user's most recent non-cancelled fill per symbol, for the symbols
+ * the mock feed can't price — a paper-trader fill for a ticker the mock
+ * universe never had (the bug that took `/dashboard` down for the
+ * trading account; see `src/lib/holding-price.ts`). Seeded symbols are
+ * filtered out first, so the common all-seeded portfolio costs ZERO
+ * extra queries. Rate-independent on purpose: `computeLiveNetWorth`
+ * runs this inside its scoped transaction in parallel with the FX-rate
+ * read, and prices afterwards.
+ */
+export async function findLastFillPricesInTransaction(
+  tx: ScopedTransactionClient,
+  userId: string,
+  symbols: readonly string[],
+): Promise<Map<string, LastFillPrice>> {
+  const unknownSymbols = symbols.filter((symbol) => !isKnownMockSymbol(symbol));
+  if (unknownSymbols.length === 0) return new Map();
+
+  // `distinct` + `orderBy executedAt desc` = the newest fill per symbol.
+  const fills = await tx.trade.findMany({
+    where: { userId, symbol: { in: unknownSymbols }, status: { not: "CANCELED" } },
+    orderBy: { executedAt: "desc" },
+    distinct: ["symbol"],
+    select: { symbol: true, priceAgorot: true, nativePriceAmount: true },
+  });
+  return new Map(
+    fills.map((fill) => [
+      fill.symbol,
+      { priceAgorot: agorot(Number(fill.priceAgorot)), nativePrice: nativeAmount(Number(fill.nativePriceAmount)) },
+    ]),
+  );
+}
+
+/**
+ * Per-share prices for a set of holding rows, keyed by symbol — the ONE
+ * way a holding gets valued anywhere in this app (`computeLiveNetWorth`,
+ * the dashboard's concentration insight, `/trading/portfolio`, the
+ * advisor's holdings tool). Seeded instruments come from the mock feed;
+ * anything else is priced at this user's last fill, or at average cost
+ * when no fill exists — and the result says which (`source`).
+ */
+export function priceHoldingRows(
+  holdings: readonly PricableHoldingRow[],
+  lastFillBySymbol: ReadonlyMap<string, LastFillPrice>,
+  asOf: Date,
+  usdToIlsRate: number,
+): Map<string, ResolvedHoldingPrice> {
+  return resolveHoldingPricesPure(holdings.map(toPricableHolding), lastFillBySymbol, asOf, usdToIlsRate);
+}
+
+/** `findLastFillPricesInTransaction` + `priceHoldingRows` for callers that don't already hold a transaction. */
+export async function resolveHoldingPrices(
+  userId: string,
+  holdings: readonly PricableHoldingRow[],
+  asOf: Date,
+  usdToIlsRate: number,
+): Promise<Map<string, ResolvedHoldingPrice>> {
+  const lastFills = await withUserScope(userId, (tx) =>
+    findLastFillPricesInTransaction(
+      tx,
+      userId,
+      holdings.map((h) => h.symbol),
+    ),
+  );
+  return priceHoldingRows(holdings, lastFills, asOf, usdToIlsRate);
 }
 
 /**

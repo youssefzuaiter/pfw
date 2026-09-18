@@ -5,7 +5,6 @@ import { buildAmortizationSchedule, isNegativeAmortization, summarizePayoff } fr
 import { computeMonthProgress, computeProrationStatus } from "../../lib/budget-proration";
 import { monthKeyFor } from "../../lib/date-month";
 import { summarizeGoalProgress } from "../../lib/goal-progress";
-import { getMockPriceAgorot, getMockPriceUsdCents } from "../../lib/mock-market-data";
 import { agorot, formatAgorot } from "../../lib/money";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
@@ -17,7 +16,7 @@ import { getLatestRateTable } from "../dal/exchange-rates";
 import { listGoals } from "../dal/goals";
 import { listManualAssets } from "../dal/manual-assets";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
-import { listPortfolioHoldings, listTrades } from "../dal/portfolio";
+import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../dal/portfolio";
 import { getSpendByCategoryInRange, listTransactions } from "../dal/transactions";
 
 /**
@@ -309,14 +308,14 @@ const listPortfolioHoldingsTool = defineTool({
   run: async (userId) => {
     const now = new Date();
     const [holdings, rateTable] = await Promise.all([listPortfolioHoldings(userId), getLatestRateTable(now)]);
+    const holdingPrices = await resolveHoldingPrices(userId, holdings, now, rateTable.USD);
     return holdings
       .filter((holding) => holding.quantity.toNumber() > 0)
       .map((holding) => {
         const quantity = holding.quantity.toNumber();
         const costBasis = agorot(Number(holding.totalCostBasis));
         const nativeCostBasis = nativeAmount(Number(holding.nativeCostBasis));
-        const price = getMockPriceAgorot(holding.symbol, now, rateTable.USD);
-        const nativePrice = getMockPriceUsdCents(holding.symbol, now);
+        const { priceAgorot: price, nativePrice, source: priceSource } = holdingPrices.get(holding.symbol)!;
         const pnl = unrealizedPnl(
           { quantity, currency: holding.currency, totalCostBasis: costBasis, nativeCostBasis },
           price,
@@ -335,6 +334,10 @@ const listPortfolioHoldingsTool = defineTool({
           nativeCostBasis: formatNativeAmount(nativeCostBasis, holding.currency),
           currentPrice: formatAgorot(price),
           nativeCurrentPrice: formatNativeAmount(nativePrice, holding.currency),
+          // Tell the model when a price is the last fill or average cost
+          // rather than a live quote, so it doesn't narrate a stale figure
+          // as today's market.
+          currentPriceSource: priceSource,
           unrealizedPnl: formatAgorot(pnl.pnl),
           nativeUnrealizedPnl: formatNativeAmount(pnl.nativePnl, holding.currency),
         };

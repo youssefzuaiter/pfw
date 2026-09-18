@@ -82,6 +82,17 @@ export function getMockInstrument(symbol: string): MockInstrument {
   return instrument;
 }
 
+/**
+ * The non-throwing lookup for display code that may meet a symbol the
+ * mock universe doesn't cover (a paper-trader fill — see
+ * `src/lib/holding-price.ts`): `undefined`, so the caller can fall back
+ * to the bare ticker, rather than a RangeError that takes the screen
+ * down with it.
+ */
+export function findMockInstrument(symbol: string): MockInstrument | undefined {
+  return INSTRUMENT_BY_SYMBOL.get(symbol);
+}
+
 function dailySeed(symbol: string, date: Date): number {
   const dayKey = date.toISOString().slice(0, 10);
   const input = `${symbol}-${dayKey}`;
@@ -92,7 +103,15 @@ function dailySeed(symbol: string, date: Date): number {
   return hash >>> 0;
 }
 
-/** Deterministic per-symbol-per-day price in native USD cents. Drifts by up to +/-3% around the base price. */
+/**
+ * Deterministic per-symbol-per-day price in native USD cents. Drifts by
+ * up to +/-3% around the base price. Throws for a symbol outside the
+ * mock universe — right for the trading desk, which only ever offers
+ * these instruments, but NOT for valuing a holding: the paper trader
+ * books real fills for any ticker, so holdings go through
+ * `src/lib/holding-price.ts`, which falls back rather than throws
+ * (AGENTS.md §3ww).
+ */
 export function getMockPriceUsdCents(symbol: string, asOf: Date = new Date()): NativeAmount {
   const base = USD_BASE_PRICE[symbol];
   if (base === undefined) {

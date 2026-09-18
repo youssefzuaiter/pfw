@@ -11,14 +11,13 @@ import { listCategories } from "../dal/categories";
 import { listGoals } from "../dal/goals";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
-import { listPortfolioHoldings } from "../dal/portfolio";
+import { listPortfolioHoldings, resolveHoldingPrices } from "../dal/portfolio";
 import {
   countNeedsReview,
   getMonthlyIncomeExpenseHistory,
   getSpendByCategoryInRange,
   getTransactionOccurrencesSince,
 } from "../dal/transactions";
-import { getMockPriceAgorot } from "../../lib/mock-market-data";
 
 const CASH_FLOW_HISTORY_DAYS = 90;
 const SPEND_HISTORY_MONTHS = 6;
@@ -173,9 +172,10 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
   }));
 
   // --- Portfolio concentration -----------------------------------------
+  const holdingPrices = await resolveHoldingPrices(userId, holdings, now, rateTable.USD);
   const portfolioHoldingValues = holdings.map((h) => ({
     symbol: h.symbol,
-    currentValue: multiplyAgorot(getMockPriceAgorot(h.symbol, now, rateTable.USD), h.quantity.toNumber()),
+    currentValue: multiplyAgorot(holdingPrices.get(h.symbol)!.priceAgorot, h.quantity.toNumber()),
   }));
 
   const merchantNameByKey = (key: string) => occurrences.find((o) => o.merchantKey === key)?.displayName ?? key;

@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Badge } from "../../components/badge/badge";
-import { getMockPriceAgorot, getMockPriceBarHistory, getMockPriceUsdCents, listMockSymbols } from "../../lib/mock-market-data";
-import { agorot, formatAgorot, multiplyAgorot, subtractAgorot } from "../../lib/money";
+import { getMockPriceAgorot, getMockPriceBarHistory, listMockSymbols } from "../../lib/mock-market-data";
+import { agorot, formatAgorot, multiplyAgorot } from "../../lib/money";
 import { nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getLatestRateTable } from "../../server/dal/exchange-rates";
-import { listPortfolioHoldings, listTrades } from "../../server/dal/portfolio";
+import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../../server/dal/portfolio";
 import { PriceChart } from "./_components/price-chart";
 import { TradeForm } from "./_components/trade-form";
 import { TradingNav } from "./_components/trading-nav";
@@ -42,7 +42,6 @@ export default async function TradingPage({
   ]);
 
   const priceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceAgorot(symbol, now, rateTable.USD)]));
-  const nativePriceBySymbol = new Map(symbols.map((symbol) => [symbol, getMockPriceUsdCents(symbol, now)]));
   const bars = getMockPriceBarHistory(selectedSymbol, 30, now, rateTable.USD).map((bar) => ({
     date: bar.date,
     open: Number(bar.open),
@@ -52,10 +51,13 @@ export default async function TradingPage({
   }));
 
   const openHoldings = holdings.filter((holding) => holding.quantity.toNumber() > 0);
+  // Holdings are priced through the same resolver every other surface
+  // uses (`src/lib/holding-price.ts`) — the watchlist maps above cover
+  // only the seeded instruments, and a paper-trader fill for any other
+  // ticker used to fall through them as "worth ₪0, down its whole cost".
+  const holdingPrices = await resolveHoldingPrices(user.id, openHoldings, now, rateTable.USD);
   const totalUnrealized = openHoldings.reduce((sum, holding) => {
-    const price = priceBySymbol.get(holding.symbol);
-    const nativePrice = nativePriceBySymbol.get(holding.symbol);
-    if (!price || nativePrice === undefined) return sum;
+    const { priceAgorot: price, nativePrice } = holdingPrices.get(holding.symbol)!;
     const position = {
       quantity: holding.quantity.toNumber(),
       currency: holding.currency,
@@ -140,13 +142,13 @@ export default async function TradingPage({
               const quantity = holding.quantity.toNumber();
               const costBasis = agorot(Number(holding.totalCostBasis));
               const nativeCostBasis = nativeAmount(Number(holding.nativeCostBasis));
-              const price = priceBySymbol.get(holding.symbol);
-              const nativePrice = nativePriceBySymbol.get(holding.symbol);
-              const marketValue = price ? multiplyAgorot(price, quantity) : agorot(0);
-              const pnl =
-                price && nativePrice !== undefined
-                  ? unrealizedPnl({ quantity, currency: holding.currency, totalCostBasis: costBasis, nativeCostBasis }, price, nativePrice).pnl
-                  : subtractAgorot(agorot(0), costBasis);
+              const { priceAgorot: price, nativePrice, source: priceSource } = holdingPrices.get(holding.symbol)!;
+              const marketValue = multiplyAgorot(price, quantity);
+              const pnl = unrealizedPnl(
+                { quantity, currency: holding.currency, totalCostBasis: costBasis, nativeCostBasis },
+                price,
+                nativePrice,
+              ).pnl;
 
               return (
                 <li key={holding.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 first:border-t-0 first:pt-0">
@@ -154,6 +156,8 @@ export default async function TradingPage({
                     <p className="font-medium text-fg">{holding.symbol}</p>
                     <p className="font-tabular-figures text-xs text-muted">
                       {holding.quantity.toFixed(4)} sh · cost basis {formatAgorot(costBasis)}
+                      {priceSource === "last_fill" && " · valued at last fill"}
+                      {priceSource === "cost_basis" && " · valued at cost"}
                     </p>
                   </div>
                   <div className="text-right">

@@ -3,7 +3,7 @@ import { addAgorot, agorot, multiplyAgorot, subtractAgorot, type Agorot } from "
 import { nativeAmount } from "../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { classifyLiquidity, type LiquidityBreakdown } from "../../lib/liquidity-classification";
-import { getMockPriceAgorot } from "../../lib/mock-market-data";
+import { findLastFillPricesInTransaction, priceHoldingRows } from "./portfolio";
 import { buildWalletBalances } from "../crypto/build-wallet-balances";
 import { withUserScope } from "../db/with-user-scope";
 import { getLatestRateTable } from "./exchange-rates";
@@ -35,9 +35,12 @@ export type LiveNetWorth = {
  * Bank accounts: checking/savings are assets; a credit-card balance is
  * stored positive = money owed, so it's a liability, not a negative
  * asset — `accountType` is what distinguishes them. Portfolio holdings
- * are valued at the mock "current price" (src/lib/mock-market-data.ts),
- * not their cost basis, so unrealized gains/losses show up here the same
- * way they would for a real brokerage account.
+ * are valued at a live per-share price, not their cost basis, so
+ * unrealized gains/losses show up here the same way they would for a
+ * real brokerage account — the mock feed for seeded instruments, the
+ * last real fill for anything the paper trader booked outside that
+ * universe (`resolveHoldingPricesInTransaction`; a symbol this app
+ * can't price must never take the whole figure down with it).
  *
  * A foreign-currency account's ILS value is computed here, live, from
  * the latest synced rate — never read from a stored column, because a
@@ -46,16 +49,24 @@ export type LiveNetWorth = {
  * BankAccount's own schema comment).
  */
 export async function computeLiveNetWorth(userId: string, asOf: Date = new Date()): Promise<LiveNetWorth> {
-  const [rateTable, [accounts, assets, holdings, debts], walletBalances] = await Promise.all([
+  const [rateTable, [accounts, assets, holdings, debts, lastFills], walletBalances] = await Promise.all([
     getLatestRateTable(asOf),
-    withUserScope(userId, (tx) =>
-      Promise.all([
+    withUserScope(userId, async (tx) => {
+      const [accounts, assets, holdings, debts] = await Promise.all([
         tx.bankAccount.findMany({ where: { userId } }),
         tx.manualAsset.findMany({ where: { userId } }),
         tx.portfolioHolding.findMany({ where: { userId } }),
         tx.debt.findMany({ where: { userId } }),
-      ]),
-    ),
+      ]);
+      // Same transaction as the holdings themselves, so the price of a
+      // non-seeded symbol (its last fill) is read from the same moment.
+      const lastFills = await findLastFillPricesInTransaction(
+        tx,
+        userId,
+        holdings.map((h) => h.symbol),
+      );
+      return [accounts, assets, holdings, debts, lastFills] as const;
+    }),
     // Runs in parallel with everything else above — a user with no
     // tracked wallets (the common case; nothing seeds one by default)
     // resolves this near-instantly (an empty findMany + one cached
@@ -76,8 +87,9 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
     .filter((a) => a.accountType === "CREDIT_CARD")
     .map((a) => toAgorot(a.nativeBalance, a.currency));
   const manualAssetAmounts = assets.map((a) => agorot(Number(a.currentValue)));
+  const holdingPrices = priceHoldingRows(holdings, lastFills, asOf, rateTable.USD);
   const portfolioAmounts = holdings.map((h) =>
-    multiplyAgorot(getMockPriceAgorot(h.symbol, asOf, rateTable.USD), h.quantity.toNumber()),
+    multiplyAgorot(holdingPrices.get(h.symbol)!.priceAgorot, h.quantity.toNumber()),
   );
   const debtAmounts = debts.map((d) => agorot(Number(d.currentBalance)));
 

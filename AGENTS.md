@@ -6627,6 +6627,71 @@ token vocabulary, so the target was established, not invented.
   relies on the axe suite to stay unpaired; and the theme toggle stays
   gone (see above).
 
+## 3ww. Holdings the mock feed can't price (ad hoc)
+
+Found by the user, not a test: signed in as the paper-trading account
+(`josephzuaiter@gmail.com`) on `npm run dev`, `/dashboard` showed the
+§3tt error boundary on every load with the same digest each time
+("why does it always say the same thing?"). The dev log had the answer:
+`RangeError: Unknown mock symbol: TSLA` out of `getMockPriceUsdCents`,
+reached from `computeLiveNetWorth` → `buildDashboardData` → the page.
+
+- **The cause is a premise that stopped being true in §3uu.** Every
+  place that values a holding called `getMockPriceAgorot(symbol)`
+  directly, which throws for anything outside the 10-instrument mock
+  universe — correct while the only way to acquire a holding was the
+  mock trading desk, whose form only offers those 10. The paper trader
+  books REAL Alpaca fills for whatever ticker a headline names; the
+  reconciled TSLA position (0.174 sh) was the first one outside the
+  list, and it took down `/dashboard`, `/trading/portfolio` and the
+  advisor's `list_portfolio_holdings` for that account. `/trading` had
+  the quieter version — no crash, but the position showed as worth ₪0
+  with a loss equal to its whole cost basis. The tax builder alone was
+  already defensive (it skips unknown symbols). The demo account has no
+  such holding, which is why every Demo-Login walkthrough passed.
+- **Fix: one resolver, a fallback chain that says what it did.**
+  `src/lib/holding-price.ts` (pure): a seeded instrument is priced by
+  the mock feed as before; anything else at this user's most recent
+  non-cancelled fill for that symbol — the last real market price this
+  app ever observed for it — or, with no fill on record, at average
+  cost (an honest "no gain, no loss", never a guess). The result carries
+  `source: "mock_feed" | "last_fill" | "cost_basis"`. The DB half lives
+  in `src/server/dal/portfolio.ts`: `findLastFillPricesInTransaction`
+  (one `distinct`-by-symbol query, and ZERO queries when every symbol is
+  seeded — the common case), `priceHoldingRows`, and the convenience
+  wrapper `resolveHoldingPrices`. `computeLiveNetWorth` reads the fills
+  inside its own scoped transaction (so the price and the holding come
+  from the same moment) and prices after the FX rate arrives — the
+  lookup is deliberately rate-independent so the existing parallel
+  `Promise.all` shape survives. All five consumers now go through it:
+  `net-worth.ts`, `build-dashboard-data.ts` (the concentration
+  insight), `build-portfolio-data.ts` (which also gains
+  `findMockInstrument` so an unknown ticker's `name` is the bare symbol
+  instead of another throw), `advisor/tools.ts` (the tool now reports
+  `currentPriceSource`, so the model doesn't narrate a last-fill figure
+  as today's market), and `trading/page.tsx`. `/trading` and
+  `/trading/portfolio` label a non-feed price ("valued at last fill" /
+  "at cost") rather than passing it off as live.
+- **Not done, on purpose**: adding TSLA to the mock universe — the next
+  headline names a different ticker, and the dashboard is back down. A
+  real quote feed for trader-booked symbols (Alpaca's own market-data
+  API is the obvious source, since the fills already come from there) is
+  the proper next step; until then "last fill" is the most recent real
+  price this app has, and the label is what keeps it honest.
+- **Verified**: 5 unit cases (`src/lib/holding-price.test.ts`) and a
+  4-case integration suite against real Postgres
+  (`tests/integration/holding-price-fallback.test.ts`) that reproduces
+  the exact shape — an unknown symbol with an older fill, a newer fill
+  and a CANCELED order at a wild price (the newest non-cancelled one
+  wins), a seeded symbol beside it, an untraded unknown symbol, and a
+  second user holding the same ticker whose fill must never leak into
+  the first user's price. Then the real thing: `computeLiveNetWorth`,
+  `buildPortfolioData` and `buildDashboardData` run for the actual
+  trading account against the local database — net worth −₪641,199.57,
+  TSLA at its last fill (₪187.04, `last_fill`), every other row still
+  `mock_feed`, 13 insights generated where the page used to throw.
+  `npm run check` with the DB live: 1,297 passed, 3 skipped (the embedding sidecar), 0 failures.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
