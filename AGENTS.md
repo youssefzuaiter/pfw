@@ -6941,11 +6941,24 @@ being written up, the same bar as every section above.
   torch. `Xenova/finbert` is ProsusAI/finbert exported to ONNX (source
   and label order verified against both repos' `config.json`), and its
   int8 graph is 110 MB: ONNX Runtime + the `tokenizers` fast tokenizer,
-  no `transformers`, never fp32. Measured: the whole service peaks at
-  375 MB RSS with the model warm (254 MB for bare torch+ORT), ~25 s to
-  first inference including the download, ~10 ms a headline,
-  deterministic. `/health` now reports `memory_rss_mb` so Render answers
-  the sizing question itself after the flag is set. The placeholder stays
+  no `transformers`, never fp32. Measured on macOS first (375 MB peak),
+  then — because Render's own `/health` answered **460.8 MB with the
+  PLACEHOLDER** once the deploy landed, no room for anything — in a
+  Linux container capped at 512 MB: PyPI's default Linux torch wheel
+  bundles CUDA support the box cannot use, and `import torch` alone is
+  215 MB on the CPU-only wheel. `requirements.txt` (`0dda268`) now
+  resolves torch from PyTorch's CPU index (`2.x.y+cpu` sorts above the
+  plain release on Linux; macOS resolves its ordinary wheel, verified
+  by dry run): placeholder **291 → 302 MB** after eight inferences,
+  FinBERT **433 → 448 MB**, no OOM kill, eight real evaluations 200.
+  ~25 s to first inference including the download, ~10 ms a headline,
+  deterministic. `/health` reports `memory_rss_mb` so Render answers
+  the sizing question itself after each step. That container run also
+  surfaced a credential-free-only bug: with no Alpaca keys
+  `websocket_settlement_stream` died on its first line and the lifespan's
+  shutdown `await` re-raised the `ConfigError` as a traceback on every
+  stop — it now idles until cancelled, the way `reconcile_loop` already
+  treated the same condition. The placeholder stays
   the default (tests, credential-free checkouts, memory-constrained
   boxes); its lexical prior is not applied on top of the trained model;
   the shadow A/B comparator keeps the placeholder network by design. A
@@ -6964,10 +6977,11 @@ being written up, the same bar as every section above.
   none by design; production's is set by hand per the runbook).
 - **Left for the operator, in order** (each is a dashboard action the
   repo cannot take): run `deploy-migrations.yml` (EquityQuote + the
-  grants); Render → manual deploy of the trader (`/control/quotes`,
-  `/control/reconcile`, the outbox, and — once `SENTIMENT_MODEL=finbert`
-  is added to its environment — the real model, then read
-  `memory_rss_mb` on `/health`); `ALTER ROLE backup_reader WITH PASSWORD`
+  grants) — **done 2026-09-18 (run #7)**; Render → deploy the trader
+  (`0dda268`, the CPU wheel — the earlier code is already live there),
+  confirm `memory_rss_mb` on `/health` drops from 460 to ~300, THEN add
+  `SENTIMENT_MODEL=finbert` and confirm it lands near 450 (above ~480,
+  revert the flag); `ALTER ROLE backup_reader WITH PASSWORD`
   on Neon and the two `backup` environment secrets, then one manual run
   of *Database backup*; set `OPERATOR_ALERT_EMAIL` on Vercel; keep
   `ENCRYPTION_KEY`, `AUTH_SECRET`, `WEBHOOK_SECRET`, the Alpaca keys and
