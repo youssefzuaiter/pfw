@@ -178,6 +178,20 @@ test.describe("SQL injection fuzzing", () => {
 
 test.describe("rate limiting", () => {
   test("the 31st rapid PATCH to the same route from the same user gets 429", async ({ request, baseURL }) => {
+    // The limiter is a FIXED window aligned to the clock (60s windows
+    // starting on the minute — src/server/api/rate-limit.ts, and the
+    // "up to 2× across a boundary" edge AGENTS.md §3uu accepts by
+    // design). A ~1s burst that starts at hh:mm:59 has its count reset
+    // mid-burst and legitimately never sees a 429 — seen once for real
+    // on CI at 11:19:59 → 11:20:00. So: never start the burst inside the
+    // last few seconds of a window. This waits at most ~5s.
+    const WINDOW_MS = 60_000;
+    const SAFETY_MS = 5_000;
+    const msLeftInWindow = WINDOW_MS - (Date.now() % WINDOW_MS);
+    if (msLeftInWindow < SAFETY_MS) {
+      await new Promise((resolve) => setTimeout(resolve, msLeftInWindow + 100));
+    }
+
     let sawTooManyRequests = false;
     let lastStatus = 0;
 

@@ -6780,6 +6780,18 @@ market price, daily, and the resolver's chain reads mock feed →
     the real secret in `.env` was always there. The suite now sets a
     valid secret in `beforeAll` and restores the original in `afterAll`,
     and passes with `WEBHOOK_SECRET` unset (CI's shape) and set.
+  - **Then the fixed-window edge §3uu accepted showed up as an e2e
+    flake, once, with a timestamp to prove it**: on the very next CI
+    run the rate-limit e2e case ("the 31st rapid PATCH gets 429") never
+    saw a 429 — the preceding case finished at 11:19:59.47 and this one
+    ran 1.1s across 11:20:00.000, exactly one 60-second window boundary,
+    so the count reset mid-burst and no 429 was ever due. That is the
+    limiter behaving as designed (clock-aligned fixed windows, "up to 2×
+    across a boundary"), ~2% likely per run, and the first time it
+    landed in 8 runs of that job; the standalone Playwright workflow
+    passed the same commit seconds earlier. Fixed in the TEST, not the
+    limiter: the burst now waits out the last 5 seconds of a window
+    before starting (≤ ~5s of waiting, inside the case's 30s timeout).
 - **Deploying it**: the migration reaches production through
   `deploy-migrations.yml` (the gated workflow, §3aa) — run it after this
   lands on `main`; until then production values TSLA at its last fill
