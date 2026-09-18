@@ -1,0 +1,41 @@
+name: Production smoke check
+
+# Vercel's GitHub integration records every deployment as a GitHub
+# Deployment and posts a `deployment_status` when it finishes; this runs
+# the moment a PRODUCTION deployment reports success, against that exact
+# deployment's own URL (`target_url`, e.g.
+# https://pfw-<hash>-youssev-s-team.vercel.app) rather than the stable
+# alias — so it tests the build that just shipped, not whatever the alias
+# happened to point at a second earlier. Closes the gap AGENTS.md §3pp
+# named: CI proves the code, nothing proved the live deployment.
+#
+# `scripts/production-smoke.sh` holds no secrets and needs none — every
+# check is one an anonymous visitor could make. The deployment URL from
+# the event payload is passed through `env:` and quoted, never
+# interpolated into the script text (the shell-injection shape Semgrep
+# caught in deploy-migrations.yml's first draft, §3aa).
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  smoke:
+    name: Smoke-test the production deployment
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      startsWith(github.event.deployment.environment, 'Production')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Run the smoke check against the deployment URL
+        env:
+          DEPLOYMENT_URL: ${{ github.event.deployment_status.target_url }}
+          DEPLOYMENT_SHA: ${{ github.event.deployment.sha }}
+        run: |
+          echo "Deployment ${DEPLOYMENT_SHA} at ${DEPLOYMENT_URL}"
+          bash scripts/production-smoke.sh "$DEPLOYMENT_URL"

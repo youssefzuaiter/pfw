@@ -1,0 +1,66 @@
+name: Database backup
+
+# Nightly encrypted logical backup of the production database, kept as a
+# GitHub Actions artifact for 30 days (AGENTS.md §3yy). Neon's own
+# point-in-time restore is the FIRST line of recovery; this is the copy
+# that survives what that cannot: the Neon project being deleted, the
+# account lapsing, the provider being changed. `scripts/db-backup.sh` does
+# the work and can be run by hand with the same two variables.
+#
+# Secrets live in a dedicated "backup" GitHub Environment (Settings ->
+# Environments -> New -> "backup"), NOT in "production": that environment
+# has required reviewers, and a job that waits for a human every night at
+# 03:30 never runs. "backup" has no protection rules on purpose — what
+# bounds it instead is the secret itself: a connection string for the
+# read-only `backup_reader` role (SELECT only, no DDL, no writes) and a
+# passphrase that only ever encrypts. Both are the operator's to set:
+#   BACKUP_DATABASE_URL   postgresql://backup_reader:<pw>@<direct host>/neondb?sslmode=require
+#                         (the direct endpoint, not the -pooler one — pg_dump
+#                         holds one long transaction, which a transaction
+#                         pooler is the wrong place for)
+#   BACKUP_PASSPHRASE     >= 20 characters, generated, stored in a password
+#                         manager: a lost passphrase makes every artifact
+#                         permanently unreadable, and nothing in this repo
+#                         can recover it.
+#
+# Artifacts of a PUBLIC repository are downloadable by anyone with a GitHub
+# account, which is why the script uploads nothing that is not encrypted
+# and why the plaintext dump never leaves the runner. Note GitHub pauses
+# scheduled workflows in a repository with no commits for 60 days — the
+# run history on the Actions tab is the check that this is still firing.
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Encrypted pg_dump of production
+    runs-on: ubuntu-latest
+    environment: backup
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Dump, encrypt and verify
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: bash scripts/db-backup.sh backup-out
+
+      - name: Upload the encrypted archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v7.0.1
+        with:
+          name: pfw-db-backup-${{ github.run_id }}
+          path: backup-out/*.pgdump.gpg
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 0

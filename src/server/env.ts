@@ -306,6 +306,18 @@ export function getResendFromAddress(): string {
 }
 
 /**
+ * Not a secret — where operator alerts go (a failed or stale-data cron
+ * job, AGENTS.md §3yy). Optional: `null` when unset, and every alert
+ * path treats that as "log only", so a deployment that never configured
+ * it behaves exactly as before. An email address is the whole
+ * configuration — alerts ride the same Resend client the auth emails do.
+ */
+export function getOperatorAlertEmail(): string | null {
+  const value = process.env.OPERATOR_ALERT_EMAIL?.trim();
+  return value ? value : null;
+}
+
+/**
  * Not a secret — the app's own public origin, used only to build
  * absolute links inside outbound emails (a password-reset/email-
  * verification link has to be a full URL, not a relative path, since it's

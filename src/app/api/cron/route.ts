@@ -8,6 +8,7 @@ import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
+import { sendOperatorAlert } from "../../../server/ops/operator-alert";
 
 /**
  * Vercel Cron & Notifications Engine (ad hoc) — the automated replacement
@@ -130,13 +131,21 @@ export async function GET(request: NextRequest) {
       return { ok: true };
     });
 
-    return NextResponse.json({
-      fxRateSync,
-      cryptoPriceSync,
-      equityQuoteSync,
-      deadMansSwitchCheck,
-      rateLimitCleanup,
-    });
+    const results = { fxRateSync, cryptoPriceSync, equityQuoteSync, deadMansSwitchCheck, rateLimitCleanup };
+
+    // The one place a nightly failure reaches a human (AGENTS.md §3yy).
+    // One email per run, every failed job listed, the stale-data breaker
+    // named as such — and a no-op when OPERATOR_ALERT_EMAIL is unset.
+    const failures = Object.entries(results).filter(([, r]) => !r.ok) as [string, Extract<JobResult, { ok: false }>][];
+    let operatorAlert: "sent" | "not_configured" | "failed" | "not_needed" = "not_needed";
+    if (failures.length > 0) {
+      operatorAlert = await sendOperatorAlert({
+        subject: `cron: ${failures.length} job(s) failed${failures.some(([, r]) => r.staleData) ? " — STALE-DATA BREAKER TRIPPED" : ""}`,
+        lines: failures.map(([name, r]) => `${name}: ${r.staleData ? "[stale data] " : ""}${r.error}`),
+      });
+    }
+
+    return NextResponse.json({ ...results, operatorAlert });
   } catch (error) {
     console.error("GET /api/cron failed unexpectedly", error);
     return jsonServerError();

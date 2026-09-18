@@ -6823,6 +6823,151 @@ market price, daily, and the resolver's chain reads mock feed →
   up, so a sleeping Render instance means that day's sync reports a
   failure and the previous quote (or the fill) stands, captioned.
 
+## 3yy. Operating the deployment: smoke check, operator alert, backups, real FinBERT (ad hoc)
+
+Explicit user request ("any other thing i should add or be worried
+about?" → "let's do them"). The list came from §3pp's own stated gap —
+"CI proves the code, nothing proves the live deployment" — and from
+§3uu's two deferred projects. Four things landed, plus one migration
+none of them could do without. Every one was exercised for real before
+being written up, the same bar as every section above.
+
+- **Post-deploy smoke check** (`scripts/production-smoke.sh`,
+  `.github/workflows/production-smoke.yml`). Vercel's GitHub integration
+  records each deployment as a GitHub Deployment and posts a
+  `deployment_status` when it finishes; the workflow runs on `success`
+  for the Production environment, against that deployment's OWN
+  `target_url` (the per-deployment `pfw-<hash>-….vercel.app` host, which
+  is publicly reachable) — the build that just shipped, not whatever the
+  alias pointed at a second earlier. The script holds no secrets and
+  needs none: five checks an anonymous visitor could make, each chosen
+  because an env-var problem breaks it first — `/api/health/ready` (a
+  real `SELECT 1` through the DAL: database URL, runtime role and
+  password all working), `/login` renders with a per-request CSP nonce
+  (the whole Next runtime plus `AUTH_SECRET`), `/dashboard` → 307 to
+  `/login` and `/api/notifications` → 401 (the auth gate is alive). Ran
+  5/5 against production and fails, as it should, against a host that
+  isn't PFW. The URL from the event payload goes through `env:` and is
+  quoted, never spliced into the script — the shell-injection shape
+  §3aa's first draft had.
+- **Operator alert** (`src/server/ops/operator-alert.ts`, wired into
+  `GET /api/cron`). The nightly cron already reported every job's
+  outcome in its JSON response — which nobody reads at 00:00 UTC. Now a
+  run with any failed job sends ONE email through the same Resend client
+  the auth emails use, listing every failure, with the stale-data breaker
+  (§3y) named in the subject when it tripped. `OPERATOR_ALERT_EMAIL`
+  (optional, `.env.example`) turns it on; unset means `not_configured`
+  and the response still carries every failure. `sendOperatorAlert`
+  never throws — an alert that could 500 the cron it reports on would be
+  worse than none. `route.test.ts` mocks all five jobs and pins the
+  wiring: no email on a clean run, one email listing two failures with
+  the breaker in the subject, a `not_configured` send still a 200, a
+  wrong secret still a 403 before anything runs. Two fixture bugs while
+  writing it (the inactivity check returns arrays, not counts; the quote
+  sync's `synced` is a symbol list) — both in the TEST, both caught by
+  the first run reporting a job failed that hadn't.
+- **The migration none of the above could skip:
+  `20260918140000_grants_follow_the_migrating_role`.** The RLS migration
+  and the `backup_reader` migration both declared their forward-looking
+  grants `ALTER DEFAULT PRIVILEGES FOR ROLE pfw_app` — which only covers
+  objects `pfw_app` itself creates. Locally that is everything. On Neon
+  `prisma migrate deploy` runs as the project owner, so no table created
+  since got an automatic grant: §3uu hand-applied `pfw_runtime`'s DML on
+  `RateLimitBucket`, §3xx repeated the grant inline, and `backup_reader`
+  could not read any of the 15 tables created after 2026-09-02 — a
+  `pg_dump` would have died on `UserSettings`. Confirmed rather than
+  assumed: the last `deploy-migrations.yml` run's log shows all 33
+  migrations applied on Neon (so the role exists there), and §3uu's own
+  record shows the migrator there is not `pfw_app`. The fix is a
+  catch-up grant across every current table plus default privileges
+  declared WITHOUT `FOR ROLE` — attached to whichever role runs the
+  migration, on every environment. The catch-up re-grants UPDATE/DELETE
+  on the append-only tables, so their REVOKEs are re-issued at the end;
+  verified after applying locally that exactly `AuditLog` and
+  `LedgerCommit` lack UPDATE for `pfw_runtime` and `backup_reader` lacks
+  nothing. It closes the §3uu trap for good: no future migration needs
+  an inline GRANT. **Not yet applied to production** — run
+  `deploy-migrations.yml` (it also carries §3xx's `EquityQuote`).
+- **Encrypted nightly backup** (`scripts/db-backup.sh`,
+  `.github/workflows/db-backup.yml`, `docs/BACKUP-RESTORE.md`). Neon's
+  point-in-time restore is the first recovery path; this is the copy
+  that survives the Neon project itself. `pg_dump --format=custom
+  --no-owner --no-privileges` as `backup_reader` (SELECT-only, BYPASSRLS
+  so the dump is complete instead of the zero rows RLS fails closed to),
+  run from the official `postgres:17` image because pg_dump refuses a
+  server newer than itself and the runner's bundled client trails Neon;
+  AES-256 under `BACKUP_PASSPHRASE` with the passphrase on stdin, never
+  argv; then a decrypt-and-`pg_restore --list` round trip so a wrong
+  passphrase or truncated archive fails that night, not on restore day;
+  plaintext removed before anything is uploaded — artifacts of a PUBLIC
+  repository are downloadable by any GitHub account. Secrets live in a
+  dedicated `backup` GitHub Environment with no reviewers: `production`'s
+  required-reviewer rule would leave a 03:30 job waiting for a human
+  every night. **Rehearsed end to end locally**: dump as `backup_reader`
+  → encrypt → wrong passphrase rejected → decrypt → `pg_restore
+  --exit-on-error` into a fresh database → per-table row counts diffed
+  against the source: 42 tables identical except `RateLimitBucket`
+  (56 vs 55 — the running dev server wrote a window after the dump),
+  RLS forced on 37 tables, 55 policies, both append-only triggers,
+  `_prisma_migrations` at 33, `description` still `v1:` ciphertext, and
+  — as designed — no grants, which the runbook re-applies by running the
+  grants migration verbatim (one source of truth for what each role may
+  do). Two local-only detours worth knowing: `DROP DATABASE` cannot share
+  a `-c` transaction with `CREATE DATABASE`, and this container's
+  `template1` had the collation-version mismatch §3mm/§3nn already met —
+  `ALTER DATABASE template1 REFRESH COLLATION VERSION` is the fix, and
+  it is what has been making `prisma migrate dev` refuse here.
+- **Real FinBERT in the trader** (`~/paper-trader` `d21e6c7`,
+  `SENTIMENT_MODEL=finbert`). The blocker was never the code — the
+  docstring's two-line `transformers` swap would load a 438 MB fp32
+  checkpoint, which a 512 MB Render instance cannot even LOAD beside
+  torch. `Xenova/finbert` is ProsusAI/finbert exported to ONNX (source
+  and label order verified against both repos' `config.json`), and its
+  int8 graph is 110 MB: ONNX Runtime + the `tokenizers` fast tokenizer,
+  no `transformers`, never fp32. Measured: the whole service peaks at
+  375 MB RSS with the model warm (254 MB for bare torch+ORT), ~25 s to
+  first inference including the download, ~10 ms a headline,
+  deterministic. `/health` now reports `memory_rss_mb` so Render answers
+  the sizing question itself after the flag is set. The placeholder stays
+  the default (tests, credential-free checkouts, memory-constrained
+  boxes); its lexical prior is not applied on top of the trained model;
+  the shadow A/B comparator keeps the placeholder network by design. A
+  real difference of opinion, recorded rather than tuned away: FinBERT
+  reads the GOOGL "antitrust approval / AI acquisition" scenario as
+  neutral (+2.3 %), so only TSLA clears the 10 % gate under the real
+  model. Trader pytest 20 passed / 1 skipped (the real-graph test is
+  opt-in), 4/1 with the flag.
+- **Verified**: `npm run check` with the DB live — **1,317 passed, 3
+  skipped** (the embedding sidecar), the one lint warning the §3vv
+  unused variable; both new workflows' YAML parsed; Gitleaks `v8.30.1`
+  and Semgrep `1.174.0` over a `git ls-files` export of each repo (the
+  exact CI invocations, §3uu) — 0 leaks and 0 findings on both (354
+  rules over 634 PFW files, 239 over 19 trader files). The dev database keeps
+  `backup_reader`'s local-only password from the rehearsal (the role has
+  none by design; production's is set by hand per the runbook).
+- **Left for the operator, in order** (each is a dashboard action the
+  repo cannot take): run `deploy-migrations.yml` (EquityQuote + the
+  grants); Render → manual deploy of the trader (`/control/quotes`,
+  `/control/reconcile`, the outbox, and — once `SENTIMENT_MODEL=finbert`
+  is added to its environment — the real model, then read
+  `memory_rss_mb` on `/health`); `ALTER ROLE backup_reader WITH PASSWORD`
+  on Neon and the two `backup` environment secrets, then one manual run
+  of *Database backup*; set `OPERATOR_ALERT_EMAIL` on Vercel; keep
+  `ENCRYPTION_KEY`, `AUTH_SECRET`, `WEBHOOK_SECRET`, the Alpaca keys and
+  the backup passphrase in a password manager — a lost passphrase makes
+  every backup permanently unreadable, and a lost `ENCRYPTION_KEY` makes
+  every restored row's encrypted columns unreadable too.
+- **Known limitations, left as such**: the backup is nightly with 30
+  restore points and GitHub pauses `schedule` after 60 commit-free days
+  (the Actions run list is the heartbeat — the operator alert cannot
+  cover a job that never starts); the smoke check is unauthenticated by
+  construction, so a regression behind the login (a broken dashboard
+  query) is CI's job, not its; the operator alert covers the cron only,
+  not a failed deploy (Vercel emails those itself); FinBERT's memory
+  figure is from macOS, and the Linux number is whatever `/health`
+  says after the flag is set — if it sits above ~450 MB on a 512 MB
+  instance, the placeholder is the right default to keep.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
@@ -7196,7 +7341,13 @@ compose.yaml                     postgres:17, db pfw_local, host port 5433
                                    ANTHROPIC_API_KEY / EMBEDDING_SIDECAR_URL /
                                    BANK_API_CLIENT_ID / _SECRET / _BASE_URL (Tier 3, unused)
 scripts/                          check-no-secrets-in-client-bundle.ts — build-output
-                                    secret-leak scanner, run after `npm run build`
+                                    secret-leak scanner, run after `npm run build`;
+                                    production-smoke.sh (post-deploy check, §3yy);
+                                    db-backup.sh (encrypted pg_dump, §3yy)
+src/server/ops/operator-alert.ts  one-email-per-run cron failure alert (§3yy)
+docs/BACKUP-RESTORE.md            backup contents, one-time setup, rehearsed restore (§3yy)
+.github/workflows/                ci.yml, deploy-migrations.yml (gated, §3aa),
+                                    production-smoke.yml, db-backup.yml (§3yy)
 prisma.config.ts                  schema path, migrations path, seed command, admin datasource url
 vitest.config.mts                 unit / component / integration projects
 tests/guards/                     static-analysis tests — see docs/SECURITY-CHECKLIST.md
