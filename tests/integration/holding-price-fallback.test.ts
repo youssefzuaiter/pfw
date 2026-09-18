@@ -27,6 +27,11 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("hol
   let userA: { id: string };
   let userB: { id: string };
   const asOf = new Date();
+  // The quote sync signs its request with WEBHOOK_SECRET, which env.ts
+  // requires to be >= 32 characters — CI sets none, and a local .env's
+  // real one must not be what the assertions depend on either.
+  const originalWebhookSecret = process.env.WEBHOOK_SECRET;
+  const TEST_WEBHOOK_SECRET = "holding-price-fallback-integration-test-secret-0123456789";
 
   // 0.174192544 sh filled at $362.25 — the real shape of the live TSLA
   // trade that surfaced this, down to the fractional quantity. The ticker
@@ -42,6 +47,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("hol
   const TSLA_CANCELED_AGOROT = 999_999n;
 
   beforeAll(async () => {
+    process.env.WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
     admin = createAdminClient();
     const stamp = Date.now();
     userA = await admin.user.create({
@@ -111,6 +117,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("hol
   });
 
   afterAll(async () => {
+    if (originalWebhookSecret === undefined) delete process.env.WEBHOOK_SECRET;
+    else process.env.WEBHOOK_SECRET = originalWebhookSecret;
     await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
     // Only this suite's rows — a real TSLA quote synced by `npm run sync:quotes` stays.
     await admin.equityQuote.deleteMany({ where: { OR: [{ symbol: "TSLX", source: "test" }, { symbol: "NFLX" }] } });
@@ -196,7 +204,6 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("hol
   });
 
   it("syncEquityQuotes asks the trader only for held symbols outside the mock universe and stores what it answers", async () => {
-    process.env.WEBHOOK_SECRET ??= "integration-test-webhook-secret";
     const fetchImpl = async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { symbols: string[] };
       // Every seeded symbol must have been filtered out before the request.

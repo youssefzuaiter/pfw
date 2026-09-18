@@ -6773,6 +6773,13 @@ market price, daily, and the resolver's chain reads mock feed →
     uses a synthetic ticker (`TSLX`) no real sync can ever quote, and
     its cleanup deletes only rows it wrote (`source: "test"`), never a
     real quote.
+  - **And CI caught what the local `.env` masked, again** (§3uu's own
+    pattern): the sync's two integration cases failed only on the
+    runner — the fixture's fallback `WEBHOOK_SECRET` was 31 characters,
+    one short of `env.ts`'s 32-character floor, invisible locally because
+    the real secret in `.env` was always there. The suite now sets a
+    valid secret in `beforeAll` and restores the original in `afterAll`,
+    and passes with `WEBHOOK_SECRET` unset (CI's shape) and set.
 - **Deploying it**: the migration reaches production through
   `deploy-migrations.yml` (the gated workflow, §3aa) — run it after this
   lands on `main`; until then production values TSLA at its last fill
