@@ -38,6 +38,16 @@ OUT_DIR="${1:?usage: $0 <output-dir>}"
 : "${BACKUP_PASSPHRASE:?BACKUP_PASSPHRASE is required}"
 PG_DUMP_IMAGE="${PG_DUMP_IMAGE:-postgres:17}"
 
+case "$BACKUP_DATABASE_URL" in
+  postgresql://*|postgres://*) ;;
+  *)
+    # libpq treats anything that is not a URL as a bare database NAME and
+    # dials the local socket — the first real run did exactly that with a
+    # secret that held only the password. Say so instead.
+    echo "BACKUP_DATABASE_URL must be a full connection string starting with postgresql:// (got ${#BACKUP_DATABASE_URL} characters that do not)" >&2
+    exit 2
+    ;;
+esac
 if [ "${#BACKUP_PASSPHRASE}" -lt 20 ]; then
   echo "BACKUP_PASSPHRASE must be at least 20 characters — this is the only thing protecting a public artifact" >&2
   exit 2
