@@ -36,7 +36,13 @@ set -euo pipefail
 OUT_DIR="${1:?usage: $0 <output-dir>}"
 : "${BACKUP_DATABASE_URL:?BACKUP_DATABASE_URL is required (a backup_reader connection string)}"
 : "${BACKUP_PASSPHRASE:?BACKUP_PASSPHRASE is required}"
-PG_DUMP_IMAGE="${PG_DUMP_IMAGE:-postgres:17}"
+#: pg_dump refuses a server NEWER than itself, so the image must match the
+#: server's major version. Left unset, the script asks the server
+#: (`SHOW server_version_num` via psql, which talks to any version) and
+#: picks `postgres:<major>` itself — the first production run failed on
+#: exactly this: Neon was already on 18 while the script assumed 17.
+PG_DUMP_IMAGE="${PG_DUMP_IMAGE:-}"
+PG_PROBE_IMAGE="${PG_PROBE_IMAGE:-postgres:18}"
 
 case "$BACKUP_DATABASE_URL" in
   postgresql://*|postgres://*) ;;
@@ -55,6 +61,16 @@ fi
 for tool in docker gpg; do
   command -v "$tool" >/dev/null || { echo "$tool is required but not installed" >&2; exit 2; }
 done
+
+if [ -z "$PG_DUMP_IMAGE" ]; then
+  version_num=$(docker run --rm --pull=missing -e BACKUP_DATABASE_URL --add-host=host.docker.internal:host-gateway \
+    "$PG_PROBE_IMAGE" sh -c 'exec psql "$BACKUP_DATABASE_URL" -Atc "SHOW server_version_num"' 2>/dev/null | tr -d '[:space:]')
+  case "$version_num" in
+    [1-9][0-9][0-9][0-9][0-9][0-9]) PG_DUMP_IMAGE="postgres:${version_num:0:2}" ;;
+    *) echo "could not read the server version (got '${version_num:-nothing}') — is BACKUP_DATABASE_URL reachable and its password current?" >&2; exit 1 ;;
+  esac
+  echo "server reports version_num $version_num → using $PG_DUMP_IMAGE"
+fi
 
 mkdir -p "$OUT_DIR"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)

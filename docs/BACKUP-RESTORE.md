@@ -79,7 +79,7 @@ it is `CREATE DATABASE`. Verify there, then repoint `APP_DATABASE_URL`.
 3. **Inspect before touching anything** — this is the same round trip the
    nightly job already ran, so it should list every table:
    ```bash
-   docker run --rm -i postgres:17 pg_restore --list < pfw.pgdump | grep -c 'TABLE DATA'
+   docker run --rm -i postgres:18 pg_restore --list < pfw.pgdump | grep -c 'TABLE DATA'
    ```
 4. **Recreate the roles** in the target (they are not in the dump). As the
    target's owner role:
@@ -94,7 +94,7 @@ it is `CREATE DATABASE`. Verify there, then repoint `APP_DATABASE_URL`.
 5. **Restore the schema and data**, as the target's owner role, against
    the direct endpoint:
    ```bash
-   docker run --rm -i postgres:17 pg_restore --no-owner --no-privileges --exit-on-error \
+   docker run --rm -i postgres:18 pg_restore --no-owner --no-privileges --exit-on-error \
      --dbname='postgresql://<owner>:<pw>@<direct host>/<db>?sslmode=require' < pfw.pgdump
    ```
    `--exit-on-error` is deliberate: a partial restore that "mostly worked"
@@ -143,9 +143,13 @@ most likely to get subtly wrong.
   weak link; a passphrase pasted into a chat or a ticket is. Rotate it by
   changing the environment secret — old artifacts stay under the old one
   until they age out.
-- **`pg_dump 17` dumps servers up to 17.** If Neon moves the project to a
-  newer major, set `PG_DUMP_IMAGE=postgres:<major>` (a repository
-  variable or a one-line workflow change).
+- **The `pg_dump` image follows the server.** `pg_dump` refuses a server
+  newer than itself, so the script asks the server its version first and
+  pulls the matching `postgres:<major>` image (Neon was already on 18
+  when the first production run assumed 17). `PG_DUMP_IMAGE` still
+  overrides it; `PG_PROBE_IMAGE` (default `postgres:18`) is only used
+  for that one `SHOW server_version_num` query and can be anything with
+  a `psql` in it.
 - **GitHub disables `schedule` after 60 days without commits.** The
   Actions tab's run list is the heartbeat; the cron operator alert
   (`OPERATOR_ALERT_EMAIL`) does not cover this workflow, because a run
