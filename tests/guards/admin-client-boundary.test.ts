@@ -81,6 +81,13 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // single userId to scope by, the same shape as inactivity-check.ts.
       // One SELECT DISTINCT; the write path is the ordinary DAL.
       path.resolve(SRC_ROOT, "server", "market-data", "quote-sync.ts"),
+      // ENCRYPTION_KEY rotation sweep (docs/SECURITY-CHECKLIST.md's
+      // "Secret rotation" entry): has to scan and re-encrypt every
+      // user's ciphertext columns in one pass, the same "no single
+      // userId" shape as inactivity-check.ts/quote-sync.ts — and a
+      // genuine no-op (zero database access) whenever no rotation is in
+      // progress (ENCRYPTION_KEY_NEXT unset).
+      path.resolve(SRC_ROOT, "server", "crypto", "key-rotation.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

@@ -6,6 +6,7 @@ import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
+import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
@@ -131,7 +132,38 @@ export async function GET(request: NextRequest) {
       return { ok: true };
     });
 
-    const results = { fxRateSync, cryptoPriceSync, equityQuoteSync, deadMansSwitchCheck, rateLimitCleanup };
+    // A genuine no-op on every ordinary night (ENCRYPTION_KEY_NEXT
+    // unset) — see src/server/crypto/key-rotation.ts's own doc comment.
+    // Only logs/reports anything while an operator has an ENCRYPTION_KEY
+    // rotation actively in progress.
+    const encryptionKeyRotation = await runJob("encryption-key-rotation-sweep", async () => {
+      const result = await runEncryptionKeyRotationSweep();
+      if (!result.ok) return { ok: false, error: result.error };
+      if (!result.inProgress) return { ok: true };
+
+      console.log(
+        `cron: encryption-key-rotation-sweep ok — reencrypted=${result.reencrypted} remaining=${result.remaining} failed=${result.failed}`,
+      );
+      // The sweep itself completed, but a nonzero `failed` (an
+      // individual row's re-encryption threw) is real, actionable
+      // information during a live rotation — surfaced as a route-level
+      // job failure so it reaches the operator alert, even though the
+      // module's own `ok: true` correctly means "ran to completion, not
+      // every row necessarily succeeded" (see that file's doc comment).
+      if (result.failed > 0) {
+        return { ok: false, error: `${result.failed} row(s) failed to re-encrypt this run (${result.remaining} still remaining)` };
+      }
+      return { ok: true };
+    });
+
+    const results = {
+      fxRateSync,
+      cryptoPriceSync,
+      equityQuoteSync,
+      deadMansSwitchCheck,
+      rateLimitCleanup,
+      encryptionKeyRotation,
+    };
 
     // The one place a nightly failure reaches a human (AGENTS.md §3yy).
     // One email per run, every failed job listed, the stale-data breaker

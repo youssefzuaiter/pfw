@@ -6,6 +6,7 @@ import {
   getDatabaseUrl,
   getEmbeddingSidecarUrl,
   getEncryptionKey,
+  getEncryptionKeyNext,
   SECRET_ENV_VAR_NAMES,
 } from "./env";
 
@@ -97,6 +98,32 @@ describe("server env accessors", () => {
       expect(getEncryptionKey()).toBe(VALID_ENCRYPTION_KEY);
     });
 
+    describe("getEncryptionKeyNext() — optional, only present during a rotation", () => {
+      afterEach(() => {
+        delete process.env.ENCRYPTION_KEY_NEXT;
+      });
+
+      it("returns null when unset (the ordinary, non-rotating case) rather than throwing", () => {
+        delete process.env.ENCRYPTION_KEY_NEXT;
+        expect(getEncryptionKeyNext()).toBeNull();
+      });
+
+      it("returns null for a whitespace-only value, same as unset", () => {
+        process.env.ENCRYPTION_KEY_NEXT = "   ";
+        expect(getEncryptionKeyNext()).toBeNull();
+      });
+
+      it("returns the value once genuinely set to a valid 32-byte key", () => {
+        process.env.ENCRYPTION_KEY_NEXT = VALID_ENCRYPTION_KEY;
+        expect(getEncryptionKeyNext()).toBe(VALID_ENCRYPTION_KEY);
+      });
+
+      it("throws (not silently null) when set to a malformed value — a real misconfiguration, not 'unset'", () => {
+        process.env.ENCRYPTION_KEY_NEXT = Buffer.alloc(16, 1).toString("base64"); // 16 bytes, not 32
+        expect(() => getEncryptionKeyNext()).toThrow(/ENCRYPTION_KEY_NEXT/);
+      });
+    });
+
     it("rejects a whitespace-only value the same as unset", () => {
       process.env.ANTHROPIC_API_KEY = "   ";
       expect(() => getAnthropicApiKey()).toThrow(/ANTHROPIC_API_KEY/);
@@ -118,6 +145,10 @@ describe("server env accessors", () => {
 
     it("does not include the non-secret bank API base URL", () => {
       expect(SECRET_ENV_VAR_NAMES).not.toContain("BANK_API_BASE_URL");
+    });
+
+    it("includes ENCRYPTION_KEY_NEXT, even though it's unset outside an active rotation", () => {
+      expect(SECRET_ENV_VAR_NAMES).toContain("ENCRYPTION_KEY_NEXT");
     });
   });
 

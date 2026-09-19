@@ -216,24 +216,34 @@ after rotation — never a silent downstream misbehavior discovered later.
   two independently — they're different roles with different blast
   radii (`pfw_app` is a superuser; see the Phase 2 addendum above) — and
   there's no reason rotating one should ever require rotating the other.
-- **`ENCRYPTION_KEY`** — the one genuinely hard rotation, and worth
-  spelling out precisely because "just swap the env var" silently
-  corrupts every already-encrypted row: `field-encryption.ts`'s
-  `decryptField()` always decrypts with *today's* `ENCRYPTION_KEY` (there
-  is no per-row key-version lookup yet), so replacing the key without a
-  migration makes every existing `BankAccount.last4` /
-  `NotableTransaction.description` / `GoalContribution.note` row
-  permanently undecryptable. A real rotation needs, in order: (1) keep
-  the old key available under a second env var (e.g.
-  `ENCRYPTION_KEY_PREVIOUS`) during the migration window, (2) a one-off
-  script that reads every encrypted column with the old key and
-  re-writes it encrypted with the new key, (3) only then remove the old
-  key from the environment. The ciphertext format is already versioned
-  (`v1:iv:tag:ciphertext` — see `field-encryption.ts`'s doc comment)
-  specifically so a future format/key-versioning scheme (e.g. `v2:` rows
-  carrying their own key-id) can be introduced without an ambiguous
-  read of old rows — not built yet, since nothing has needed a rotation
-  in practice, but the format was chosen with this in mind from Phase 2.
+- **`ENCRYPTION_KEY`** — ✅ **built** (AGENTS.md's ENCRYPTION_KEY rotation
+  entry), previously the one item on this list marked "not built yet."
+  "Just swap the env var" would still silently corrupt every already-
+  encrypted row — that hazard is exactly why this couldn't be a plain
+  config change: `field-encryption.ts`'s ciphertext format is now
+  key-versioned (`v1:iv:tag:ciphertext`, unchanged in meaning, always
+  today's `ENCRYPTION_KEY`; `v2:<key id>:iv:tag:ciphertext`, a short
+  public fingerprint — not the key itself — of whichever of
+  `ENCRYPTION_KEY`/`ENCRYPTION_KEY_NEXT` actually encrypted it). The
+  procedure: (1) set `ENCRYPTION_KEY_NEXT` to the new key — every NEW
+  write switches onto it immediately, and every already-stored row stays
+  fully readable throughout; (2) `src/server/crypto/key-rotation.ts`'s
+  sweep (run nightly by `GET /api/cron`, or by hand via `npm run
+  rotate:encryption-key`) re-encrypts existing rows onto it across all
+  six places this app stores ciphertext (`BankAccount.last4`,
+  `NotableTransaction.description`, `User.totpSecret`,
+  `BankConnection.accessToken`, `RecoveryShareSubmission.
+  shareValueCiphertext`, and any surviving pre-zero-knowledge
+  `GoalContribution.note` — a real `zk1:`-prefixed note is never touched,
+  by design); (3) once it reports zero rows remaining, set
+  `ENCRYPTION_KEY` to the same value and remove `ENCRYPTION_KEY_NEXT` —
+  the rotation is then simply over. Verified against the real local
+  database, not just written: a full rotate → confirm every row still
+  decrypts correctly and is genuinely re-tagged → rotate back → confirm
+  again round trip, covering all 233 real rows this app's local dev data
+  actually held across `BankAccount`/`NotableTransaction`/
+  `GoalContribution` at the time, with zero corruption and zero residual
+  `ENCRYPTION_KEY_NEXT` left set afterward.
 - **`BANK_API_CLIENT_ID` / `BANK_API_CLIENT_SECRET`** (Tier 3
   scaffolding, item 33a — unused until a real bank-integration feature
   exists) — whatever rotation flow the eventual banking/Open-Finance API

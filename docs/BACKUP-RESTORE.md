@@ -28,6 +28,19 @@ was taken** — keep that key with the passphrase, in the password manager,
 and never rotate one without the other in mind (`docs/SECURITY-CHECKLIST.md`,
 "Secret rotation").
 
+**A backup taken while an `ENCRYPTION_KEY` rotation is actively in
+progress** (`ENCRYPTION_KEY_NEXT` set, `src/server/crypto/key-rotation.ts`'s
+sweep mid-run) will genuinely contain a MIX of rows still under the old
+key and rows already re-keyed onto the new one — this is expected and
+fully recoverable, not a corrupted dump: restore with BOTH
+`ENCRYPTION_KEY` (the old value) and `ENCRYPTION_KEY_NEXT` (the new
+value) set exactly as they were at backup time, and every row decrypts
+correctly regardless of which one it's actually under. Restoring with
+only the OLD key set (dropping `ENCRYPTION_KEY_NEXT`) would leave
+whatever had already been re-keyed at backup time undecryptable — keep
+both values together with the passphrase for the whole rotation window,
+not just the final one.
+
 What it deliberately does NOT contain: roles (`pg_dump` never dumps
 roles — they are cluster-level), ownership, and grants
 (`--no-owner --no-privileges`). All three are recreated from the

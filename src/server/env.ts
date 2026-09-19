@@ -146,7 +146,13 @@ type RequiredSecretEnvVar = keyof typeof REQUIRED_SECRET_SCHEMAS;
 // today, so the *names* are locked in as secrets from day one: the guard
 // test below can never accidentally treat a future bank credential as
 // safe-to-expose just because no feature happens to read it yet.
-const OPTIONAL_SECRET_ENV_VAR_NAMES = ["BANK_API_CLIENT_ID", "BANK_API_CLIENT_SECRET"] as const;
+//
+// ENCRYPTION_KEY_NEXT is genuinely optional in ordinary operation (unset
+// on every deployment that isn't mid-rotation) but is exactly as
+// sensitive as ENCRYPTION_KEY itself the moment it IS set — a second live
+// AES-256-GCM key, not a placeholder — so it belongs on this list from
+// day one too, the same reasoning as the bank credentials above.
+const OPTIONAL_SECRET_ENV_VAR_NAMES = ["BANK_API_CLIENT_ID", "BANK_API_CLIENT_SECRET", "ENCRYPTION_KEY_NEXT"] as const;
 
 /**
  * Every env var name this app ever treats as a secret — server-required
@@ -213,6 +219,47 @@ export function isAppDatabaseConfigured(): boolean {
 
 export function getEncryptionKey(): string {
   return readRequiredEnv("ENCRYPTION_KEY");
+}
+
+/**
+ * The rotation target during an `ENCRYPTION_KEY` rotation
+ * (`docs/SECURITY-CHECKLIST.md`'s "Secret rotation & storage guidelines"
+ * — previously documented there as "not built yet"; now built). Unset in
+ * the ordinary, non-rotating case: returns `null`, never throws — the
+ * whole point is that setting this is a deliberate, occasional act, not
+ * something every deployment needs.
+ *
+ * When set, `field-encryption.ts`'s `encryptField()` switches every NEW
+ * write onto this key (tagged with its own short fingerprint, so a
+ * `v2:<kid>:...` ciphertext says which of the two live keys it's under)
+ * while `decryptField()` keeps reading rows under BOTH this key and the
+ * current `ENCRYPTION_KEY` correctly, for however long both remain live.
+ * `src/server/crypto/key-rotation.ts`'s nightly sweep (run by
+ * `GET /api/cron` alongside this app's other batch jobs, and by hand via
+ * `npm run rotate:encryption-key`) moves every already-stored row onto
+ * it. Once that sweep reports zero rows remaining on the old key, the
+ * operator sets `ENCRYPTION_KEY` to this same value and removes
+ * `ENCRYPTION_KEY_NEXT` — the rotation is then simply over, with nothing
+ * left anywhere pointing at the retired key.
+ *
+ * Same 32-byte-base64 shape as `ENCRYPTION_KEY` itself when set, and
+ * Zod-validated the identical way — a malformed value fails loudly (a
+ * genuine misconfiguration, the same "partial/wrong, not merely unset"
+ * treatment `getBankApiCredentials()` already gives its own optional
+ * secrets) rather than being silently treated as absent.
+ */
+export function getEncryptionKeyNext(): string | null {
+  const raw = process.env.ENCRYPTION_KEY_NEXT?.trim();
+  if (!raw) return null;
+
+  const result = base64EncodedKey("ENCRYPTION_KEY_NEXT", 32).safeParse(raw);
+  if (!result.success) {
+    const reasons = result.error.issues.map((issue) => issue.message).join("; ");
+    throw new Error(`Invalid ENCRYPTION_KEY_NEXT: ${reasons}`);
+  }
+
+  taintSecret("ENCRYPTION_KEY_NEXT", result.data);
+  return result.data;
 }
 
 export function getAuthSecret(): string {

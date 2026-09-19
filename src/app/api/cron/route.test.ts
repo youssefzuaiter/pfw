@@ -7,12 +7,20 @@ import { NextRequest } from "next/server";
  * email per run, every failed job listed, the stale-data breaker named —
  * not what the jobs themselves do (each has its own tests).
  */
-vi.mock("../../../server/env", () => ({ getCronSecret: () => "cron-secret-for-route-test" }));
+vi.mock("../../../server/env", () => ({
+  getCronSecret: () => "cron-secret-for-route-test",
+  // key-rotation.ts's own real (unmocked) import of this same module —
+  // this route test exercises its genuine no-op guard, not a stand-in
+  // for it, so this must still behave like the ordinary, non-rotating
+  // default rather than being silently undefined.
+  getEncryptionKeyNext: () => null,
+}));
 vi.mock("../../../server/currency/rate-sync", () => ({ syncExchangeRates: vi.fn() }));
 vi.mock("../../../server/crypto/price-sync", () => ({ syncCryptoPrices: vi.fn() }));
 vi.mock("../../../server/market-data/quote-sync", () => ({ syncEquityQuotes: vi.fn() }));
 vi.mock("../../../server/dead-mans-switch/inactivity-check", () => ({ runInactivityCheck: vi.fn() }));
 vi.mock("../../../server/dal/rate-limit-buckets", () => ({ deleteExpiredRateLimitBuckets: vi.fn() }));
+vi.mock("../../../server/crypto/key-rotation", () => ({ runEncryptionKeyRotationSweep: vi.fn() }));
 vi.mock("../../../server/ops/operator-alert", () => ({ sendOperatorAlert: vi.fn() }));
 
 import { GET } from "./route";
@@ -21,6 +29,7 @@ import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
+import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
 import { StaleDataError } from "../../../server/stale-data-error";
 
@@ -36,6 +45,7 @@ function allHealthy() {
   vi.mocked(syncEquityQuotes).mockResolvedValue({ ok: true, synced: ["TSLA"], skipped: [] } as never);
   vi.mocked(runInactivityCheck).mockResolvedValue({ movedToGracePeriod: [], triggered: [] } as never);
   vi.mocked(deleteExpiredRateLimitBuckets).mockResolvedValue(0 as never);
+  vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({ ok: true, inProgress: false } as never);
 }
 
 describe("GET /api/cron operator alert", () => {
@@ -85,11 +95,73 @@ describe("GET /api/cron operator alert", () => {
     expect(vi.mocked(sendOperatorAlert).mock.calls[0][0].subject).toBe("cron: 1 job(s) failed");
   });
 
+  it("reports a genuine no-op cleanly when no rotation is in progress", async () => {
+    allHealthy();
+    const res = await GET(request());
+    const body = await res.json();
+    expect(body.encryptionKeyRotation).toEqual({ ok: true });
+    expect(body.operatorAlert).toBe("not_needed");
+  });
+
+  it("stays healthy when a rotation IS in progress but every row succeeded", async () => {
+    allHealthy();
+    vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({
+      ok: true,
+      inProgress: true,
+      reencrypted: 12,
+      remaining: 3,
+      failed: 0,
+    } as never);
+
+    const res = await GET(request());
+    const body = await res.json();
+    expect(body.encryptionKeyRotation).toEqual({ ok: true });
+    expect(body.operatorAlert).toBe("not_needed");
+    expect(sendOperatorAlert).not.toHaveBeenCalled();
+  });
+
+  it("alerts the operator when a rotation sweep leaves per-row failures, even though the module's own result is ok:true", async () => {
+    allHealthy();
+    vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({
+      ok: true,
+      inProgress: true,
+      reencrypted: 5,
+      remaining: 2,
+      failed: 2,
+    } as never);
+
+    const res = await GET(request());
+    const body = await res.json();
+    expect(body.encryptionKeyRotation).toEqual({
+      ok: false,
+      error: "2 row(s) failed to re-encrypt this run (2 still remaining)",
+      staleData: false,
+    });
+    expect(body.operatorAlert).toBe("sent");
+    const alert = vi.mocked(sendOperatorAlert).mock.calls[0][0];
+    expect(alert.lines).toEqual(["encryptionKeyRotation: 2 row(s) failed to re-encrypt this run (2 still remaining)"]);
+  });
+
+  it("alerts the operator when the sweep itself fails outright (e.g. a lost DB connection mid-rotation)", async () => {
+    allHealthy();
+    vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({
+      ok: false,
+      inProgress: true,
+      error: "connection terminated unexpectedly",
+    } as never);
+
+    const res = await GET(request());
+    const body = await res.json();
+    expect(body.encryptionKeyRotation).toEqual({ ok: false, error: "connection terminated unexpectedly", staleData: false });
+    expect(body.operatorAlert).toBe("sent");
+  });
+
   it("still refuses a wrong secret before running anything", async () => {
     allHealthy();
     const res = await GET(new NextRequest("http://localhost/api/cron", { headers: { authorization: "Bearer nope" } }));
     expect(res.status).toBe(403);
     expect(syncExchangeRates).not.toHaveBeenCalled();
+    expect(runEncryptionKeyRotationSweep).not.toHaveBeenCalled();
     expect(sendOperatorAlert).not.toHaveBeenCalled();
   });
 });

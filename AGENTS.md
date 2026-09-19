@@ -7015,6 +7015,203 @@ being written up, the same bar as every section above.
   says after the flag is set — if it sits above ~450 MB on a 512 MB
   instance, the placeholder is the right default to keep.
 
+## 3zz. `ENCRYPTION_KEY` rotation, for real (ad hoc)
+
+Explicit user request, prompted by a real, concrete finding rather than a
+speculative "what if": comparing the production `ENCRYPTION_KEY` (Vercel,
+marked Sensitive) against the value stored locally/in the password
+manager showed they DON'T match — meaning the backup encrypted nightly
+since §3yy is only readable with whichever key production is actually
+running, not the one recorded anywhere else. Closing that gap safely
+needs a real rotation mechanism, not just "generate a new key and set
+it" — `docs/SECURITY-CHECKLIST.md`'s own "Secret rotation" entry had
+already spelled out exactly why a naive swap corrupts every existing
+encrypted row, and had explicitly said this was "not built yet." This is
+that build.
+
+- **The format, in `src/server/crypto/field-encryption.ts`**: `v1:` never
+  changes meaning — it still always means "decrypt with today's
+  `ENCRYPTION_KEY`," exactly as before this existed. That stays correct
+  even DURING an active rotation, not just before one: the instant
+  `ENCRYPTION_KEY_NEXT` is set, `encryptField()` switches every NEW write
+  to a second format, `v2:<key id>:iv:tag:ciphertext` — so a `v1:` row
+  can only be one written *before* the rotation began, still genuinely
+  under whatever `ENCRYPTION_KEY` has held the whole time. No format
+  migration was needed for the (vast majority of) rows already on disk,
+  and zero behavior change for a deployment that never rotates. `<key
+  id>` is a short, public fingerprint (`sha256(key)`, truncated to 6
+  bytes, hex-encoded — never base64/base64url, whose `_` character is a
+  SQL `LIKE` wildcard and would have made the rotation sweep's own prefix
+  matching subtly wrong) — a one-way hash, not the key itself, the same
+  "hash it, never store the secret" instinct this app already applies to
+  `GroupInvite.tokenHash`/`Beneficiary.shareHash`, just for a key instead
+  of a token. `decryptField()` resolves a `v2:` row's key id against
+  whichever of `ENCRYPTION_KEY`/`ENCRYPTION_KEY_NEXT` is currently
+  configured and uses whichever one matches — a `v2:` row stays readable
+  through the entire rotation window regardless of which key actually
+  encrypted it, and stays readable after the rotation completes too
+  (once the operator sets `ENCRYPTION_KEY` to the new value and removes
+  `ENCRYPTION_KEY_NEXT`, that row's key id simply matches `ENCRYPTION_KEY`
+  again). A key id matching neither configured key throws a clear,
+  specific error rather than silently failing — the one way this can
+  happen is `ENCRYPTION_KEY` being changed before every row was actually
+  re-encrypted onto it, i.e. a real operator mistake worth surfacing
+  loudly, not swallowing.
+- **`src/server/env.ts` gained `getEncryptionKeyNext()`** — `null` when
+  unset (every deployment, almost always), the same Zod-validated
+  32-byte-base64 shape as `ENCRYPTION_KEY` itself when it IS set, added
+  to `SECRET_ENV_VAR_NAMES` from day one like the Tier 3 bank-credential
+  placeholders already are, for the identical reason: it's exactly as
+  sensitive as `ENCRYPTION_KEY` the moment it's configured, so it must
+  never be treated as safe-to-expose just because most deployments never
+  set it.
+- **The actual re-encryption sweep, `src/server/crypto/key-rotation.ts`**
+  — a genuine no-op (zero database access at all) whenever
+  `ENCRYPTION_KEY_NEXT` is unset, so running it nightly via `GET
+  /api/cron` alongside this app's other batch jobs (FX/crypto/equity-
+  quote sync, the Dead Man's Switch check) costs nothing on every
+  ordinary night. THE ADMIN-CLIENT EXCEPTION, a fifth of its kind (see
+  `tests/guards/admin-client-boundary.test.ts`'s own comment for the
+  full list): re-keying has to touch every user's ciphertext in one
+  pass, with no single `userId` to scope a `withUserScope` transaction
+  by — the same shape `inactivity-check.ts`/`quote-sync.ts` already have.
+  Covers all SIX places this app stores ciphertext:
+  - Four columns the `encrypted-fields.ts` Prisma Client extension
+    already manages transparently (`BankAccount.last4`,
+    `NotableTransaction.description`, `User.totpSecret`,
+    `BankConnection.accessToken`) — re-keying these is nothing more than
+    a plain READ-THEN-WRITE-BACK round trip: the extension decrypts on
+    read (using whichever key the row's own format/key-id calls for) and
+    re-encrypts on write (always onto `ENCRYPTION_KEY_NEXT`, since
+    `encryptField()` already prefers it whenever it's set) — no manual
+    `encryptField`/`decryptField` call needed here at all. Every raw SQL
+    statement is a literal, hardcoded string (table/column names written
+    directly in, never built from a variable); only the search prefix
+    and row-count LIMIT are interpolated, and Prisma's tagged-template
+    `$queryRaw` binds those as real parameters — used ONLY to find which
+    row ids still need touching, since the extension never exposes raw
+    ciphertext through its normal query API to test a prefix against
+    (the identical reason `searchTransactionsSemantic` reaches for
+    `$queryRaw` at all, §3cc).
+  - Two places that deliberately sit outside that extension and always
+    have (`RecoveryShareSubmission.shareValueCiphertext`, written via
+    `encryptField`/`decryptField` directly by `recovery-service.ts`; and
+    any surviving PRE-zero-knowledge `GoalContribution.note` row — one
+    still in the old server-held format because its user never ran
+    `POST /api/zk/migrate-legacy`, §3m) — a plain Prisma read already
+    returns the raw stored string for these, so the module calls
+    `decryptField`/`encryptField` itself, exactly as those two call
+    sites already do, with no raw SQL at all. A genuine zero-knowledge
+    note (`zk1:`-prefixed) is never touched — it is, by design, the one
+    thing on this list the server can never decrypt in the first place,
+    and this module's own filter matches `findLegacyNoteContributions`'s
+    filter exactly for that reason.
+  - Never throws: one row's re-encryption failing is logged and counted
+    (`failed`), not fatal to the whole sweep — the same "one bad row
+    doesn't abort the batch" discipline `scripts/backfill-embeddings.ts`
+    already applies. Capped at 500 rows per table per run — generous for
+    this app's real personal-ledger scale, but a real, deliberate bound;
+    `remaining` is always an honest, UNCAPPED count, so a rotation
+    spanning more rows than one run's cap simply finishes over the next
+    several nightly runs. `runEncryptionKeyRotationSweep()`'s own `ok:
+    true` means "the sweep ran to completion," not "every row
+    succeeded" — matching this app's existing sync-job convention
+    (`syncCryptoPrices`'s own `skipped` list) — the `/api/cron` wrapper
+    is what decides a nonzero `failed` count is itself worth an operator
+    alert, converting it to a route-level job failure even though the
+    module's own result was `ok: true`.
+- **Wired into `GET /api/cron`** (new `encryptionKeyRotation` job,
+  alongside the existing five) and into a manual entry point,
+  `scripts/rotate-encryption-key.ts` / `npm run rotate:encryption-key`,
+  matching every other sync job's "cron calls it automatically; an
+  operator can also run it by hand and watch it happen" precedent
+  (`sync-crypto-prices.ts`, `sync-exchange-rates.ts`).
+- **A deliberate testing-strategy decision, stated plainly**: unlike
+  `inactivity-check.ts`/`quote-sync.ts` (also admin-client global batch
+  jobs, both tested ONLY via a real integration test against the shared
+  dev Postgres), this sweep's own automated tests do NOT run the real
+  sweep against that shared database. Those two existing jobs are safe
+  to run under Vitest's PARALLEL integration-file execution because
+  they're naturally no-ops for a row some other concurrently-running
+  test file just created (a fresh `DeadMansSwitch`/`PortfolioHolding` row
+  is nowhere near any elapsed-time threshold). This sweep is NOT a no-op
+  for an unrelated fresh row — it unconditionally re-keys ANY row in
+  these six tables that isn't yet on the target key, so running it for
+  real during the normal parallel suite would risk re-encrypting some
+  OTHER test file's just-created row under a throwaway key that file's
+  own process doesn't know about, corrupting that file's own assertion
+  with an unrelated, confusing GCM-auth-failure — a class of flaky,
+  cross-file failure this suite must never introduce. `key-rotation.ts`'s
+  six per-table sweep functions were exported and unit-tested instead,
+  each against a small hand-built fake Prisma client (proving the
+  read-then-write-back sequencing, per-row error isolation, and — the
+  single most important property to pin — that a real `zk1:`-prefixed
+  note is NEVER touched); the top-level orchestrator's tally aggregation
+  and no-op guard are unit-tested the same way, mocking only
+  `createAdminClient`. The real raw SQL and the full end-to-end round
+  trip were instead verified BY HAND against the real local database, in
+  an isolated window with no other test workers running (see below) —
+  the same category of "genuinely dangerous to automate in parallel,
+  verified live by hand instead" judgment call this app already made for
+  `docs/BACKUP-RESTORE.md`'s own restore rehearsal.
+- **Verified live, not just by test**: `npm run check` clean — 1342/1345
+  passing (3 skip, the unrelated embedding sidecar — up from 1317, the
+  difference being 25 new tests across `field-encryption.test.ts` (8 new
+  rotation-format cases), `key-rotation.test.ts` (8, new file),
+  `env.test.ts` (4 new `getEncryptionKeyNext` cases + 1
+  `SECRET_ENV_VAR_NAMES` case), and `route.test.ts` (4 new cases for the
+  cron wrapper's success/partial-failure/total-failure reporting). Full
+  production build clean; `verify:client-bundle-secrets` clean (71
+  files, 7 real secret values, none found). Gitleaks (`v8.30.1`) and
+  Semgrep (`1.174.0`, the same pinned versions/rulesets §3z wired into
+  CI) both re-run locally against a proper export of the full working
+  tree (tracked files' current on-disk content plus the new untracked
+  files, matching what this commit would actually ship) — 0 findings
+  each, Semgrep running 355 rules over 646 files.
+  - **The real, hands-on verification**: a one-off script
+    (`.scratch-check/verify-key-rotation.ts`, run once and discarded, per
+    this app's established scratch-script convention) rotated the ENTIRE
+    real local database onto a freshly-generated throwaway test key,
+    verified the raw stored ciphertext for a real `BankAccount.last4`
+    row was genuinely re-tagged `v2:<kid>:...` while its DECRYPTED value
+    was byte-for-byte unchanged, verified a real `NotableTransaction.
+    description` and all 3 of the local database's real legacy
+    `GoalContribution.note` rows (there were no real `zk1:` notes present
+    to also prove the exclusion against, so that specific guarantee rests
+    on the unit test above) round-tripped identically, then rotated
+    EVERYTHING back onto the original real key and re-verified — 233 real
+    rows re-encrypted each direction (10 `BankAccount` + 220
+    `NotableTransaction` + 3 `GoalContribution`), 0 failed, 0 remaining,
+    both directions, zero corruption. Confirmed via `psql` directly
+    afterward that `.env` itself was never touched (the whole rotation
+    happened via in-process `process.env` mutation inside that one
+    script) and that every row is now `v2:`-format under the SAME
+    original key — a real, accepted, purely cosmetic side effect (the
+    two formats are fully interchangeable to every consumer of
+    `decryptField()`; nothing in this codebase asserts a specific row
+    must be literally `v1:`-prefixed). A full `npm run check` re-run
+    afterward confirmed nothing else was disturbed. `BankConnection.
+    accessToken`/`User.totpSecret`/`RecoveryShareSubmission.
+    shareValueCiphertext` all currently have zero real rows in this local
+    database, so their specific raw-SQL/Prisma-call paths were exercised
+    live only against an empty result set (proving the SQL runs without
+    error, not a full round trip) — their actual re-encryption LOGIC is
+    what the unit tests above cover with realistic fake data; stated
+    plainly rather than glossed over, the same honesty this app gives
+    every other "not verified in this pass" gap.
+- **Not done in this pass, left for the user**: the actual production
+  rotation itself — generating a real new key, adding it to Vercel as
+  `ENCRYPTION_KEY_NEXT`, waiting for `/api/cron`'s nightly sweep (or
+  triggering it manually) to report zero rows remaining, then setting
+  `ENCRYPTION_KEY` to that value and removing `ENCRYPTION_KEY_NEXT` — is
+  a real production credential change against the live deployment,
+  offered as the next concrete step rather than performed automatically,
+  the same "confirm before an action that affects shared state" treatment
+  every other production-secret change in this session's history gets.
+  Once done, the mismatch between the recorded/backed-up key and
+  production's real one is resolved for good, and future nightly backups
+  become genuinely restorable with the key on file.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
@@ -7370,7 +7567,8 @@ src/server/api/                  rate-limit.ts, idempotency.ts, verify-origin.ts
                                    guard-mutation.ts (shared Origin+identity+rate-limit preamble)
 src/server/advisor/              tools.ts (10 read-only tools), system-prompt.ts (injection
                                    boundary), run-conversation.ts (tool-use loop, cost backstop)
-src/server/crypto/field-encryption.ts   AES-256-GCM codec
+src/server/crypto/field-encryption.ts   AES-256-GCM codec, v1:/v2:<kid>: rotation format (§3zz)
+src/server/crypto/key-rotation.ts       ENCRYPTION_KEY rotation sweep, all 6 ciphertext spots (§3zz)
 src/server/db/client.ts          app runtime PrismaClient (pfw_runtime, lazy)
 src/server/db/admin-client.ts    admin PrismaClient (pfw_app) — seed/tests/auth-bootstrap only
 src/server/db/with-user-scope.ts RLS session-variable transaction wrapper
@@ -7385,12 +7583,14 @@ prisma/migrations/                init + rls_and_runtime_role
 prisma/seed/                      rng.ts, israeli-data.ts, index.ts (entry point)
 compose.yaml                     postgres:17, db pfw_local, host port 5433
 .env.example                     DATABASE_URL / APP_DATABASE_URL / ENCRYPTION_KEY /
+                                   ENCRYPTION_KEY_NEXT (rotation only, §3zz) /
                                    ANTHROPIC_API_KEY / EMBEDDING_SIDECAR_URL /
                                    BANK_API_CLIENT_ID / _SECRET / _BASE_URL (Tier 3, unused)
 scripts/                          check-no-secrets-in-client-bundle.ts — build-output
                                     secret-leak scanner, run after `npm run build`;
                                     production-smoke.sh (post-deploy check, §3yy);
-                                    db-backup.sh (encrypted pg_dump, §3yy)
+                                    db-backup.sh (encrypted pg_dump, §3yy);
+                                    rotate-encryption-key.ts (manual entry point, §3zz)
 src/server/ops/operator-alert.ts  one-email-per-run cron failure alert (§3yy)
 docs/BACKUP-RESTORE.md            backup contents, one-time setup, rehearsed restore (§3yy)
 .github/workflows/                ci.yml, deploy-migrations.yml (gated, §3aa),
