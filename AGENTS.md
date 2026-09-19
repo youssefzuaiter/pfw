@@ -6934,6 +6934,20 @@ being written up, the same bar as every section above.
   `template1` had the collation-version mismatch §3mm/§3nn already met —
   `ALTER DATABASE template1 REFRESH COLLATION VERSION` is the fix, and
   it is what has been making `prisma migrate dev` refuse here.
+  - **The first production run (2026-09-19) taught two things the local
+    rehearsal could not.** (1) A secret that holds only the PASSWORD
+    makes libpq treat it as a bare database name and dial the local
+    socket — an unreadable failure; the script now refuses anything that
+    is not a `postgresql://` URL and says so. (2) Neon was already on
+    **Postgres 18.6** and `pg_dump` refuses a server newer than itself;
+    the script now asks the server (`SHOW server_version_num`, via a
+    probe image whose `psql` talks to any version) and pulls
+    `postgres:<major>` — verified locally with an 18 probe choosing
+    `postgres:17` for the dev database, then live: `180006 → postgres:18`,
+    43 tables, encrypted, verified, uploaded, 30-day retention. The
+    operator setup also rotated `backup_reader`'s password once: the
+    first value was pasted into a chat transcript by accident, so it was
+    replaced before the working secret was ever set.
 - **Real FinBERT in the trader** (`~/paper-trader` `d21e6c7`,
   `SENTIMENT_MODEL=finbert`). The blocker was never the code — the
   docstring's two-line `transformers` swap would load a 438 MB fp32
@@ -6981,9 +6995,11 @@ being written up, the same bar as every section above.
   (`0dda268`, the CPU wheel — the earlier code is already live there),
   confirm `memory_rss_mb` on `/health` drops from 460 to ~300, THEN add
   `SENTIMENT_MODEL=finbert` and confirm it lands near 450 (above ~480,
-  revert the flag); `ALTER ROLE backup_reader WITH PASSWORD`
+  revert the flag) — **done 2026-09-18, FinBERT live at ~502 MB steady
+  state**; `ALTER ROLE backup_reader WITH PASSWORD`
   on Neon and the two `backup` environment secrets, then one manual run
-  of *Database backup*; set `OPERATOR_ALERT_EMAIL` on Vercel; keep
+  of *Database backup* — **done 2026-09-19, run #35442024906**; set
+  `OPERATOR_ALERT_EMAIL` on Vercel; keep
   `ENCRYPTION_KEY`, `AUTH_SECRET`, `WEBHOOK_SECRET`, the Alpaca keys and
   the backup passphrase in a password manager — a lost passphrase makes
   every backup permanently unreadable, and a lost `ENCRYPTION_KEY` makes
