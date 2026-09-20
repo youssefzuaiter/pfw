@@ -7356,10 +7356,75 @@ app's own code, found and fixed.
   this session's own browser-automation tooling losing track of the
   panel's real DOM position after several open/close cycles, not a
   product bug — no further code was changed chasing it.
-- **Not done in this pass**: tightening `system-prompt.ts`'s wording for
-  Finding 1 (flagged above, not applied); a second real end-to-end
-  copilot round-trip to confirm normal-path behavior against the real
-  model (blocked by the tooling issue above, not attempted again).
+- **Follow-up pass, same day: both items above closed for real.**
+  - **`system-prompt.ts` tightened** (Finding 1): "Never invent a
+    number..." now explicitly says "If no tool covers the question, OR a
+    tool call comes back with an error, tell the user plainly... never
+    estimate, guess, or state a plausible-sounding figure in its place,
+    even to soften a 'the tool failed' apology." No test pins the exact
+    wording (checked before editing), so this was a safe, isolated
+    change — `npx tsc --noEmit` and the full `npm run check` (1092/1347,
+    same pre-existing warning) both stayed clean.
+  - **The auth.ts fix, properly re-verified this time** — not by hoping
+    for another lucky pool-timeout, but by a real, deliberate, controlled
+    repro: `docker stop pfw_local_db` (a genuine, total connection
+    refusal, `ECONNREFUSED`, a strictly harder failure than the original
+    P2028 timeout), then confirming the SAME already-open browser session
+    still worked the instant Postgres came back —
+    `GET /api/copilot/status` → `200 {"available":true}` immediately,
+    zero re-login. Repeated a second time (a second stop/start cycle)
+    with the same clean result both times. This closes the "honestly
+    incomplete" verification gap the first pass of this section stated
+    plainly rather than glossed over.
+  - **A second, and third, clean round-trip through the real local
+    copilot — the earlier "browser-automation tooling" blocker was
+    diagnosed, not just retried.** Root cause: this app's copilot panel
+    (and the page's other status-driven badges — the trading-agent health
+    indicator, the copilot's own available/unavailable state) appear to
+    fully remount their inner content whenever their status flips, which
+    silently discards anything just typed or submitted if that click
+    landed near a flip. Two things fixed the reliability: (1) submitting
+    via `document.querySelector('textarea').closest('form').requestSubmit()`
+    in the browser's own JS console (dispatching the exact same native
+    `submit` event a real click would, through the real React handler —
+    not a bypass of any app logic) proved far more reliable than chasing
+    moving element refs across remounts; (2) doing it in a STABLE window
+    (no status flip mid-action) rather than right at a DB up/down
+    transition. A clean question against a healthy DB
+    (`POST /api/copilot/chat`, 11s, no tool failure) came back with the
+    exactly correct figure — `"Your current net worth is -₪641,331.66"`,
+    matching the dashboard to the agorot. This is the "second full
+    round-trip... to confirm normal-path behavior" this section's first
+    pass explicitly listed as not done — now done, and correct.
+  - **A third attempt — re-triggering the ORIGINAL failure (tool error)
+    a second time, specifically to watch the NEW prompt wording in
+    action — was tried but not landed**, for the same remount-timing
+    reason: `docker stop pfw_local_db` immediately followed by a
+    submission raced the panel's own status-flip remount often enough
+    that the typed value kept getting discarded before `requestSubmit()`
+    fired, confirmed by the server log showing no new request most
+    attempts. One attempt DID reach the server and DID hit the real
+    P2028 failure again — the model's response was never captured before
+    time/patience on this one specific repro ran out (Postgres was
+    restarted rather than left down indefinitely chasing it). **Stated
+    plainly**: the tightened prompt's effect on a live failure was not
+    directly re-witnessed a second time. What IS directly verified: the
+    exact wording change is sound and untested-against (no snapshot to
+    break), the happy path still works correctly and precisely with the
+    new prompt in place, and the session/infra-resilience half of this
+    whole investigation (the more serious of the two findings) is now
+    fully, cleanly confirmed.
+  - **A third, smaller, related observation, not acted on**: while DB was
+    down, `getCurrentUser()` also threw its own "this should be
+    unreachable" assertion (`current-user.ts:81`) from `/api/agent/health`
+    and `/api/copilot/status` — that assertion's comment assumes reaching
+    this line without a session is impossible because `proxy.ts` always
+    redirects first, but it IS reachable when a session genuinely exists
+    (proxy.ts's own check passes) and the DB happens to be unreachable
+    exactly when the route's own separate user lookup runs. Not a
+    security issue (nothing false-authorizes), just a misleading error
+    message in a real, if rare, circumstance — flagged here, not fixed,
+    since it's a new, third thread beyond the two this pass was scoped to.
 
 ## 4. Design system (Phase 0)
 
