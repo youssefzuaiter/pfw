@@ -408,7 +408,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // which never strictly matches a real stored integer), so every
       // pre-existing session is invalidated the first time this runs
       // post-deploy — a one-time hard cutover, not a recurring cost.
-      const currentVersion = await getCurrentTokenVersion(token.id);
+      // A real, verified failure mode, not a hypothetical: a transient
+      // DB error here (a connection-pool blip under load — confirmed
+      // live, Prisma P2028 "unable to start a transaction in the given
+      // time") previously propagated straight out of this callback.
+      // Auth.js treats a thrown jwt() the same as a returned `null` —
+      // it clears the session cookie — so a passing infrastructure
+      // hiccup was invalidating every active session on this app, a far
+      // bigger blast radius than this check's actual purpose. The
+      // LOGICAL revocation check (does the stored value actually differ)
+      // must still fail closed; only the "couldn't even ask" case fails
+      // open, by keeping the existing token for this one request — the
+      // next request re-checks, so a real revocation is still caught the
+      // moment the DB answers again.
+      let currentVersion: number | null;
+      try {
+        currentVersion = await getCurrentTokenVersion(token.id);
+      } catch (error) {
+        console.error("jwt(): tokenVersion revocation check failed (infra error) — keeping the existing session for this request", error);
+        return token;
+      }
       if (currentVersion === null || currentVersion !== token.tokenVersion) {
         return null;
       }

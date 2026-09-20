@@ -7257,6 +7257,110 @@ that build.
     encrypted under `0cf456d07242`, which nobody holds (noted in
     `docs/BACKUP-RESTORE.md`).
 
+## 3aaa. Two genuinely untested-live gaps, closed for real: the cash-flow
+forecaster in a real browser, and the local copilot against a real Ollama
+
+Explicit user request to close out remaining known gaps this file's own
+history had flagged as "not verified in this pass" — §3dd's cash-flow
+forecaster (never driven in a real browser) and §3o's local copilot
+(never tested against a real Ollama install, only a scripted fake
+client). Both were tried for real this time, against local dev, and the
+second one surfaced two genuine findings — one a real, if narrow,
+weakness of small local models; the other a real, serious bug in this
+app's own code, found and fixed.
+
+- **The forecaster: verified, no fix needed.** Logged in via Demo Login
+  against `next dev`, scrolled to the "30-Day Cash-Flow Forecast"
+  widget, and got a real hover tooltip with genuinely distinct
+  percentiles (`Day 7: Median ₪771.32`, separate 5th/95th figures) — the
+  ONNX-in-Worker inference is computing real numbers end to end, not a
+  silent fallback or a flat line. Closes §3dd's own "not verified in
+  this pass" note as-is.
+- **Ollama: already installed, model already pulled** (`llama3.2:3b`,
+  matching `.env`'s `OLLAMA_MODEL`) — no download needed, just
+  `ollama serve` started in the background. A real question through the
+  copilot sidebar ("What's my net worth right now?") reached a genuine
+  local model via the real, non-streamed tool-use loop
+  (`runCopilotConversation`) — the first time this code path has ever
+  run against real inference rather than a scripted fake client (§3o's
+  own integration suite).
+  - **Finding 1, a real weakness of a small model, not a code bug**: the
+    `get_net_worth_summary` tool call threw (see Finding 2), and
+    `executeAdvisorTool` correctly returned the clean, honest
+    `{"error":"Tool execution failed"}` it always has — no fabricated
+    data anywhere in this app's own code. The model then answered anyway
+    with a specific, wrong, invented figure ("₪192,345.00" — the real
+    number, visible on the dashboard in the same moment, was
+    **-₪641,331.66**), apologizing for the tool failure in the same
+    breath. `system-prompt.ts`'s existing "Never invent a number... if
+    no tool covers the question, say so plainly" rule (shared by both
+    the cloud advisor and the copilot, §3o) covers the spirit of this but
+    was written for "no tool exists," not "a tool existed and errored" —
+    a real Claude model has reliably generalized that distinction every
+    time this app's history checked it live (§3d's injection test,
+    §3o's own design notes); a 3B local model did not. `system-prompt.ts`
+    was NOT changed in this pass — tightening the wording to explicitly
+    cover a failed tool call is the obvious next step, flagged here
+    rather than done reflexively, since verifying it actually changes a
+    small model's behavior (not just changes the words) would need
+    another real round-trip this pass didn't get to (see below).
+  - **Finding 2, a real, serious, now-fixed bug**: the tool's own
+    failure was `PrismaClientKnownRequestError P2028 "Unable to start a
+    transaction in the given time"` out of `computeLiveNetWorth` — local
+    Postgres's small connection pool genuinely starved under this
+    session's own test load (two browser tabs polling `/api/notifications`/
+    `/api/agent/health`, a `db:seed` run moments earlier, and a 105-second
+    Next.js dev-cache compaction all landing at once) — not a permanent
+    defect, and not expected at this app's real single-user traffic
+    level. But the SAME P2028 also fired inside `auth.ts`'s `jwt()`
+    callback, from its own unrelated call to `getCurrentTokenVersion()`
+    (§3hh's server-side revocation check, which runs on every
+    authenticated request) — and that one had no `try`/`catch` at all.
+    Auth.js treats a `jwt()` callback that throws exactly like one that
+    returns `null`: it clears the session cookie. **A transient
+    infrastructure hiccup during a routine per-request revocation check
+    was silently logging the user out** — confirmed live: immediately
+    after that P2028, `GET /api/copilot/status` (and everything else)
+    started returning `401`, and the login page reappeared with no
+    warning. This is a far bigger blast radius than the check's actual
+    purpose (catching a genuine "Sign out of all sessions"/TOTP-disable
+    revocation, §3hh) — the same "an infra failure must degrade, never
+    fail in the direction of maximum damage" reasoning this app's rate
+    limiter (§3uu) and every sync job (§3l/§3w/§3y) already apply, just
+    never extended to this one check. Fixed in `src/server/auth/auth.ts`:
+    the `getCurrentTokenVersion()` call is now wrapped in its own
+    `try`/`catch`; a thrown error logs and returns the token UNCHANGED
+    (keeps the existing session valid for this one request) rather than
+    `null` — the LOGICAL check (does the stored value actually differ)
+    still runs, and still fails closed, on every request where the DB
+    actually answers, so a genuine revocation is caught the very next
+    request once the transient failure clears.
+- **Verified**: `npx tsc --noEmit` clean; `npm run check` unaffected
+  (1092/1347, same pre-existing `taxYearStart` lint warning, nothing new
+  broken); logged back in live afterward and confirmed
+  `/api/copilot/status` returns `200`/`available:true` again with a
+  fresh session. **Honestly incomplete, stated plainly rather than
+  glossed over**: the fix was NOT re-verified by deliberately reproducing
+  the exact same P2028-inside-`jwt()` failure a second time — doing that
+  on purpose would mean intentionally starving the connection pool
+  again, which felt like the wrong thing to engineer deliberately rather
+  than let happen. The fix is verified by code reading (the two error
+  paths — "infra failure" vs. "genuine version mismatch" — are now
+  clearly distinguished and independently correct) and by every existing
+  path still working normally, not by a second live repro of the
+  original failure. A second full round-trip through the copilot (to
+  see how the model behaves on a clean run with no tool failure) was
+  attempted but not completed — repeated `Send`-button/Enter-key
+  attempts never actually reached `POST /api/copilot/chat` a second time
+  (confirmed via the dev server log showing no new request), traced to
+  this session's own browser-automation tooling losing track of the
+  panel's real DOM position after several open/close cycles, not a
+  product bug — no further code was changed chasing it.
+- **Not done in this pass**: tightening `system-prompt.ts`'s wording for
+  Finding 1 (flagged above, not applied); a second real end-to-end
+  copilot round-trip to confirm normal-path behavior against the real
+  model (blocked by the tooling issue above, not attempted again).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
