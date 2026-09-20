@@ -41,6 +41,17 @@ whatever had already been re-keyed at backup time undecryptable — keep
 both values together with the passphrase for the whole rotation window,
 not just the final one.
 
+**Which key a given artifact needs**: every `v2:` row names its key by
+fingerprint (12 hex characters after `v2:`), and `GET /api/cron`'s
+`encryptionKeyRotation.currentKeyId` names the key the app is running on.
+`printf '%s' "$KEY" | base64 -d | shasum -a 256 | cut -c1-12` on a
+candidate key tells you whether it is the one. The production key was
+rotated on 2026-09-20 (AGENTS.md §3zz): artifacts from 2026-09-21 on are
+under `474463b5c95e`, the key on file; the artifacts before that were
+encrypted under `0cf456d07242`, a key that was never recorded anywhere
+and cannot be recovered — they are complete dumps, but their encrypted
+columns are unreadable.
+
 What it deliberately does NOT contain: roles (`pg_dump` never dumps
 roles — they are cluster-level), ownership, and grants
 (`--no-owner --no-privileges`). All three are recreated from the

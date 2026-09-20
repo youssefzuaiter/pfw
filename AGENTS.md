@@ -7239,12 +7239,23 @@ that build.
     §3jj auth email — cannot send in production until it is), and the
     equity-quote sync timed out against the Render trader (the known
     "instance asleep" case, §3xx).
-  - **Cutover (`ENCRYPTION_KEY` := the new value, `ENCRYPTION_KEY_NEXT`
-    removed) is the one step still pending** as of this entry — gated on
-    the fingerprint check above passing against the redeployed route.
-    Once done, the recorded/backed-up key and production's real key
-    finally agree, and nightly backups become restorable with the key on
-    file.
+  - **Cutover done the same day, in two halves so a paste mistake
+    stayed catchable.** The password-manager copy fingerprinted to
+    `474463b5c95e` = the route's `nextKeyId` (the old, never-recorded
+    production key was `0cf456d07242`). Half one: `ENCRYPTION_KEY` :=
+    the new value with `ENCRYPTION_KEY_NEXT` still in place, redeploy,
+    cron → `currentKeyId` and `nextKeyId` both `474463b5c95e` — a wrong
+    paste here would have shown as a mismatched `currentKeyId` while
+    `_NEXT` kept the app decrypting. Half two: `_NEXT` removed,
+    redeploy, cron → `inProgress: false, currentKeyId: 474463b5c95e,
+    nextKeyId: null`. Live proof on the production alias afterward:
+    `/transactions` renders decrypted descriptions and the bank
+    account's `••7669` (`BankAccount.last4`), i.e. real rows decrypting
+    under the new key with no `_NEXT` fallback left. The recorded key
+    and production's real key now agree; the 2026-09-21 backup is the
+    first restorable with the key on file — every earlier artifact was
+    encrypted under `0cf456d07242`, which nobody holds (noted in
+    `docs/BACKUP-RESTORE.md`).
 
 ## 4. Design system (Phase 0)
 
