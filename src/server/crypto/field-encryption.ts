@@ -82,14 +82,30 @@ function computeKeyId(key: Buffer): string {
  * with right now — i.e. the fingerprint of whichever key is currently
  * "active" for new writes. `null` when no rotation is in progress (a
  * non-rotating write stays on the legacy `v1:` format and carries no key
- * id at all, so there's nothing to report). Exists only for
+ * id at all, so there's nothing to report). Exists for
  * `src/server/crypto/key-rotation.ts`'s own "which rows still need
- * re-encrypting" query — nothing else outside this module needs to know
- * a key's fingerprint.
+ * re-encrypting" query.
  */
 export function getActiveEncryptionKeyId(): string | null {
   const nextEncoded = getEncryptionKeyNext();
   return nextEncoded ? computeKeyId(decodeKey(nextEncoded)) : null;
+}
+
+/**
+ * The fingerprints of both configured keys — `current` for
+ * `ENCRYPTION_KEY`, `next` for `ENCRYPTION_KEY_NEXT` (`null` outside a
+ * rotation). Reported by `GET /api/cron` so an operator can confirm, BEFORE
+ * cutting `ENCRYPTION_KEY` over to the new value, that the copy on file (the
+ * password manager's) is byte-for-byte the key production rows are actually
+ * under: `printf '%s' "$KEY" | base64 -d | shasum -a 256 | cut -c1-12` on
+ * the stored copy must print `next`. Cutting over on a mismatched copy would
+ * leave every re-keyed row behind a key nobody holds — the one failure
+ * `resolveKeyForId`'s error below can name but not undo. A fingerprint is
+ * derivable from a key, never the reverse, and every `v2:` row already
+ * carries one in plaintext, so this reveals nothing a stored row doesn't.
+ */
+export function getEncryptionKeyFingerprints(): { current: string; next: string | null } {
+  return { current: computeKeyId(getKey()), next: getActiveEncryptionKeyId() };
 }
 
 function decryptWithKey(key: Buffer, ivB64: string, authTagB64: string, ciphertextB64: string): string {

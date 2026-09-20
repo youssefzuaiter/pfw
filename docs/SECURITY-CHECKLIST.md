@@ -235,15 +235,26 @@ after rotation — never a silent downstream misbehavior discovered later.
   `BankConnection.accessToken`, `RecoveryShareSubmission.
   shareValueCiphertext`, and any surviving pre-zero-knowledge
   `GoalContribution.note` — a real `zk1:`-prefixed note is never touched,
-  by design); (3) once it reports zero rows remaining, set
-  `ENCRYPTION_KEY` to the same value and remove `ENCRYPTION_KEY_NEXT` —
-  the rotation is then simply over. Verified against the real local
-  database, not just written: a full rotate → confirm every row still
-  decrypts correctly and is genuinely re-tagged → rotate back → confirm
-  again round trip, covering all 233 real rows this app's local dev data
-  actually held across `BankAccount`/`NotableTransaction`/
+  by design); (3) the cron response's `encryptionKeyRotation` block
+  reports `reencrypted`/`remaining`/`failed` plus both keys' public
+  fingerprints — wait for `remaining: 0`, then confirm the copy of the
+  new key on file is the key the rows are actually under:
+  `printf '%s' "$KEY" | base64 -d | shasum -a 256 | cut -c1-12` on the
+  password-manager copy must print `nextKeyId` (a mismatch here means the
+  value pasted into the host and the value saved differ, and cutting
+  over would strand every re-keyed row behind a key nobody holds — the
+  one mistake this mechanism cannot undo); (4) only then set
+  `ENCRYPTION_KEY` to that same value and remove `ENCRYPTION_KEY_NEXT` —
+  the rotation is then simply over, and the next cron run's
+  `currentKeyId` equals the fingerprint you checked. Verified against
+  the real local database, not just written: a full rotate → confirm
+  every row still decrypts correctly and is genuinely re-tagged → rotate
+  back → confirm again round trip, covering all 233 real rows this app's
+  local dev data actually held across `BankAccount`/`NotableTransaction`/
   `GoalContribution` at the time, with zero corruption and zero residual
-  `ENCRYPTION_KEY_NEXT` left set afterward.
+  `ENCRYPTION_KEY_NEXT` left set afterward. **Run for real against
+  production on 2026-09-20**: the sweep re-keyed all 30 rows Neon held
+  in one pass (`reencrypted=30 remaining=0 failed=0`).
 - **`BANK_API_CLIENT_ID` / `BANK_API_CLIENT_SECRET`** (Tier 3
   scaffolding, item 33a — unused until a real bank-integration feature
   exists) — whatever rotation flow the eventual banking/Open-Finance API

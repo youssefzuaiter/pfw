@@ -21,6 +21,7 @@ vi.mock("../../../server/market-data/quote-sync", () => ({ syncEquityQuotes: vi.
 vi.mock("../../../server/dead-mans-switch/inactivity-check", () => ({ runInactivityCheck: vi.fn() }));
 vi.mock("../../../server/dal/rate-limit-buckets", () => ({ deleteExpiredRateLimitBuckets: vi.fn() }));
 vi.mock("../../../server/crypto/key-rotation", () => ({ runEncryptionKeyRotationSweep: vi.fn() }));
+vi.mock("../../../server/crypto/field-encryption", () => ({ getEncryptionKeyFingerprints: vi.fn() }));
 vi.mock("../../../server/ops/operator-alert", () => ({ sendOperatorAlert: vi.fn() }));
 
 import { GET } from "./route";
@@ -30,10 +31,14 @@ import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
+import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
 import { StaleDataError } from "../../../server/stale-data-error";
 
 const ok = { ok: true as const };
+// Twelve hex characters each, the shape computeKeyId() produces (6 bytes of SHA-256).
+const CURRENT_KID = "0a1b2c3d4e5f";
+const NEXT_KID = "f5e4d3c2b1a0";
 
 function request(): NextRequest {
   return new NextRequest("http://localhost/api/cron", { headers: { authorization: "Bearer cron-secret-for-route-test" } });
@@ -46,6 +51,11 @@ function allHealthy() {
   vi.mocked(runInactivityCheck).mockResolvedValue({ movedToGracePeriod: [], triggered: [] } as never);
   vi.mocked(deleteExpiredRateLimitBuckets).mockResolvedValue(0 as never);
   vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({ ok: true, inProgress: false } as never);
+  vi.mocked(getEncryptionKeyFingerprints).mockReturnValue({ current: CURRENT_KID, next: null });
+}
+
+function rotationInProgress() {
+  vi.mocked(getEncryptionKeyFingerprints).mockReturnValue({ current: CURRENT_KID, next: NEXT_KID });
 }
 
 describe("GET /api/cron operator alert", () => {
@@ -95,16 +105,17 @@ describe("GET /api/cron operator alert", () => {
     expect(vi.mocked(sendOperatorAlert).mock.calls[0][0].subject).toBe("cron: 1 job(s) failed");
   });
 
-  it("reports a genuine no-op cleanly when no rotation is in progress", async () => {
+  it("reports a genuine no-op cleanly when no rotation is in progress — and still names the key rows are under", async () => {
     allHealthy();
     const res = await GET(request());
     const body = await res.json();
-    expect(body.encryptionKeyRotation).toEqual({ ok: true });
+    expect(body.encryptionKeyRotation).toEqual({ ok: true, inProgress: false, currentKeyId: CURRENT_KID, nextKeyId: null });
     expect(body.operatorAlert).toBe("not_needed");
   });
 
-  it("stays healthy when a rotation IS in progress but every row succeeded", async () => {
+  it("stays healthy when a rotation IS in progress but every row succeeded, reporting the counts and both fingerprints", async () => {
     allHealthy();
+    rotationInProgress();
     vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({
       ok: true,
       inProgress: true,
@@ -115,13 +126,25 @@ describe("GET /api/cron operator alert", () => {
 
     const res = await GET(request());
     const body = await res.json();
-    expect(body.encryptionKeyRotation).toEqual({ ok: true });
+    // The counts are what an operator polls for (`remaining: 0` is the
+    // cutover green light) and `nextKeyId` is what they compare their own
+    // copy of the new key against before cutting over.
+    expect(body.encryptionKeyRotation).toEqual({
+      ok: true,
+      inProgress: true,
+      reencrypted: 12,
+      remaining: 3,
+      failed: 0,
+      currentKeyId: CURRENT_KID,
+      nextKeyId: NEXT_KID,
+    });
     expect(body.operatorAlert).toBe("not_needed");
     expect(sendOperatorAlert).not.toHaveBeenCalled();
   });
 
   it("alerts the operator when a rotation sweep leaves per-row failures, even though the module's own result is ok:true", async () => {
     allHealthy();
+    rotationInProgress();
     vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({
       ok: true,
       inProgress: true,
@@ -136,6 +159,12 @@ describe("GET /api/cron operator alert", () => {
       ok: false,
       error: "2 row(s) failed to re-encrypt this run (2 still remaining)",
       staleData: false,
+      inProgress: true,
+      reencrypted: 5,
+      remaining: 2,
+      failed: 2,
+      currentKeyId: CURRENT_KID,
+      nextKeyId: NEXT_KID,
     });
     expect(body.operatorAlert).toBe("sent");
     const alert = vi.mocked(sendOperatorAlert).mock.calls[0][0];
@@ -144,6 +173,7 @@ describe("GET /api/cron operator alert", () => {
 
   it("alerts the operator when the sweep itself fails outright (e.g. a lost DB connection mid-rotation)", async () => {
     allHealthy();
+    rotationInProgress();
     vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({
       ok: false,
       inProgress: true,
@@ -152,7 +182,16 @@ describe("GET /api/cron operator alert", () => {
 
     const res = await GET(request());
     const body = await res.json();
-    expect(body.encryptionKeyRotation).toEqual({ ok: false, error: "connection terminated unexpectedly", staleData: false });
+    // No counts — the sweep never got to tally — but the fingerprints
+    // are still there, so the operator can see which keys were configured.
+    expect(body.encryptionKeyRotation).toEqual({
+      ok: false,
+      error: "connection terminated unexpectedly",
+      staleData: false,
+      inProgress: true,
+      currentKeyId: CURRENT_KID,
+      nextKeyId: NEXT_KID,
+    });
     expect(body.operatorAlert).toBe("sent");
   });
 

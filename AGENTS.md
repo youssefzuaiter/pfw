@@ -7199,18 +7199,52 @@ that build.
     what the unit tests above cover with realistic fake data; stated
     plainly rather than glossed over, the same honesty this app gives
     every other "not verified in this pass" gap.
-- **Not done in this pass, left for the user**: the actual production
-  rotation itself — generating a real new key, adding it to Vercel as
-  `ENCRYPTION_KEY_NEXT`, waiting for `/api/cron`'s nightly sweep (or
-  triggering it manually) to report zero rows remaining, then setting
-  `ENCRYPTION_KEY` to that value and removing `ENCRYPTION_KEY_NEXT` — is
-  a real production credential change against the live deployment,
-  offered as the next concrete step rather than performed automatically,
-  the same "confirm before an action that affects shared state" treatment
-  every other production-secret change in this session's history gets.
-  Once done, the mismatch between the recorded/backed-up key and
-  production's real one is resolved for good, and future nightly backups
-  become genuinely restorable with the key on file.
+- **Run against production the next day (2026-09-20)** — and the run
+  itself found two things the build hadn't:
+  1. **The commit had never been pushed.** The user generated the key,
+     set `ENCRYPTION_KEY_NEXT` on Vercel and redeployed — twice — and the
+     manual cron trigger came back with no `encryptionKeyRotation` field
+     at all. `git status -sb` said `ahead 1`: `0096ff0` existed only
+     locally, so both redeploys had rebuilt the previous commit and the
+     new variable sat ignored (harmless — the old code writes `v1:` under
+     `ENCRYPTION_KEY` regardless, so nothing was touched). Pushed;
+     Vercel's auto-deploy went live; the next manual trigger's runtime
+     log read `encryption-key-rotation-sweep ok — reencrypted=30
+     remaining=0 failed=0`. **The production sweep converged in one
+     pass.** (30 rows, not the local database's 233 — Neon holds the
+     real account's data, not a full seeded demo.)
+  2. **The counts were only in the log — the JSON said `{"ok":true}`
+     whether the sweep re-keyed rows or did nothing.** On a Hobby-plan
+     Vercel project the Logs UI paywalls any window wider than 30
+     minutes, so "check the response" was the operator's only practical
+     read, and it couldn't answer the question. Worse, nothing anywhere
+     let the operator confirm the copy of the new key in the password
+     manager was byte-for-byte the value pasted into Vercel — a
+     Sensitive variable is write-only — and cutting `ENCRYPTION_KEY`
+     over on a mismatched copy is the one mistake this mechanism cannot
+     undo. Fixed in the same pass: `getEncryptionKeyFingerprints()`
+     (`field-encryption.ts`) exposes both configured keys' public 12-hex
+     fingerprints, and the route's `encryptionKeyRotation` block now
+     carries `inProgress`, the three counts, `currentKeyId` and
+     `nextKeyId`. The operator recomputes the fingerprint from their own
+     copy with plain shell tools (`printf '%s' "$KEY" | base64 -d |
+     shasum -a 256 | cut -c1-12`; the derivation is pinned by a unit
+     test so the doc comment's recipe can't drift from the code) and
+     compares it to `nextKeyId` BEFORE the cutover. Route tests updated
+     for the new shape (mocking `field-encryption`, consistent with the
+     file's "mock every job module" stance); 2 new `field-encryption`
+     cases.
+  - Two side findings from the same runtime log, not fixed here:
+    `RESEND_API_KEY` is unset on Vercel (the operator alert — and every
+    §3jj auth email — cannot send in production until it is), and the
+    equity-quote sync timed out against the Render trader (the known
+    "instance asleep" case, §3xx).
+  - **Cutover (`ENCRYPTION_KEY` := the new value, `ENCRYPTION_KEY_NEXT`
+    removed) is the one step still pending** as of this entry — gated on
+    the fingerprint check above passing against the redeployed route.
+    Once done, the recorded/backed-up key and production's real key
+    finally agree, and nightly backups become restorable with the key on
+    file.
 
 ## 4. Design system (Phase 0)
 

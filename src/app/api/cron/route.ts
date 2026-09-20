@@ -7,6 +7,7 @@ import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
+import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
@@ -49,6 +50,18 @@ import { sendOperatorAlert } from "../../../server/ops/operator-alert";
 type JobResult =
   | { ok: true }
   | { ok: false; error: string; staleData: boolean };
+
+// What the rotation sweep reports beyond ok/failed. The key ids are
+// public fingerprints (every `v2:` row stores one in plaintext); the
+// counts are absent when the sweep failed before it could tally.
+type RotationDetail = {
+  inProgress: boolean;
+  currentKeyId: string;
+  nextKeyId: string | null;
+  reencrypted?: number;
+  remaining?: number;
+  failed?: number;
+};
 
 async function runJob(name: string, job: () => Promise<{ ok: boolean; error?: string }>): Promise<JobResult> {
   try {
@@ -134,13 +147,23 @@ export async function GET(request: NextRequest) {
 
     // A genuine no-op on every ordinary night (ENCRYPTION_KEY_NEXT
     // unset) — see src/server/crypto/key-rotation.ts's own doc comment.
-    // Only logs/reports anything while an operator has an ENCRYPTION_KEY
-    // rotation actively in progress.
-    const encryptionKeyRotation = await runJob("encryption-key-rotation-sweep", async () => {
+    // The counts and key fingerprints ride along in the response, not
+    // only the log: the operator deciding whether it's safe to cut
+    // ENCRYPTION_KEY over reads this JSON from a manual trigger, and the
+    // one real cutover mistake — the key on file not being the key the
+    // rows are under — is exactly what `nextKeyId` lets them rule out
+    // (see getEncryptionKeyFingerprints' doc comment) before it's
+    // irreversible. The first production rotation shipped without these
+    // and the answer had to be dug out of the runtime log.
+    const rotation: { detail?: RotationDetail } = {};
+    const rotationJob = await runJob("encryption-key-rotation-sweep", async () => {
       const result = await runEncryptionKeyRotationSweep();
+      const keys = getEncryptionKeyFingerprints();
+      rotation.detail = { inProgress: result.inProgress, currentKeyId: keys.current, nextKeyId: keys.next };
       if (!result.ok) return { ok: false, error: result.error };
       if (!result.inProgress) return { ok: true };
 
+      rotation.detail = { ...rotation.detail, reencrypted: result.reencrypted, remaining: result.remaining, failed: result.failed };
       console.log(
         `cron: encryption-key-rotation-sweep ok — reencrypted=${result.reencrypted} remaining=${result.remaining} failed=${result.failed}`,
       );
@@ -155,6 +178,7 @@ export async function GET(request: NextRequest) {
       }
       return { ok: true };
     });
+    const encryptionKeyRotation = { ...rotationJob, ...rotation.detail };
 
     const results = {
       fxRateSync,

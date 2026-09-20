@@ -1,6 +1,6 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { decryptField, encryptField, getActiveEncryptionKeyId } from "./field-encryption";
+import { decryptField, encryptField, getActiveEncryptionKeyId, getEncryptionKeyFingerprints } from "./field-encryption";
 
 describe("field-level encryption (AES-256-GCM)", () => {
   const originalKey = process.env.ENCRYPTION_KEY;
@@ -119,6 +119,26 @@ describe("field-level encryption — ENCRYPTION_KEY_NEXT rotation", () => {
     expect(kid).not.toBeNull();
     const stored = encryptField("x");
     expect(stored).toContain(`v2:${kid}:`);
+  });
+
+  it("getEncryptionKeyFingerprints() names both keys, and `next` is exactly the kid stamped on a mid-rotation row", () => {
+    expect(getEncryptionKeyFingerprints()).toEqual({ current: expect.stringMatching(/^[0-9a-f]{12}$/), next: null });
+
+    process.env.ENCRYPTION_KEY_NEXT = newKey;
+    const { current, next } = getEncryptionKeyFingerprints();
+    expect(next).toMatch(/^[0-9a-f]{12}$/);
+    expect(next).not.toBe(current);
+    expect(encryptField("x").split(":")[1]).toBe(next);
+  });
+
+  it("the fingerprint is what an operator can recompute from their own copy of the key with plain shell tools", () => {
+    // `printf '%s' "$KEY" | base64 -d | shasum -a 256 | cut -c1-12` — the
+    // recipe in getEncryptionKeyFingerprints' doc comment. Pinned here so
+    // the derivation (raw key bytes, not the base64 text; first 6 bytes,
+    // hex) can't drift from what that comment tells the operator to run.
+    process.env.ENCRYPTION_KEY_NEXT = newKey;
+    const recomputed = createHash("sha256").update(Buffer.from(newKey, "base64")).digest("hex").slice(0, 12);
+    expect(getEncryptionKeyFingerprints().next).toBe(recomputed);
   });
 
   it("a pre-rotation v1 row stays fully readable once a rotation starts", () => {
