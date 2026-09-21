@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { SUPPORTED_CURRENCIES } from "../../../../lib/currency";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -81,7 +82,7 @@ const ReceiptSchema = z.object({
   symbol: z.string().trim().min(1).max(10),
   side: z.enum(["buy", "sell"]),
   quantity: z.string().regex(QUANTITY_PATTERN, "quantity must be a decimal with at most 9 places"),
-  currency: z.enum(["ILS", "USD", "EUR", "GBP"]),
+  currency: z.enum(SUPPORTED_CURRENCIES),
   native_price_amount: z.number().int(),
   native_total_amount: z.number().int(),
   exchange_rate_at_entry: z.string().regex(DECIMAL_STRING_PATTERN, "exchange rate must be a positive decimal"),

@@ -283,7 +283,7 @@ describe("detectPossibleFreeTrials", () => {
 });
 
 describe("calculateCashDrag", () => {
-  const rateTable = { ILS: 1, USD: 3.7, EUR: 4.0, GBP: 4.7 };
+  const rateTable = { ILS: 1, USD: 3.7, EUR: 4.0, GBP: 4.7, TRY: 0.09 };
 
   it("sums a single ILS monthly subscription to itself, annualized by 12", () => {
     const result = calculateCashDrag(

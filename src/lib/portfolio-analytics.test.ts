@@ -15,7 +15,7 @@ import {
   type PaidDividend,
 } from "./portfolio-analytics";
 
-const RATES: Readonly<Record<CurrencyCode, number>> = { ILS: 1, USD: 4, EUR: 4, GBP: 5 };
+const RATES: Readonly<Record<CurrencyCode, number>> = { ILS: 1, USD: 4, EUR: 4, GBP: 5, TRY: 0.1 };
 
 function position(overrides: Partial<AnalyticsPosition> = {}): AnalyticsPosition {
   return {

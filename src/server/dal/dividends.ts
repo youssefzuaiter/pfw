@@ -1,6 +1,6 @@
 import "server-only";
 import { agorot } from "../../lib/money";
-import { nativeAmount } from "../../lib/currency";
+import { nativeAmount, type CurrencyCode } from "../../lib/currency";
 import type { AnnouncedDividend, PaidDividend } from "../../lib/portfolio-analytics";
 import { withUserScope } from "../db/with-user-scope";
 
@@ -52,7 +52,7 @@ export async function listPaidDividends(userId: string): Promise<PaidDividend[]>
 export type RecordDividendInput = {
   portfolioHoldingId: string;
   symbol: string;
-  currency: "ILS" | "USD" | "EUR" | "GBP";
+  currency: CurrencyCode;
   amountPerShareNative: number;
   exDate: Date;
   payDate: Date;
