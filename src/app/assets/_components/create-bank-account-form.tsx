@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { SUPPORTED_CURRENCIES } from "../../../lib/currency";
 
 const ACCOUNT_TYPES = [
   { value: "CHECKING", label: "Checking" },
@@ -10,7 +11,7 @@ const ACCOUNT_TYPES = [
   { value: "CREDIT_CARD", label: "Credit card" },
 ] as const;
 
-const CURRENCIES = ["ILS", "USD", "EUR", "GBP"] as const;
+const CURRENCIES = SUPPORTED_CURRENCIES;
 
 export function CreateBankAccountForm() {
   const router = useRouter();

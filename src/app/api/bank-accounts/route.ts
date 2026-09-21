@@ -1,20 +1,21 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { parseDecimalToNativeAmount } from "../../../lib/currency";
+import { parseDecimalToNativeAmount, SUPPORTED_CURRENCIES } from "../../../lib/currency";
 import { guardMutation } from "../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonServerError } from "../../../server/api/responses";
 import { recordAuditLog } from "../../../server/dal/audit-log";
 import { createBankAccount } from "../../../server/dal/bank-accounts";
 
 const ACCOUNT_TYPES = ["CHECKING", "SAVINGS", "CREDIT_CARD"] as const;
-const CURRENCIES = ["ILS", "USD", "EUR", "GBP"] as const;
 
 const BodySchema = z.object({
   institutionName: z.string().trim().min(1).max(80),
   last4: z.string().regex(/^\d{4}$/, "last4 must be exactly 4 digits"),
   accountType: z.enum(ACCOUNT_TYPES),
   nickname: z.string().trim().min(1).max(80).optional(),
-  currency: z.enum(CURRENCIES).optional(),
+  // Derived from the one canonical list so a new currency can't be
+  // accepted by the schema and rejected here (or vice versa).
+  currency: z.enum(SUPPORTED_CURRENCIES).optional(),
   // A plain decimal string, e.g. "1250.00" — never signed with a "-" here:
   // a CHECKING/SAVINGS opening balance and a CREDIT_CARD "amount owed" are
   // both entered as a positive figure by the user (the schema's own

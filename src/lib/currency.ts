@@ -21,15 +21,20 @@
 
 import { assertFiniteInteger, agorot, type Agorot } from "./money";
 
-export type CurrencyCode = "ILS" | "USD" | "EUR" | "GBP";
+// TRY (Turkish lira, kuruş minor unit) was added for the user's real bank —
+// the first currency here driven by a real account rather than the mock
+// trading desk. Every list that enumerates currencies must derive from
+// SUPPORTED_CURRENCIES, never re-type it: the four hand-copied lists that
+// existed before TRY landed each had to be found and fixed by hand.
+export type CurrencyCode = "ILS" | "USD" | "EUR" | "GBP" | "TRY";
 
 /** The app's one base/reporting currency — never changes at runtime. */
 export const BASE_CURRENCY: CurrencyCode = "ILS";
 
-export const SUPPORTED_CURRENCIES: readonly CurrencyCode[] = ["ILS", "USD", "EUR", "GBP"];
+export const SUPPORTED_CURRENCIES: readonly CurrencyCode[] = ["ILS", "USD", "EUR", "GBP", "TRY"];
 
 /**
- * All four currencies use a 2-decimal-place minor unit (100 subunits to
+ * All five currencies use a 2-decimal-place minor unit (100 subunits to
  * one whole unit) — this is what lets exchange-rate.ts's conversion
  * formula apply a rate directly to a minor-unit amount with no
  * currency-specific scaling. Revisit if a zero-decimal currency (e.g.
@@ -42,6 +47,7 @@ export const CURRENCY_SYMBOLS: Record<CurrencyCode, string> = {
   USD: "$",
   EUR: "€",
   GBP: "£",
+  TRY: "₺",
 };
 
 export function isSupportedCurrency(value: string): value is CurrencyCode {

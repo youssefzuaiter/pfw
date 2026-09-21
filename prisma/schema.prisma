@@ -117,14 +117,18 @@ enum TradeStatus {
 }
 
 /// AGENTS.md §3k: multi-currency amendment to the original single-ILS law.
-/// ILS remains the app's one base/reporting currency; the other three are
+/// ILS remains the app's one base/reporting currency; the others are
 /// "native" currencies a BankAccount/NotableTransaction/PortfolioHolding/
-/// Trade can be denominated in.
+/// Trade can be denominated in. TRY was added for the user's real Turkish
+/// bank account (the first currency here driven by a real account rather
+/// than the mock trading desk); a value is only ever appended, never
+/// reordered or removed — Postgres enums are append-only in practice.
 enum Currency {
   ILS
   USD
   EUR
   GBP
+  TRY
 }
 
 /// What kind of instrument a PortfolioHolding is. Drives the portfolio

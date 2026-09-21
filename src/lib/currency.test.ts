@@ -37,8 +37,8 @@ describe("BASE_CURRENCY / SUPPORTED_CURRENCIES", () => {
     expect(BASE_CURRENCY).toBe("ILS");
   });
 
-  it("lists exactly the four supported currencies", () => {
-    expect(SUPPORTED_CURRENCIES).toEqual(["ILS", "USD", "EUR", "GBP"]);
+  it("lists exactly the five supported currencies", () => {
+    expect(SUPPORTED_CURRENCIES).toEqual(["ILS", "USD", "EUR", "GBP", "TRY"]);
   });
 
   it("recognizes a supported currency and rejects an unsupported one", () => {
@@ -141,6 +141,7 @@ describe("formatNativeAmount()", () => {
     expect(formatNativeAmount(nativeAmount(19000), "USD")).toBe("$190.00");
     expect(formatNativeAmount(nativeAmount(19000), "EUR")).toBe("€190.00");
     expect(formatNativeAmount(nativeAmount(19000), "GBP")).toBe("£190.00");
+    expect(formatNativeAmount(nativeAmount(19000), "TRY")).toBe("₺190.00");
   });
 
   it("groups thousands", () => {

@@ -134,7 +134,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("sta
     it("throws StaleDataError when the fetch fails AND the stored rate is already >24h old", async () => {
       await setFetchedAtForEveryCurrency(STALE_FETCHED_AT);
       await expect(syncExchangeRates(failingFetch)).rejects.toThrow(StaleDataError);
-      await expect(syncExchangeRates(failingFetch)).rejects.toThrow(/USD|EUR|GBP/);
+      await expect(syncExchangeRates(failingFetch)).rejects.toThrow(/USD|EUR|GBP|TRY/);
     });
   });
 });

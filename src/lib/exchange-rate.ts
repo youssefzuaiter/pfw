@@ -22,6 +22,12 @@ export const FALLBACK_RATES: Readonly<Record<Exclude<CurrencyCode, "ILS">, numbe
   USD: 3.7,
   EUR: 4.0,
   GBP: 4.7,
+  // A rough 2026 figure like the three above. TRY depreciates steadily,
+  // so this goes stale faster than the others — which is exactly why a
+  // CSV import into a TRY account refuses to run until a real synced rate
+  // exists (src/server/dal/transaction-import.ts) rather than freezing
+  // this guess into `exchangeRateAtEntry`.
+  TRY: 0.09,
 };
 
 /** Rate of the base currency against itself — always exactly 1, never looked up. */
@@ -38,7 +44,7 @@ export function assertValidRate(rate: number, currency: CurrencyCode): void {
  * (ILS) `Agorot`, given the ILS-per-1-unit rate for that currency.
  *
  * Correct without any per-currency scale factor because ILS, USD, EUR,
- * and GBP all share the same 2-decimal minor-unit convention
+ * GBP and TRY all share the same 2-decimal minor-unit convention
  * (`currency.ts`'s `MINOR_UNITS_PER_WHOLE`): a native amount and an
  * Agorot amount are both "whole units × 100", so multiplying the raw
  * minor-unit integer by the rate already yields the agorot minor-unit
