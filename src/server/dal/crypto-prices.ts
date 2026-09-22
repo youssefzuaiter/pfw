@@ -86,3 +86,21 @@ export async function upsertCryptoRate(input: UpsertCryptoRateInput) {
     update: { rate: input.rate.toString(), source: input.source, fetchedAt },
   });
 }
+
+/**
+ * `fetchedAt` of the newest stored row across EVERY symbol, or `null` if
+ * nothing has ever been synced. Distinct from
+ * `getLatestCryptoRateFetchedAt` (which answers the same question for one
+ * symbol): the ops page reports the crypto sync as a single job, because
+ * that is what it is — `syncCryptoPrices` fetches every symbol in one
+ * request, so one symbol lagging the others is not a state this pipeline
+ * can produce. FX is reported per currency instead, because there a
+ * single failed currency genuinely can hide behind a fresh one.
+ */
+export async function getMostRecentCryptoPriceFetchedAt(): Promise<Date | null> {
+  const row = await prisma.cryptoAssetPrice.findFirst({
+    orderBy: { fetchedAt: "desc" },
+    select: { fetchedAt: true },
+  });
+  return row?.fetchedAt ?? null;
+}

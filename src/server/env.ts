@@ -380,6 +380,27 @@ export function getAppUrl(): string {
 }
 
 /**
+ * Which build is actually running, straight from Vercel's own build-time
+ * variables (all three are unset locally, which is itself the honest
+ * answer — "this is a local dev server, not a deployment"). Deliberately
+ * NOT in `SECRET_ENV_VAR_NAMES`: a commit sha, an environment name and a
+ * deployment hostname are public facts about a public deployment — the
+ * sha is already in the repo's own git history, and the hostname is
+ * whatever the browser just connected to.
+ *
+ * Exists because "is the fix I pushed actually live?" was, until now, a
+ * question this app could not answer about itself — it needed the Vercel
+ * dashboard, which is exactly the friction `/settings/ops` closes.
+ */
+export function getDeploymentInfo(): { commitSha: string | null; environment: string | null; url: string | null } {
+  return {
+    commitSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+    environment: process.env.VERCEL_ENV ?? null,
+    url: process.env.VERCEL_URL ?? null,
+  };
+}
+
+/**
  * The merchant-embedding sidecar's base URL (sidecar/, a local FastAPI/
  * ONNX Runtime service — see AGENTS.md). Not a secret — it's a
  * localhost-only service address, not a credential — so this has a
