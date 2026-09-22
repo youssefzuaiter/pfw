@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Agorot } from "./money";
+import type { NativeAmount } from "./currency";
 
 /**
  * The transaction-ingestion dedupe mechanism EVERY source that writes
@@ -15,7 +15,16 @@ import type { Agorot } from "./money";
 
 export type DedupeableRow = {
   occurredAt: Date;
-  amountAgorot: Agorot;
+  /**
+   * The amount as the SOURCE stated it, in its own currency's minor
+   * units — never the ILS conversion. A converted figure depends on the
+   * exchange rate of the day the ingestion ran, so the same statement
+   * re-imported a week later would hash to different keys and insert
+   * every row twice. For an ILS source this is the identical integer
+   * the field held under its old name (`amountAgorot`), so every key
+   * ever stored for an ILS file is unchanged — pinned by a test.
+   */
+  nativeAmount: NativeAmount;
   description: string;
   merchantName: string | null;
 };
@@ -34,7 +43,7 @@ export type DedupeableRow = {
  * so a true re-import/re-sync still deduplicates perfectly.
  */
 export function buildDedupeKeySource(row: DedupeableRow, occurrence: number): string {
-  return [row.occurredAt.toISOString().slice(0, 10), String(row.amountAgorot), row.description, row.merchantName ?? "", `#${occurrence}`].join(
+  return [row.occurredAt.toISOString().slice(0, 10), String(row.nativeAmount), row.description, row.merchantName ?? "", `#${occurrence}`].join(
     "|",
   );
 }

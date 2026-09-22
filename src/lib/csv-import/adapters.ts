@@ -1,22 +1,31 @@
-import { agorot, parseShekelsToAgorot, type Agorot } from "../money";
+import {
+  BASE_CURRENCY,
+  nativeAmount as toNativeAmount,
+  parseDecimalToNativeAmount,
+  type CurrencyCode,
+  type NativeAmount,
+} from "../currency";
 import { neutralizeFormulaInjection } from "./formula-injection";
 import type { CanonicalImportRow, RowError } from "./types";
 
 /**
  * One adapter per institution (AGENTS.md §5, decision #4). Each adapter
- * declares *only* its column names, date format, and sign convention;
- * all the actual parsing logic is shared below. That's the point of the
- * split: a wrong column alias for one bank can't corrupt another bank's
- * parsing, but there's exactly one implementation of "how do we turn a
- * shekel string into agorot" to get right and to test.
+ * declares *only* its column names, date format, sign convention, number
+ * format and (optionally) currency; all the actual parsing logic is
+ * shared below. That's the point of the split: a wrong column alias for
+ * one bank can't corrupt another bank's parsing, but there's exactly one
+ * implementation of "how do we turn an amount string into minor units"
+ * to get right and to test.
  *
  * **Honest scope note:** these layouts are *representative* of the shapes
- * Israeli bank and credit-card exports commonly take (separate
- * debit/credit columns, DD/MM/YYYY dates, Hebrew headers) and match this
+ * bank and credit-card exports commonly take (separate debit/credit
+ * columns, DD/MM/YYYY dates, Hebrew or Turkish headers) and match this
  * app's mock data. They are not byte-verified reproductions of any real
  * institution's current export format — adding a real one means checking
  * a real export's headers and adding an entry here, not restructuring
- * anything.
+ * anything. The two Turkish adapters in particular were written without
+ * a sample file (AGENTS.md §3bbb), which is why the import UI previews
+ * parsed rows before committing anything.
  */
 
 type DateFormat = "DD/MM/YYYY" | "YYYY-MM-DD";
@@ -31,6 +40,15 @@ type DateFormat = "DD/MM/YYYY" | "YYYY-MM-DD";
  *   is why it's declared per adapter rather than guessed from the data.
  */
 type AmountConvention = "signed" | "debit-credit" | "expense-positive";
+
+/**
+ * How the bank writes a number: `dot-decimal` is `1,234.56`; `comma-decimal`
+ * is `1.234,56` (Turkish, most of continental Europe). Declared, never
+ * sniffed, and enforced as a strict grammar in `normalizeAmountText` —
+ * naively swapping separators would read a `1234.56` that slipped into a
+ * comma-decimal file as `123456`, a silent 100× error.
+ */
+export type NumberFormat = "dot-decimal" | "comma-decimal";
 
 type ColumnAliases = {
   date: readonly string[];
@@ -48,6 +66,18 @@ export type BankAdapter = {
   label: string;
   dateFormat: DateFormat;
   amountConvention: AmountConvention;
+  /** Defaults to `dot-decimal`. */
+  numberFormat?: NumberFormat;
+  /**
+   * The currency this layout's amounts are known to be in, when the
+   * layout itself implies one (an Israeli bank's export is in shekels; a
+   * Turkish bank's in lira). `detectAdapter` skips an adapter whose
+   * declared currency differs from the target account's, so an
+   * English-header Turkish export into a TRY account can't be captured by
+   * an ILS adapter's English aliases. Left unset for a genuinely generic
+   * layout, which then simply parses in whatever currency the account is.
+   */
+  currency?: CurrencyCode;
   columns: ColumnAliases;
 };
 
@@ -71,6 +101,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
     label: "Bank Leumi / Hapoalim style (debit & credit columns)",
     dateFormat: "DD/MM/YYYY",
     amountConvention: "debit-credit",
+    currency: "ILS",
     columns: {
       date: ["תאריך", "date", "תאריך ערך"],
       description: ["תיאור", "פרטים", "description", "details"],
@@ -86,6 +117,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
     label: "Isracard / credit card style (charges positive)",
     dateFormat: "DD/MM/YYYY",
     amountConvention: "expense-positive",
+    currency: "ILS",
     columns: {
       date: ["תאריך עסקה", "תאריך", "date", "transaction date"],
       description: ["שם בית העסק", "בית עסק", "description", "merchant"],
@@ -95,13 +127,80 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       currency: ["מטבע", "currency"],
     },
   },
+  // Turkish bank exports (AGENTS.md §3bbb). Aliases are written as they
+  // appear in the exports and matched after Turkish-aware folding (see
+  // normalizeHeader), so `İşlem Tarihi`, `islem tarihi` and `İŞLEM TARİHİ`
+  // all resolve. Deliberately NO reference aliases: a Turkish slip number
+  // (fiş no / dekont no) restarts per account, and providerTransactionId
+  // is unique per USER, so two TRY accounts at one bank would collide on
+  // the `:ref:` path — the content-hash path is the safe key here. And
+  // only `para birimi` for currency: a card statement's `döviz cinsi`
+  // names the ORIGINAL foreign currency of a purchase that was billed in
+  // lira, which would falsely reject the row.
+  {
+    id: "turkish-debit-credit",
+    label: "Turkish bank statement (Tarih / Açıklama / Borç / Alacak)",
+    dateFormat: "DD/MM/YYYY",
+    amountConvention: "debit-credit",
+    numberFormat: "comma-decimal",
+    currency: "TRY",
+    columns: {
+      date: ["tarih", "işlem tarihi", "date", "transaction date"],
+      description: ["açıklama", "işlem açıklaması", "description", "details"],
+      debit: ["borç", "çıkan", "debit"],
+      credit: ["alacak", "giren", "credit"],
+      currency: ["para birimi", "currency"],
+    },
+  },
+  {
+    id: "turkish-signed-amount",
+    label: "Turkish bank / card statement (Tarih / Açıklama / Tutar)",
+    dateFormat: "DD/MM/YYYY",
+    amountConvention: "signed",
+    numberFormat: "comma-decimal",
+    currency: "TRY",
+    columns: {
+      date: ["tarih", "işlem tarihi", "date", "transaction date"],
+      description: ["açıklama", "işlem açıklaması", "description", "details"],
+      amount: ["tutar", "işlem tutarı", "amount"],
+      currency: ["para birimi", "currency"],
+    },
+  },
 ];
 
-/** Only shekel rows are importable — this app is single-currency by law (spec Section 1). */
-const ACCEPTED_CURRENCY_TOKENS = new Set(["", "ils", "nis", "₪", "shekel", "shekels"]);
+/**
+ * How a statement may spell each currency in a currency column or inline
+ * in an amount cell. A row's currency cell must resolve to the target
+ * account's currency; anything else is refused per row, never converted
+ * — the pipeline has no exchange rate, and importing a USD row as though
+ * it were lira (or shekels) would corrupt the ledger by the FX rate.
+ */
+const CURRENCY_TOKENS: Record<CurrencyCode, readonly string[]> = {
+  ILS: ["ils", "nis", "₪", "shekel", "shekels"],
+  TRY: ["try", "tl", "₺", "lira"],
+  USD: ["usd", "$"],
+  EUR: ["eur", "€"],
+  GBP: ["gbp", "£"],
+};
 
+/**
+ * Folds a header (or an alias) to a comparable form. Beyond trim/lowercase/
+ * whitespace-collapse, this maps Turkish's two dotted/dotless `i`s to
+ * plain ASCII and strips every combining mark — `"İ".toLowerCase()` is
+ * `"i̇"` (an `i` plus U+0307), which would never equal an ASCII `i`, and a
+ * Turkish keyboard's `ı` isn't `i` at all. Hebrew letters carry no
+ * combining marks in any bank header, so the Hebrew aliases are
+ * unaffected (asserted in the tests).
+ */
 export function normalizeHeader(header: string): string {
-  return header.trim().toLowerCase().replace(/\s+/g, " ");
+  return header
+    .replace(/İ/g, "I")
+    .replace(/ı/g, "i")
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
 /** Resolves each declared alias to a column index in the actual header row. */
@@ -150,36 +249,61 @@ function adapterMatches(adapter: BankAdapter, headers: string[]): boolean {
   return resolved.amount !== -1;
 }
 
+/** Whether an adapter may be used for an account in `currency` — an adapter with no declared currency may be used for any. */
+export function adapterAcceptsCurrency(adapter: BankAdapter, currency: CurrencyCode): boolean {
+  return adapter.currency === undefined || adapter.currency === currency;
+}
+
 /**
- * Picks the adapter whose declared columns are all present in the header
- * row. Deliberately returns `null` rather than falling back to a
+ * Picks the first adapter whose declared columns are all present in the
+ * header row AND whose declared currency (if any) is the target
+ * account's. Deliberately returns `null` rather than falling back to a
  * best-guess adapter: mis-detecting a format silently mis-signs or
  * mis-dates every row in the file, which is far worse than refusing the
  * upload and telling the user which formats are supported.
  */
-export function detectAdapter(headers: string[]): BankAdapter | null {
-  return BANK_ADAPTERS.find((adapter) => adapterMatches(adapter, headers)) ?? null;
+export function detectAdapter(headers: string[], expectedCurrency: CurrencyCode = BASE_CURRENCY): BankAdapter | null {
+  return (
+    BANK_ADAPTERS.find((adapter) => adapterAcceptsCurrency(adapter, expectedCurrency) && adapterMatches(adapter, headers)) ??
+    null
+  );
 }
 
 export function getAdapterById(id: string): BankAdapter | null {
   return BANK_ADAPTERS.find((adapter) => adapter.id === id) ?? null;
 }
 
+const COMMA_DECIMAL_PATTERN = /^\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?$|^\d+(?:,\d{1,2})?$/;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * Normalizes the sign conventions a raw amount cell can carry before
- * handing it to `parseShekelsToAgorot`, which accepts only a leading
- * minus. Handles accounting-style parentheses — `(125.50)` — and the
- * trailing-minus style — `125.50-` — both of which appear in real
- * exports and would otherwise be rejected outright (or, with
- * parentheses, be silently read as a *positive* number if the
- * punctuation were merely stripped).
+ * Normalizes the sign conventions a raw amount cell can carry, strips the
+ * currency's own inline tokens, and — for a comma-decimal layout —
+ * rewrites the number into the dot-decimal grammar `parseDecimalToNativeAmount`
+ * accepts. Handles accounting-style parentheses — `(125.50)` — and the
+ * trailing-minus style — `125.50-` — both of which appear in real exports
+ * and would otherwise be rejected outright (or, with parentheses, be
+ * silently read as a *positive* number if the punctuation were merely
+ * stripped).
+ *
+ * The comma-decimal rewrite is a strict grammar, not a separator swap:
+ * `1.234,56` and `1234,56` and `1.234` are accepted, `1234.56` is
+ * rejected as malformed rather than read as 123456.
  */
-export function normalizeAmountText(raw: string): string {
+export function normalizeAmountText(
+  raw: string,
+  currency: CurrencyCode = BASE_CURRENCY,
+  numberFormat: NumberFormat = "dot-decimal",
+): string {
   let text = raw.trim().replace(/\s+/g, "");
   if (text === "") return text;
 
   // Strip currency tokens the amount column sometimes carries inline.
-  text = text.replace(/₪|ils|nis/gi, "");
+  const tokens = CURRENCY_TOKENS[currency].map(escapeRegExp).join("|");
+  text = text.replace(new RegExp(tokens, "gi"), "");
 
   let negative = false;
   if (text.startsWith("(") && text.endsWith(")")) {
@@ -199,15 +323,23 @@ export function normalizeAmountText(raw: string): string {
   }
 
   if (text === "") return "";
+
+  if (numberFormat === "comma-decimal") {
+    if (!COMMA_DECIMAL_PATTERN.test(text)) {
+      throw new Error(`amount "${raw.trim()}" is not a valid comma-decimal number (expected e.g. 1.234,56)`);
+    }
+    text = text.replace(/\./g, "").replace(",", ".");
+  }
+
   return negative ? `-${text}` : text;
 }
 
-function parseAmountCell(raw: string): Agorot {
-  const normalized = normalizeAmountText(raw);
+function parseAmountCell(raw: string, currency: CurrencyCode, numberFormat: NumberFormat): NativeAmount {
+  const normalized = normalizeAmountText(raw, currency, numberFormat);
   if (normalized === "") {
     throw new Error("amount is empty");
   }
-  return parseShekelsToAgorot(normalized);
+  return parseDecimalToNativeAmount(normalized);
 }
 
 /**
@@ -216,12 +348,15 @@ function parseAmountCell(raw: string): Agorot {
  * DD/MM/YYYY and MM/DD/YYYY and means two different days, so guessing
  * would silently mis-date a third of every year's rows.
  *
+ * An optional trailing time-of-day (`01.03.2026 14:23`, common in Turkish
+ * exports) is accepted and ignored — `occurredAt` is a calendar day.
+ *
  * Builds a UTC date and then verifies the constructed components round
  * -trip, which is what rejects `31/02/2026` — `Date.UTC` would otherwise
  * happily roll it forward to March 3rd.
  */
 export function parseStatementDate(raw: string, format: DateFormat): Date {
-  const text = raw.trim();
+  const text = raw.trim().replace(/\s+\d{1,2}:\d{2}(?::\d{2})?$/, "");
   if (text === "") throw new Error("date is empty");
 
   let year: number;
@@ -259,22 +394,28 @@ function cell(record: string[], index: number): string {
   return index === -1 ? "" : (record[index] ?? "").trim();
 }
 
-function assertShekelCurrency(record: string[], currencyIndex: number): void {
-  const currency = cell(record, currencyIndex).toLowerCase();
-  if (!ACCEPTED_CURRENCY_TOKENS.has(currency)) {
-    // Refusing is the only safe option: importing a USD row as though it
-    // were shekels would corrupt the ledger with a ~3.7x error, and this
-    // app has no multi-currency model to convert into (spec Section 1).
-    throw new Error(`currency "${currency.toUpperCase()}" is not supported — this ledger is shekel-only`);
-  }
+function assertRowCurrency(record: string[], currencyIndex: number, expected: CurrencyCode): void {
+  const stated = cell(record, currencyIndex).toLowerCase();
+  if (stated === "" || CURRENCY_TOKENS[expected].includes(stated)) return;
+  // Refusing is the only safe option: this pipeline has no exchange
+  // rate, and importing a USD row into a lira (or shekel) account as
+  // though it were that currency would corrupt the ledger by the FX rate.
+  throw new Error(`currency "${stated.toUpperCase()}" is not supported for this account (expected ${expected})`);
 }
 
-function resolveAmount(adapter: BankAdapter, record: string[], columns: ResolvedColumns): Agorot {
+function resolveAmount(
+  adapter: BankAdapter,
+  record: string[],
+  columns: ResolvedColumns,
+  currency: CurrencyCode,
+): NativeAmount {
+  const numberFormat = adapter.numberFormat ?? "dot-decimal";
+
   if (adapter.amountConvention === "debit-credit") {
-    const debitText = normalizeAmountText(cell(record, columns.debit));
-    const creditText = normalizeAmountText(cell(record, columns.credit));
-    const hasDebit = debitText !== "" && parseShekelsToAgorot(debitText) !== 0;
-    const hasCredit = creditText !== "" && parseShekelsToAgorot(creditText) !== 0;
+    const debitText = normalizeAmountText(cell(record, columns.debit), currency, numberFormat);
+    const creditText = normalizeAmountText(cell(record, columns.credit), currency, numberFormat);
+    const hasDebit = debitText !== "" && parseDecimalToNativeAmount(debitText) !== 0;
+    const hasCredit = creditText !== "" && parseDecimalToNativeAmount(creditText) !== 0;
 
     if (hasDebit && hasCredit) {
       throw new Error("both debit and credit columns are populated — ambiguous direction");
@@ -282,17 +423,17 @@ function resolveAmount(adapter: BankAdapter, record: string[], columns: Resolved
     if (hasDebit) {
       // Debit = money out. Take the magnitude so a bank that already
       // writes debits as negative doesn't get double-negated into income.
-      return agorot(-Math.abs(parseShekelsToAgorot(debitText)));
+      return toNativeAmount(-Math.abs(parseDecimalToNativeAmount(debitText)));
     }
     if (hasCredit) {
-      return agorot(Math.abs(parseShekelsToAgorot(creditText)));
+      return toNativeAmount(Math.abs(parseDecimalToNativeAmount(creditText)));
     }
     throw new Error("neither debit nor credit column has an amount");
   }
 
-  const amount = parseAmountCell(cell(record, columns.amount));
+  const amount = parseAmountCell(cell(record, columns.amount), currency, numberFormat);
   if (adapter.amountConvention === "expense-positive") {
-    return agorot(-amount);
+    return toNativeAmount(-amount);
   }
   return amount;
 }
@@ -304,12 +445,17 @@ export type AdapterParseOutcome = {
 
 /**
  * Maps tokenized CSV records (header row excluded) into canonical rows
- * using one adapter. A row that fails to parse is collected as a
- * `RowError` and skipped rather than aborting the whole file — a single
- * malformed line in a 300-line statement shouldn't cost the user the
- * other 299.
+ * using one adapter, every amount in `expectedCurrency`'s minor units. A
+ * row that fails to parse is collected as a `RowError` and skipped rather
+ * than aborting the whole file — a single malformed line in a 300-line
+ * statement shouldn't cost the user the other 299.
  */
-export function applyAdapter(adapter: BankAdapter, headers: string[], records: string[][]): AdapterParseOutcome {
+export function applyAdapter(
+  adapter: BankAdapter,
+  headers: string[],
+  records: string[][],
+  expectedCurrency: CurrencyCode = BASE_CURRENCY,
+): AdapterParseOutcome {
   const columns = resolveAdapterColumns(adapter, headers);
   const rows: Omit<CanonicalImportRow, "dedupeKeySource">[] = [];
   const errors: RowError[] = [];
@@ -318,10 +464,10 @@ export function applyAdapter(adapter: BankAdapter, headers: string[], records: s
     // +2: the header occupies line 1, and lineNumber is 1-based.
     const lineNumber = recordIndex + 2;
     try {
-      assertShekelCurrency(record, columns.currency);
+      assertRowCurrency(record, columns.currency, expectedCurrency);
 
       const occurredAt = parseStatementDate(cell(record, columns.date), adapter.dateFormat);
-      const amountAgorot = resolveAmount(adapter, record, columns);
+      const nativeAmount = resolveAmount(adapter, record, columns, expectedCurrency);
 
       const rawDescription = cell(record, columns.description);
       const rawMerchant = cell(record, columns.merchant);
@@ -342,7 +488,8 @@ export function applyAdapter(adapter: BankAdapter, headers: string[], records: s
       rows.push({
         lineNumber,
         occurredAt,
-        amountAgorot,
+        nativeAmount,
+        currency: expectedCurrency,
         description,
         merchantName,
         providerReference: reference === "" ? null : reference,

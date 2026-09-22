@@ -5,9 +5,27 @@ import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Badge } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
 
-type BankAccountOption = { id: string; label: string };
+type BankAccountOption = { id: string; label: string; currency: string };
 
 type RejectedRow = { lineNumber: number; message: string };
+
+type PreviewRow = {
+  lineNumber: number;
+  date: string;
+  description: string;
+  merchantName: string | null;
+  /** Pre-formatted by the server with its own currency symbol (e.g. "-₺1,234.56"). */
+  amount: string;
+  isExpense: boolean;
+};
+
+type Preview = {
+  adapterLabel: string;
+  currency: string;
+  totals: { count: number; rejected: number };
+  rows: PreviewRow[];
+  rejectedRows: RejectedRow[];
+};
 
 type ImportSuccess = {
   adapterLabel: string;
@@ -17,6 +35,18 @@ type ImportSuccess = {
   rejectedRows: RejectedRow[];
 };
 
+/**
+ * Two-step import: the first submit is a dry run that parses the file
+ * server-side and echoes back the first rows exactly as they would be
+ * booked (dates, signed amounts in the account's own currency); the
+ * second commits. The preview exists because a statement layout's sign
+ * convention and number format are DECLARED per adapter, never sniffed
+ * (AGENTS.md §3j) — and for the Turkish layouts this app has never had a
+ * real sample file to check that declaration against (§3bbb). Seeing
+ * "-₺1,234.56 MİGROS / +₺45,000.00 MAAŞ" before anything is written is
+ * the check; a whole month imported with every sign inverted is the
+ * failure it prevents.
+ */
 export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAccountOption[] }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -24,38 +54,64 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
   const [bankAccountId, setBankAccountId] = useState(bankAccounts[0]?.id ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [result, setResult] = useState<ImportSuccess | null>(null);
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    setFileName(event.target.files?.[0]?.name ?? null);
-    // Clear any previous outcome as soon as a new file is chosen, so a
-    // stale "imported 42 rows" banner can never appear to describe the
-    // file the user is about to upload.
+  const selectedAccount = bankAccounts.find((account) => account.id === bankAccountId) ?? null;
+
+  function resetOutcome() {
+    // Clear any previous outcome as soon as the inputs change, so a
+    // stale preview or "imported 42 rows" banner can never appear to
+    // describe a file (or account) the user is about to submit.
+    setPreview(null);
     setResult(null);
     setError(null);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setFileName(event.target.files?.[0]?.name ?? null);
+    resetOutcome();
+  }
+
+  function handleAccountChange(event: ChangeEvent<HTMLSelectElement>) {
+    setBankAccountId(event.target.value);
+    resetOutcome();
+  }
+
+  async function submit(mode: "preview" | "import") {
     const file = fileInputRef.current?.files?.[0];
     if (!file || !bankAccountId) return;
 
     setIsSubmitting(true);
     setError(null);
     setResult(null);
+    if (mode === "preview") setPreview(null);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("bankAccountId", bankAccountId);
+      if (mode === "preview") formData.append("dryRun", "1");
 
       const response = await fetch("/api/transactions/import", { method: "POST", body: formData });
       const body = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(body.error ?? "Import failed");
+        throw new Error(body.error ?? (mode === "preview" ? "Preview failed" : "Import failed"));
       }
 
+      if (mode === "preview") {
+        setPreview({
+          adapterLabel: body.adapterLabel,
+          currency: body.currency,
+          totals: body.totals,
+          rows: body.rows ?? [],
+          rejectedRows: body.rejectedRows ?? [],
+        });
+        return;
+      }
+
+      setPreview(null);
       setResult({
         adapterLabel: body.adapterLabel,
         importedCount: body.importedCount,
@@ -73,6 +129,15 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
     }
   }
 
+  function handlePreviewSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submit("preview");
+  }
+
+  function handleImportClick() {
+    void submit("import");
+  }
+
   if (bankAccounts.length === 0) {
     return (
       <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
@@ -87,11 +152,12 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         Import statement
       </h2>
       <p className="mb-3 text-xs text-muted">
-        Upload a .csv bank or credit-card statement. Duplicate rows from a statement you have already imported are
-        detected and skipped automatically.
+        Upload a .csv bank or credit-card statement. Amounts are read in the selected account&apos;s currency
+        {selectedAccount ? ` (${selectedAccount.currency})` : ""}; you&apos;ll see a preview before anything is
+        saved. Duplicate rows from a statement you have already imported are detected and skipped automatically.
       </p>
 
-      <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
+      <form onSubmit={handlePreviewSubmit} className="flex flex-wrap items-end gap-3">
         {/*
          * `min-w-0` on the wrapper is load-bearing, not decorative — a
          * real bug found live: a bilingual account label ("Current
@@ -113,7 +179,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
           <select
             id="import-account"
             value={bankAccountId}
-            onChange={(event) => setBankAccountId(event.target.value)}
+            onChange={handleAccountChange}
             className="w-full min-w-0 rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {bankAccounts.map((account) => (
@@ -141,10 +207,10 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         <button
           type="submit"
           disabled={isSubmitting || !fileName}
-          className="uv-btn-press flex items-center gap-2 rounded-md border border-transparent bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-elevated px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
-          {isSubmitting && <Spinner />}
-          {isSubmitting ? "Importing…" : "Import"}
+          {isSubmitting && !preview && <Spinner />}
+          {isSubmitting && !preview ? "Reading…" : "Preview"}
         </button>
       </form>
 
@@ -152,6 +218,99 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
           the outcome without the user having to go hunting for it. */}
       <div role="status" aria-live="polite" className="mt-3 empty:mt-0">
         {error && <p className="text-sm text-negative">{error}</p>}
+
+        {preview && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge variant="neutral">{preview.totals.count} rows ready</Badge>
+              {preview.totals.rejected > 0 && <Badge variant="warning">{preview.totals.rejected} rows rejected</Badge>}
+              <span className="text-xs text-muted">
+                Detected format: {preview.adapterLabel} · amounts in {preview.currency}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-left text-xs">
+                <caption className="sr-only">Preview of the first parsed rows</caption>
+                <thead className="bg-elevated text-muted">
+                  <tr>
+                    <th scope="col" className="px-3 py-2 font-medium">
+                      Date
+                    </th>
+                    <th scope="col" className="px-3 py-2 font-medium">
+                      Description
+                    </th>
+                    <th scope="col" className="px-3 py-2 text-right font-medium">
+                      Amount
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.map((row) => (
+                    <tr key={row.lineNumber} className="border-t border-border">
+                      <td className="whitespace-nowrap px-3 py-1.5 font-tabular-figures text-muted">{row.date}</td>
+                      <td className="max-w-[320px] truncate px-3 py-1.5 text-fg">{row.merchantName ?? row.description}</td>
+                      <td
+                        className={`whitespace-nowrap px-3 py-1.5 text-right font-tabular-figures ${
+                          row.isExpense ? "text-negative" : "text-positive"
+                        }`}
+                      >
+                        {row.amount}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {preview.totals.count > preview.rows.length && (
+              <p className="text-xs text-muted">
+                Showing the first {preview.rows.length} of {preview.totals.count} rows.
+              </p>
+            )}
+            <p className="text-xs text-muted">
+              Check that money out is negative and the dates are right — if a column is inverted, this is the moment
+              to stop, not after the import.
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleImportClick}
+                disabled={isSubmitting}
+                className="uv-btn-press flex items-center gap-2 rounded-md border border-transparent bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                {isSubmitting && <Spinner />}
+                {isSubmitting ? "Importing…" : `Import ${preview.totals.count} rows`}
+              </button>
+              <button
+                type="button"
+                onClick={resetOutcome}
+                disabled={isSubmitting}
+                className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {preview.rejectedRows.length > 0 && (
+              <details className="text-xs text-muted">
+                <summary className="cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  Show rejected rows
+                </summary>
+                <ul className="mt-1 flex flex-col gap-0.5 pl-4">
+                  {preview.rejectedRows.map((row) => (
+                    <li key={row.lineNumber} className="list-disc">
+                      Line {row.lineNumber}: {row.message}
+                    </li>
+                  ))}
+                  {preview.totals.rejected > preview.rejectedRows.length && (
+                    <li className="list-disc">…and {preview.totals.rejected - preview.rejectedRows.length} more</li>
+                  )}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
 
         {result && (
           <div className="flex flex-col gap-2">

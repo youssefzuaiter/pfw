@@ -1,12 +1,23 @@
-import type { Agorot } from "../money";
+import type { CurrencyCode, NativeAmount } from "../currency";
 
 /** A single successfully-parsed statement line, in this app's canonical shape. */
 export type CanonicalImportRow = {
   /** 1-based line number in the source file (header counts as line 1) — every row error quotes this so a user can find the offending line. */
   lineNumber: number;
   occurredAt: Date;
-  /** Signed, in agorot: negative = money out, positive = money in. Normalized by the adapter from whatever sign convention the bank used. */
-  amountAgorot: Agorot;
+  /**
+   * Signed, in the statement's own currency's minor units (agorot, kuruş,
+   * cents…): negative = money out, positive = money in. Normalized by the
+   * adapter from whatever sign convention the bank used. Deliberately the
+   * NATIVE figure, not an ILS conversion: the pipeline is pure and has no
+   * exchange rate to convert with — the DAL freezes the rate at write time
+   * (`transaction-import.ts`), and the dedupe key below is built from this
+   * native amount so re-importing the same file on a day with a different
+   * rate still produces identical keys.
+   */
+  nativeAmount: NativeAmount;
+  /** The currency every `nativeAmount` in this parse is denominated in — always the target account's, enforced by the pipeline. */
+  currency: CurrencyCode;
   /** Free text, already formula-injection-neutralized. */
   description: string;
   /** Free text, already formula-injection-neutralized. `null` when the export has no distinct merchant column. */
@@ -37,6 +48,8 @@ export type RowError = {
 export type ImportParseResult = {
   adapterId: string;
   adapterLabel: string;
+  /** The currency the rows were parsed as — the target account's. */
+  currency: CurrencyCode;
   rows: CanonicalImportRow[];
   errors: RowError[];
 };

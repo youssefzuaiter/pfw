@@ -10,7 +10,11 @@
  * `""` quotes, CRLF and LF line endings, and a leading UTF-8 BOM (which
  * real bank exports very commonly carry — without stripping it, the first
  * header cell silently becomes "﻿Date" and no adapter matches it).
+ * Also `;`-delimited files (the European/Turkish Excel default) and
+ * single-byte legacy encodings — see `sniffDelimiter` and `decodeCsvBytes`.
  */
+
+import type { CurrencyCode } from "../currency";
 
 /** Every limit is a hard ceiling on attacker-controlled input — see the DoS notes in docs/SECURITY.md §3.3. */
 export type CsvParseLimits = {
@@ -65,7 +69,41 @@ function stripBom(input: string): string {
  * trailing newlines and blank separator lines are ubiquitous in real
  * exports and are not row-level errors.
  */
-export function tokenizeCsv(input: string, limits: CsvParseLimits = DEFAULT_CSV_LIMITS): string[][] {
+export type CsvDelimiter = "," | ";";
+
+/**
+ * Decides the field delimiter from the FIRST physical line only, before
+ * anything is tokenized. European/Turkish exports (Excel in a locale
+ * whose decimal separator is already `,`) use `;`; this is a deterministic
+ * rule, not a format guess: a line with no unquoted comma and at least one
+ * semicolon is semicolon-delimited, anything else is comma-delimited
+ * (the default, and every existing fixture). It must run BEFORE
+ * `tokenizeCsv` — tokenizing a `;` file as comma-delimited first would
+ * read each whole line as one cell and trip the per-cell length ceiling
+ * on any long line, long before a "one header cell" check could run.
+ */
+export function sniffDelimiter(input: string): CsvDelimiter {
+  const text = stripBom(input);
+  const newline = text.search(/\r?\n/);
+  const firstLine = newline === -1 ? text : text.slice(0, newline);
+
+  let inQuotes = false;
+  let sawComma = false;
+  let sawSemicolon = false;
+  for (const char of firstLine) {
+    if (char === '"') inQuotes = !inQuotes;
+    else if (inQuotes) continue;
+    else if (char === ",") sawComma = true;
+    else if (char === ";") sawSemicolon = true;
+  }
+  return !sawComma && sawSemicolon ? ";" : ",";
+}
+
+export function tokenizeCsv(
+  input: string,
+  limits: CsvParseLimits = DEFAULT_CSV_LIMITS,
+  delimiter: CsvDelimiter = ",",
+): string[][] {
   const text = stripBom(input);
 
   const rows: string[][] = [];
@@ -128,7 +166,7 @@ export function tokenizeCsv(input: string, limits: CsvParseLimits = DEFAULT_CSV_
       continue;
     }
 
-    if (char === ",") {
+    if (char === delimiter) {
       endField();
       index += 1;
       continue;
@@ -168,17 +206,47 @@ export function tokenizeCsv(input: string, limits: CsvParseLimits = DEFAULT_CSV_
 }
 
 /**
- * Decodes an uploaded file's bytes as UTF-8, enforcing the byte ceiling
- * *before* decoding — checking the decoded string's `.length` instead
- * would be both the wrong unit (UTF-16 code units, not bytes) and too
- * late (the allocation has already happened).
+ * The single-byte "ANSI" encoding a bank in each currency's home market
+ * is likeliest to export when it isn't UTF-8 — Excel's default in the
+ * corresponding Windows locale. Keyed by currency because that is the
+ * one fact the pipeline already knows about the file's origin; a Hebrew
+ * (windows-1255) export decoded as windows-1254 would be mojibake, not an
+ * error, so the fallback must not be one fixed code page.
  */
-export function decodeCsvBytes(bytes: Uint8Array, limits: CsvParseLimits = DEFAULT_CSV_LIMITS): string {
+const LEGACY_ENCODING_BY_CURRENCY: Record<CurrencyCode, string> = {
+  ILS: "windows-1255",
+  TRY: "windows-1254",
+  USD: "windows-1252",
+  EUR: "windows-1252",
+  GBP: "windows-1252",
+};
+
+/**
+ * Decodes an uploaded file's bytes, enforcing the byte ceiling *before*
+ * decoding — checking the decoded string's `.length` instead would be
+ * both the wrong unit (UTF-16 code units, not bytes) and too late (the
+ * allocation has already happened).
+ *
+ * UTF-8 is tried strictly (`fatal: true`) so a legacy-encoded file is
+ * detected instead of silently decoded with U+FFFD replacement characters
+ * in every non-ASCII header — which would make `Açıklama` never match its
+ * alias and the whole file fail as "unrecognized format" with no hint
+ * why. Valid UTF-8 can never take the fallback branch.
+ */
+export function decodeCsvBytes(
+  bytes: Uint8Array,
+  limits: CsvParseLimits = DEFAULT_CSV_LIMITS,
+  expectedCurrency: CurrencyCode = "ILS",
+): string {
   if (bytes.byteLength > limits.maxBytes) {
     throw new CsvParseError(
       "file_too_large",
       `File is ${bytes.byteLength} bytes, over the ${limits.maxBytes}-byte limit`,
     );
   }
-  return new TextDecoder("utf-8").decode(bytes);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder(LEGACY_ENCODING_BY_CURRENCY[expectedCurrency]).decode(bytes);
+  }
 }
