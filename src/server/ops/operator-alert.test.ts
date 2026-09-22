@@ -2,12 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderOperatorAlert, sendOperatorAlert } from "./operator-alert";
 
 describe("operator alerts", () => {
+  // Both vars are captured and restored rather than just deleted: a
+  // developer's own .env legitimately sets OPERATOR_ALERT_EMAIL (it is
+  // what unlocks /settings/ops locally — see .env.example), and a test
+  // that merely assumes it is unset passes or fails depending on whose
+  // machine it runs on. Each case states the value it needs.
+  const originalEnv = { operator: process.env.OPERATOR_ALERT_EMAIL, appUrl: process.env.APP_URL };
+
   beforeEach(() => {
     process.env.APP_URL = "https://pfw.example.test";
+    delete process.env.OPERATOR_ALERT_EMAIL;
   });
   afterEach(() => {
-    delete process.env.OPERATOR_ALERT_EMAIL;
-    delete process.env.APP_URL;
+    if (originalEnv.operator === undefined) delete process.env.OPERATOR_ALERT_EMAIL;
+    else process.env.OPERATOR_ALERT_EMAIL = originalEnv.operator;
+    if (originalEnv.appUrl === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = originalEnv.appUrl;
     vi.restoreAllMocks();
   });
 

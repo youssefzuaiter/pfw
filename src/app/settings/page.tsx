@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { getOperatorAlertEmail } from "../../server/env";
 import { getMfaStatus } from "../../server/dal/mfa";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
 import { EmailVerificationPanel } from "./_components/email-verification-panel";
@@ -23,6 +24,12 @@ export const instant = false;
 export default async function SettingsPage() {
   const user = await getCurrentUser();
   const [mfaStatus, settings] = await Promise.all([getMfaStatus(user.id), getOrCreateUserSettings(user.id)]);
+
+  // Only whoever runs this deployment gets the Operations link — the same
+  // OPERATOR_ALERT_EMAIL gate the page itself enforces (it 404s for
+  // everyone else regardless, so this only avoids showing a dead link).
+  const operatorEmail = getOperatorAlertEmail();
+  const isOperator = operatorEmail !== null && user.email.toLowerCase() === operatorEmail.toLowerCase();
 
   const initialPreferences: PreferencesFormData = {
     taxJurisdiction: settings.taxJurisdiction,
@@ -75,6 +82,20 @@ export default async function SettingsPage() {
           </Link>
         </div>
       </div>
+
+      {isOperator && (
+        <div>
+          <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Operations</h2>
+          <div className="mt-2">
+            <Link
+              href="/settings/ops"
+              className="inline-flex items-center rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium text-fg hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Deployment &amp; sync status →
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -88,3 +88,22 @@ export async function upsertEquityQuote(input: UpsertEquityQuoteInput) {
     update: { priceUsd: input.priceUsd, observedAt: input.observedAt, source: input.source, fetchedAt },
   });
 }
+
+/**
+ * `fetchedAt` of the newest stored quote across every symbol, or `null`
+ * when none has ever been synced — see
+ * `getMostRecentCryptoPriceFetchedAt` for why this is one job-level
+ * figure rather than per symbol.
+ *
+ * `null` here is NOT a failure: the equity sync only ever runs for
+ * tickers held outside the mock universe, so an account that has never
+ * had a trader-booked position legitimately has no quotes at all. The
+ * ops page renders that as its own neutral state, never as "stale".
+ */
+export async function getMostRecentEquityQuoteFetchedAt(): Promise<Date | null> {
+  const row = await prisma.equityQuote.findFirst({
+    orderBy: { fetchedAt: "desc" },
+    select: { fetchedAt: true },
+  });
+  return row?.fetchedAt ?? null;
+}
