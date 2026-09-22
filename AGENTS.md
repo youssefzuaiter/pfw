@@ -4,7 +4,8 @@ PFW is a greenfield personal finance operating system and simulated trading
 dashboard, built against mock Israeli banking data. ₪ (ILS) is the app's
 one base/reporting currency; multi-currency support (USD/EUR/GBP native
 amounts alongside the ILS equivalent) was added ad hoc post-Phase 8 — see
-§3k, which amends law #3 below.
+§3k, which amends law #3 below — and TRY (Turkish lira) was added on top
+of it in §3bbb, alongside a currency-aware statement importer.
 Stack: Next.js 16 (App Router), React 19, TypeScript, PostgreSQL 17, Prisma 7,
 Tailwind CSS 4, Recharts, Zustand, Anthropic SDK.
 
@@ -32,7 +33,8 @@ These apply to every line of code in this repo, in every phase:
    "single currency (shekels)"~~ — amended post-Phase 8 (§3k) to add real
    multi-currency support: `BankAccount`, `NotableTransaction`,
    `PortfolioHolding`, and `Trade` can be natively denominated in
-   USD/EUR/GBP, always alongside an ILS agorot equivalent. Every aggregate
+   USD/EUR/GBP — and, since §3bbb, TRY — always alongside an ILS agorot
+   equivalent. Every aggregate
    figure (net worth, dashboard totals, insight generators) is still
    computed in ILS agorot. The trading desk still prices US equities
    natively in USD, converted to shekels — for a *completed* trade this
@@ -7426,6 +7428,224 @@ app's own code, found and fixed.
     message in a real, if rare, circumstance — flagged here, not fixed,
     since it's a new, third thread beyond the two this pass was scoped to.
 
+## 3bbb. TRY, a currency-aware statement importer, and an in-app ops page (ad hoc)
+
+Explicit user request, in two halves. Asked what would "really make a
+difference," the honest answer was: this app has never seen a single
+real transaction — every figure in it is seeded or hand-entered — and it
+cannot answer basic questions about its own deployment without the
+Vercel dashboard. Both were scoped in plan mode; the first turned out to
+be blocked by something bigger than a missing adapter.
+
+- **The blocker, found by reading before building.** The user's real
+  bank is Turkish. `Currency` was `ILS|USD|EUR|GBP`, so TRY did not
+  exist anywhere in the app — and the CSV importer was ILS-only by
+  construction (`assertShekelCurrency` rejected any other currency cell,
+  amounts parsed via `parseShekelsToAgorot`, `CanonicalImportRow`
+  carried only `amountAgorot`, and the DAL hardcoded `currency: "ILS"`).
+  A Turkish statement would therefore either be refused outright or, for
+  the common export with no currency column at all, silently book
+  ₺1,000 as ₪1,000 — wrong by roughly the FX rate, in the direction of
+  a 16x overstatement. Surfaced to the user before writing anything; the
+  choice was to add real TRY support first rather than hack one adapter.
+
+### TRY end to end
+
+- `CurrencyCode`/`SUPPORTED_CURRENCIES` gained `"TRY"`, `CURRENCY_SYMBOLS`
+  gained `₺`, `FALLBACK_RATES`/`FALLBACK_RATE_TABLE` gained a rough
+  0.09 ILS-per-lira figure. Migration `20260921090000_currency_try` is a
+  lone `ALTER TYPE "Currency" ADD VALUE IF NOT EXISTS 'TRY'` — Postgres
+  refuses to *use* a new enum value in the same transaction that adds
+  it, so it has to be the only statement in its file.
+- `currenciesToSync()` and `rate-sync.ts` needed no change at all: both
+  already derive from `SUPPORTED_CURRENCIES`, and Frankfurter publishes
+  TRY. Confirmed live — `npm run sync:rates` returned a real
+  `1 TRY = 0.0623 ILS` row on the first run.
+- Four places had hand-copied the currency list instead of deriving it
+  (`POST /api/bank-accounts`, the trades webhook, the add-account form,
+  `dal/dividends.ts`). All four now read `SUPPORTED_CURRENCIES` or
+  `CurrencyCode` directly, so the next currency is one edit, not five —
+  `currency.ts` says so in a comment now.
+
+### The importer parses in the ACCOUNT's currency
+
+`CanonicalImportRow.amountAgorot` became `nativeAmount` + `currency`, and
+the target account's currency is resolved *before* the file is read
+(the route looks the account up first, which also makes a foreign
+account a 404 before any parsing happens rather than after).
+
+- **Dedupe keys are built from the NATIVE amount**, deliberately.
+  A converted figure depends on the rate the day the import ran, so the
+  same statement re-imported a week later would hash differently and
+  insert every row twice — silent balance inflation, the exact failure
+  the content-hash fallback exists to prevent (§3j). For an ILS file the
+  integer is unchanged, so every key ever stored is reproduced
+  byte-for-byte; pinned by a test asserting the literal key string and
+  the literal `csv:generic:hash:…` digest.
+- **Two Turkish adapters**: `turkish-debit-credit` (Tarih/Açıklama/
+  Borç/Alacak) and `turkish-signed-amount` (…/Tutar). Both declare
+  `currency: "TRY"` and `numberFormat: "comma-decimal"`.
+  - **No reference aliases, on purpose.** A Turkish slip number (`fiş
+    no`, `dekont no`) restarts per account, while
+    `providerTransactionId` is unique per USER — two TRY accounts at one
+    bank would collide on the `:ref:` path. The content-hash path is the
+    only safe key here.
+  - **Currency alias is only `para birimi`.** A card statement's `döviz
+    cinsi` names the ORIGINAL foreign currency of a purchase that was
+    billed in lira; treating it as the row's currency would falsely
+    reject every foreign purchase on the statement.
+- **`detectAdapter(headers, expectedCurrency)` skips adapters whose
+  declared currency isn't the account's.** Without this, `leumi`'s
+  English aliases (date/description/debit/credit) would capture an
+  English-header Turkish export and parse it dot-decimal. A *forced*
+  `adapterId` with a mismatched currency is its own 400
+  (`currency_mismatch`) rather than a vague "unrecognized format",
+  because automatic detection can never produce that state — it only
+  ever means an explicit, wrong choice.
+- **Header folding**: `İ` → `I`, `ı` → `i`, then NFD + strip combining
+  marks, applied to headers AND aliases. `"İ".toLowerCase()` is `i` plus
+  U+0307 — two code points — and would never equal an ASCII alias, so an
+  upper-cased export (`İŞLEM TARİHİ`) would silently match nothing.
+  Hebrew headers carry no combining marks and are unaffected; asserted
+  rather than assumed.
+- **comma-decimal is a strict grammar, never a separator swap.**
+  `1.234,56` and `1234,56` parse; `1234.56` is a row ERROR. The obvious
+  implementation — swap `.` and `,` — turns a machine-formatted
+  `1234.56` that slipped into such a file into `123456`, a silent 100×
+  error with no symptom.
+- **The `;` delimiter is sniffed from the first physical line BEFORE
+  tokenizing.** Order matters: tokenizing a `;` file as comma-delimited
+  reads each whole line as one cell, which trips the 500-char per-cell
+  ceiling on any long line long before any "this looks like one column"
+  check could run.
+- **`decodeCsvBytes` now tries UTF-8 strictly** (`fatal: true`) and falls
+  back per currency (TRY → windows-1254, ILS → windows-1255, else 1252).
+  The previous non-fatal decode would fill every non-ASCII header with
+  U+FFFD, so `Açıklama` matched nothing and the file failed as
+  "unrecognized format" with no hint why. Valid UTF-8 can never take the
+  fallback branch.
+
+### Freezing a conversion requires a REAL rate
+
+`importTransactions` refuses a foreign-currency account with no synced
+rate (`NoExchangeRateError`), syncing once on demand first — the first
+import into a brand-new TRY account shouldn't fail just because the
+nightly cron hasn't run yet. It never falls back to `FALLBACK_RATES`:
+`amount` and `exchangeRateAtEntry` are frozen historical facts (§3k), so
+a hardcoded guess baked into hundreds of rows would misprice a whole
+statement in a way nothing ever recomputes. A live dashboard figure may
+degrade to the fallback (law #5); an immutable one may not.
+
+The rate source is one injectable seam because `ExchangeRate` is a
+global, non-user-scoped table — "no rate exists for TRY" cannot be
+arranged in the shared dev database without racing every other test file
+that reads those rows. Accepted, documented limitation: a multi-month
+statement converts at the rate current at import time, not per-row
+historical rates — the same trade-off the PSD2 sync already makes, and
+why `exchangeRateAtEntry` is stored per row at all.
+
+### Preview → Import
+
+The sign convention and number format are DECLARED per adapter, never
+sniffed — and the Turkish adapters were written without a real sample
+file. So the form is now two steps: `dryRun=1` parses and returns the
+first rows pre-formatted with their own currency symbol, and a second
+click commits. Seeing `-₺1,234.56 MİGROS` / `+₺45,000.00 MAAŞ` before
+anything is written is the check; a whole month imported sign-inverted
+is what it prevents. The preview is still `guardMutation`-fronted (same
+Origin check, same rate-limit bucket) so it can't be used to probe the
+parser more cheaply than a real import.
+
+### `/settings/ops`
+
+Deployment sha/environment/host from Vercel's own build vars, both
+encryption-key fingerprints with the rotation state, per-sync freshness,
+and whether cron alerting is configured. Reuses the dashboard's
+`BackendStatusBadge` for the trading agent so the server render never
+blocks on that 8s probe. `cache()`-wrapped with NO arguments, unlike
+`build-monte-carlo-data.ts` — there are no varying inputs to key on, so
+reading the clock inside is what lets every call in a request share one
+result; passing the time in would do the opposite.
+
+- **Gated on `OPERATOR_ALERT_EMAIL`** — one env var, one concept,
+  already set on the deployment for cron alerts (§3yy). A signed-in
+  non-operator gets a 404, never a 403 (Section 2.2), and with the var
+  unset nobody is the operator so it 404s for everyone. That's the right
+  default for a page naming a deployment and a key fingerprint.
+- **FX is listed per currency; crypto and equities are one row each.**
+  The FX sync can genuinely skip a single currency, so a stale TRY must
+  not hide behind a fresh USD; the other two fetch every symbol in one
+  request, so per-symbol rows would imply a failure mode that pipeline
+  can't produce. An equity sync that has never run reports "none held",
+  not "never" — that's the normal state for an account with no
+  trader-booked tickers, and rendering it red would train the reader to
+  ignore the whole panel.
+- Freshness tiers: fresh < 36h (24h cadence + grace for a late run),
+  warning < 72h (one missed run), critical beyond (two). The boundaries
+  are pinned by unit tests, including a clock-skew case where the
+  database's timestamp is slightly in the future.
+- **A pre-existing test fragility this surfaced and fixed**:
+  `operator-alert.test.ts`'s "not configured" case assumed
+  `OPERATOR_ALERT_EMAIL` was unset in the developer's own environment —
+  which `.env.example` now recommends setting, to use this page locally.
+  It captures and restores the real value instead of inheriting it.
+
+### Verified live, not just by test
+
+Against the real dev server, real Postgres and the real Frankfurter
+sync, signed in through the actual UI:
+
+- A `;`-delimited, comma-decimal, UTF-8 Turkish statement previewed with
+  correct signs, dates, and a quoted `"KAHVE; ÇAY"` kept as one cell;
+  imported 4 rows with 1 rejected (an impossible `31.02.2026`), stored
+  as kuruş natively with the ILS conversion at the real synced rate
+  (0.062267) frozen per row — hand-checked: 1234.56 × 0.062267 = ₪76.87.
+- Re-importing the identical file: 0 imported, 4 duplicates.
+- A windows-1254-encoded file decoded to `GETİR ÇARŞI` and was routed to
+  the second adapter.
+- The TRY account itself renders `₺12,500.00` beside `₪778.34` on
+  `/assets`, converted live at the synced rate.
+- All six rows render in `/transactions` with Turkish characters intact
+  and `description` ciphertext (`v1:`) at rest.
+- An ILS fixture behaved exactly as before (2 imported, then 0/2
+  duplicates). Turkish-into-ILS → 400 `unrecognized_format`; forced
+  `leumi` into TRY → 400 `currency_mismatch`; unknown account → 404.
+- `/settings/ops`: 404 with the var unset, 404 with it set to a
+  different address (and no link on `/settings`), full page for the
+  operator.
+
+`npm run check` 1397 passed / 3 skipped (the unrelated embedding
+sidecar); production build, `verify:client-bundle-secrets`, Gitleaks
+`v8.30.1` and Semgrep `1.174.0` all clean — Gitleaks' only hits are the
+two documented CI throwaways already in `.gitleaksignore`. The dev
+database was re-seeded afterward and confirmed free of import residue.
+
+### A browser-automation lesson, recorded because it cost real time
+
+Driving the import form, synthetic `change` events (raw `dispatchEvent`,
+and the browser tool's own `form_input`) did not reach React's delegated
+listener — the DOM `<select>` value changed while React state did not,
+which looks exactly like a product bug. Calling the element's own
+`__reactProps$…onChange` directly updated state immediately, proving the
+component was correct and only event *delivery* was failing. Worth
+checking that distinction before reporting a UI bug found through
+automation. (Clicks are delivered fine; it is specifically `change`.)
+
+### Known limitations, left as such
+
+Both Turkish layouts are representative shapes, not byte-verified
+reproductions of any real bank's export — the preview step exists
+precisely because no sample file was available; adding a real one means
+adding an entry to `adapters.ts`, not restructuring anything. The
+importer still refuses a row whose currency cell names a currency other
+than the account's rather than converting it. `/settings/ops` shows the
+outcome of the nightly cron, not a run history — no table records past
+runs, which was an explicit non-goal. And the equity-quote row is the
+one status whose "never" state is genuinely ambiguous between "nothing
+to sync" and "the sync has never worked"; it resolves that in favour of
+the former, which is correct today and would need revisiting if quotes
+ever covered the mock universe too.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
@@ -7769,8 +7989,9 @@ src/lib/valuation-freshness.ts   Fresh/Aging/Stale thresholds for manual assets
 src/lib/cash-flow-forecast.ts   60-day forecast, absolute minimum point
 src/lib/recurring-detection.ts  periodicity engine (3+ months, CV < 0.15)
 src/lib/categorization/         4-tier cascade (types, tier1-3, cascade orchestrator)
-src/lib/csv-import/             statement CSV pipeline: tokenizer, formula-injection
-                                  guard, per-bank adapters, dedupe keys (§3j)
+src/lib/csv-import/             statement CSV pipeline: tokenizer (`,`/`;`, legacy
+                                  encodings), formula-injection guard, per-bank
+                                  adapters incl. Turkish (§3j, §3bbb)
 src/lib/insights/               7 generators + generate-insights.ts orchestrator
 src/lib/mock-market-data.ts     deterministic mock price feed + price history for /trading's chart
 sidecar/                        FastAPI/ONNX merchant-embedding service (Python)
@@ -7792,6 +8013,9 @@ src/server/dal/                  9 modules: bank-accounts, transactions, debts, 
                                    + transaction-import.ts (deduplicating bulk writer, §3j)
 src/server/dashboard/build-dashboard-data.ts  aggregates DAL + engines for /dashboard,
                                                 React cache()-wrapped (see §3c)
+src/server/ops/build-ops-status-data.ts  deployment sha, key-rotation
+                                           fingerprints, per-sync freshness (§3bbb)
+src/app/settings/ops/            operator-gated deployment & sync status page
 prisma/schema.prisma             14 models + AuditLog, all user-scoped
 prisma/migrations/                init + rls_and_runtime_role
 prisma/seed/                      rng.ts, israeli-data.ts, index.ts (entry point)
