@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAdapter, detectAdapter, getAdapterById, normalizeAmountText, parseStatementDate } from "./adapters";
+import { applyAdapter, detectAdapter, getAdapterById, normalizeAmountText, normalizeHeader, parseStatementDate } from "./adapters";
 
 const GENERIC_HEADERS = ["Date", "Description", "Amount"];
 const LEUMI_HEADERS = ["תאריך", "תיאור", "חובה", "זכות"];
@@ -110,8 +110,8 @@ describe("applyAdapter — generic (single signed amount column)", () => {
 
     expect(errors).toEqual([]);
     expect(rows).toHaveLength(2);
-    expect(rows[0].amountAgorot).toBe(-25000);
-    expect(rows[1].amountAgorot).toBe(1800000);
+    expect(rows[0].nativeAmount).toBe(-25000);
+    expect(rows[1].nativeAmount).toBe(1800000);
     expect(rows[0].occurredAt.toISOString()).toBe("2026-01-05T00:00:00.000Z");
   });
 
@@ -173,13 +173,13 @@ describe("applyAdapter — leumi (debit & credit columns)", () => {
     ]);
 
     expect(errors).toEqual([]);
-    expect(rows[0].amountAgorot).toBe(-25000);
-    expect(rows[1].amountAgorot).toBe(1800000);
+    expect(rows[0].nativeAmount).toBe(-25000);
+    expect(rows[1].nativeAmount).toBe(1800000);
   });
 
   it("does not double-negate a bank that already writes debits as negative", () => {
     const { rows } = applyAdapter(adapter, LEUMI_HEADERS, [["05/01/2026", "X", "-250.00", ""]]);
-    expect(rows[0].amountAgorot).toBe(-25000);
+    expect(rows[0].nativeAmount).toBe(-25000);
   });
 
   it("rejects a row where both debit and credit are populated", () => {
@@ -198,7 +198,7 @@ describe("applyAdapter — isracard (charges written as positive)", () => {
 
   it("inverts a positive charge into a negative ledger amount", () => {
     const { rows } = applyAdapter(adapter, ISRACARD_HEADERS, [["05/01/2026", "Wolt [וולט]", "89.90"]]);
-    expect(rows[0].amountAgorot).toBe(-8990);
+    expect(rows[0].nativeAmount).toBe(-8990);
   });
 
   it("uses the merchant column for both description and merchant name", () => {
@@ -220,12 +220,170 @@ describe("applyAdapter — formula-injection neutralization scope", () => {
     expect(rows[0].description).toBe(`'=HYPERLINK("http://evil.example","x")`);
     // The critical half: the negative amount still parsed correctly and
     // was NOT neutralized into an unparseable "'-250.00".
-    expect(rows[0].amountAgorot).toBe(-25000);
+    expect(rows[0].nativeAmount).toBe(-25000);
   });
 
   it("still imports a negative amount cleanly (the guard never reaches numeric cells)", () => {
     const { rows } = applyAdapter(adapter, GENERIC_HEADERS, [["2026-01-05", "Normal merchant", "-250.00"]]);
-    expect(rows[0].amountAgorot).toBe(-25000);
+    expect(rows[0].nativeAmount).toBe(-25000);
     expect(rows[0].description).toBe("Normal merchant");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Turkish statements & multi-currency (AGENTS.md §3bbb)
+// ---------------------------------------------------------------------------
+
+const TURKISH_DC_HEADERS = ["Tarih", "Açıklama", "Borç", "Alacak"];
+const TURKISH_SIGNED_HEADERS = ["İşlem Tarihi", "İşlem Açıklaması", "Tutar"];
+
+describe("normalizeHeader — Turkish folding", () => {
+  it("folds dotted İ and dotless ı so any casing of a Turkish header matches its alias", () => {
+    // "İ".toLowerCase() is "i̇" (i + U+0307), which never equals an ASCII
+    // "i" — without folding, an upper-cased export would never match.
+    expect(normalizeHeader("İŞLEM TARİHİ")).toBe(normalizeHeader("işlem tarihi"));
+    expect(normalizeHeader("AÇIKLAMA")).toBe(normalizeHeader("açıklama"));
+    expect(normalizeHeader("Açıklama")).toBe("aciklama");
+    expect(normalizeHeader("Borç")).toBe("borc");
+  });
+
+  it("leaves Hebrew headers untouched (no combining marks to strip), so existing adapters still match", () => {
+    expect(normalizeHeader("תאריך עסקה")).toBe("תאריך עסקה");
+    expect(normalizeHeader("  שם בית העסק ")).toBe("שם בית העסק");
+  });
+});
+
+describe("detectAdapter — currency awareness", () => {
+  it("detects the Turkish debit/credit layout for a TRY account", () => {
+    expect(detectAdapter(TURKISH_DC_HEADERS, "TRY")?.id).toBe("turkish-debit-credit");
+  });
+
+  it("detects the Turkish signed-amount layout, including upper-cased headers", () => {
+    expect(detectAdapter(TURKISH_SIGNED_HEADERS, "TRY")?.id).toBe("turkish-signed-amount");
+    expect(detectAdapter(["İŞLEM TARİHİ", "AÇIKLAMA", "TUTAR"], "TRY")?.id).toBe("turkish-signed-amount");
+  });
+
+  it("skips an ILS adapter for a TRY account even when its English aliases would match — an English-header Turkish export must not be parsed dot-decimal", () => {
+    // leumi has English aliases (date/description/debit/credit) that an
+    // English-language Turkish bank export would satisfy; parsing that
+    // file dot-decimal would read 1.234,56 as garbage. The Turkish
+    // adapter with the same English aliases must win instead.
+    expect(detectAdapter(["Date", "Description", "Debit", "Credit"], "ILS")?.id).toBe("leumi");
+    expect(detectAdapter(["Date", "Description", "Debit", "Credit"], "TRY")?.id).toBe("turkish-debit-credit");
+  });
+
+  it("never offers a Turkish adapter to an ILS account", () => {
+    expect(detectAdapter(TURKISH_DC_HEADERS, "ILS")).toBeNull();
+  });
+
+  it("still uses the currency-agnostic generic adapter for any account", () => {
+    expect(detectAdapter(GENERIC_HEADERS, "TRY")?.id).toBe("generic");
+    expect(detectAdapter(GENERIC_HEADERS, "USD")?.id).toBe("generic");
+  });
+
+  it("defaults to ILS when no currency is given (every pre-multi-currency caller)", () => {
+    expect(detectAdapter(LEUMI_HEADERS)?.id).toBe("leumi");
+  });
+});
+
+describe("parseStatementDate — trailing time of day", () => {
+  it("ignores a trailing HH:MM or HH:MM:SS (Turkish exports carry the transaction time)", () => {
+    expect(parseStatementDate("01.03.2026 14:23", "DD/MM/YYYY").toISOString()).toBe("2026-03-01T00:00:00.000Z");
+    expect(parseStatementDate("01/03/2026 14:23:07", "DD/MM/YYYY").toISOString()).toBe("2026-03-01T00:00:00.000Z");
+  });
+});
+
+describe("normalizeAmountText — comma-decimal grammar", () => {
+  it("rewrites a Turkish-style 1.234,56 into dot-decimal", () => {
+    expect(normalizeAmountText("1.234,56", "TRY", "comma-decimal")).toBe("1234.56");
+    expect(normalizeAmountText("1.234.567,8", "TRY", "comma-decimal")).toBe("1234567.8");
+    expect(normalizeAmountText("-1.234,56", "TRY", "comma-decimal")).toBe("-1234.56");
+  });
+
+  it("accepts a plain integer or a number with no thousands separator", () => {
+    expect(normalizeAmountText("1234,56", "TRY", "comma-decimal")).toBe("1234.56");
+    expect(normalizeAmountText("1234", "TRY", "comma-decimal")).toBe("1234");
+    expect(normalizeAmountText("1.234", "TRY", "comma-decimal")).toBe("1234");
+  });
+
+  it("strips lira tokens and handles the trailing-minus and parenthesis conventions", () => {
+    expect(normalizeAmountText("₺ 1.234,56", "TRY", "comma-decimal")).toBe("1234.56");
+    expect(normalizeAmountText("1.234,56 TL", "TRY", "comma-decimal")).toBe("1234.56");
+    expect(normalizeAmountText("1.234,56-", "TRY", "comma-decimal")).toBe("-1234.56");
+    expect(normalizeAmountText("(1.234,56)", "TRY", "comma-decimal")).toBe("-1234.56");
+  });
+
+  it("REJECTS a dot-decimal number in a comma-decimal layout rather than swapping separators", () => {
+    // A separator swap would turn 1234.56 into 123456 — a silent 100×
+    // error. Strict grammar: this is a row error, never a guess.
+    expect(() => normalizeAmountText("1234.56", "TRY", "comma-decimal")).toThrow(/not a valid comma-decimal/);
+    expect(() => normalizeAmountText("1,234.56", "TRY", "comma-decimal")).toThrow(/not a valid comma-decimal/);
+    expect(() => normalizeAmountText("12,345", "TRY", "comma-decimal")).toThrow(/not a valid comma-decimal/);
+  });
+
+  it("does not strip another currency's tokens (a ₪ in a TRY file is left for the row to fail on)", () => {
+    expect(() => normalizeAmountText("₪ 12,50", "TRY", "comma-decimal")).toThrow(/not a valid comma-decimal/);
+  });
+});
+
+describe("applyAdapter — turkish-debit-credit", () => {
+  const adapter = getAdapterById("turkish-debit-credit")!;
+
+  it("parses Borç as money out and Alacak as money in, in kuruş", () => {
+    const { rows, errors } = applyAdapter(
+      adapter,
+      TURKISH_DC_HEADERS,
+      [
+        ["01.03.2026", "MİGROS", "1.234,56", ""],
+        ["02.03.2026", "MAAŞ", "", "45.000,00"],
+      ],
+      "TRY",
+    );
+    expect(errors).toEqual([]);
+    expect(rows.map((row) => row.nativeAmount)).toEqual([-123456, 4500000]);
+    expect(rows[0].currency).toBe("TRY");
+    expect(rows[0].occurredAt.toISOString()).toBe("2026-03-01T00:00:00.000Z");
+    expect(rows[0].providerReference).toBeNull();
+  });
+
+  it("accepts a Para Birimi column stating TRY/TL and refuses one stating another currency", () => {
+    const headers = [...TURKISH_DC_HEADERS, "Para Birimi"];
+    const { rows, errors } = applyAdapter(
+      adapter,
+      headers,
+      [
+        ["01.03.2026", "A", "10,00", "", "TL"],
+        ["01.03.2026", "B", "10,00", "", "TRY"],
+        ["01.03.2026", "C", "10,00", "", "USD"],
+      ],
+      "TRY",
+    );
+    expect(rows).toHaveLength(2);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/USD.*not supported/);
+  });
+
+  it("reports a dot-decimal amount as a row error instead of a wrong number", () => {
+    const { rows, errors } = applyAdapter(adapter, TURKISH_DC_HEADERS, [["01.03.2026", "X", "1234.56", ""]], "TRY");
+    expect(rows).toHaveLength(0);
+    expect(errors[0].message).toMatch(/comma-decimal/);
+  });
+});
+
+describe("applyAdapter — turkish-signed-amount", () => {
+  const adapter = getAdapterById("turkish-signed-amount")!;
+
+  it("keeps the bank's sign and ignores a trailing time on the date", () => {
+    const { rows, errors } = applyAdapter(
+      adapter,
+      TURKISH_SIGNED_HEADERS,
+      [
+        ["01.03.2026 14:23", "KAHVE", "-45,50"],
+        ["05.03.2026 09:00", "İADE", "45,50"],
+      ],
+      "TRY",
+    );
+    expect(errors).toEqual([]);
+    expect(rows.map((row) => row.nativeAmount)).toEqual([-4550, 4550]);
   });
 });

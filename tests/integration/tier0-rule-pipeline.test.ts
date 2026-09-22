@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agorot } from "../../src/lib/money";
+import { nativeAmount } from "../../src/lib/currency";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { createTransactionRule } from "../../src/server/dal/transaction-rules";
 import { importTransactions } from "../../src/server/dal/transaction-import";
@@ -216,7 +216,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Tie
           {
             lineNumber: 2,
             occurredAt: new Date("2026-03-01T00:00:00.000Z"),
-            amountAgorot: agorot(-5490),
+            nativeAmount: nativeAmount(-5490),
+            currency: "ILS",
             description: "Streamflix monthly",
             merchantName: "Streamflix",
             providerReference: "ref-tier0-1",
@@ -250,7 +251,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Tie
           {
             lineNumber: 2,
             occurredAt: new Date("2026-03-02T00:00:00.000Z"),
-            amountAgorot: agorot(-800),
+            nativeAmount: nativeAmount(-800),
+            currency: "ILS",
             description: "SQ *ANOTHERSHOP456",
             merchantName: "SQ *ANOTHERSHOP456",
             providerReference: "ref-tier0-2",
@@ -283,7 +285,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Tie
           {
             lineNumber: 2,
             occurredAt: new Date("2026-03-03T00:00:00.000Z"),
-            amountAgorot: agorot(-150),
+            nativeAmount: nativeAmount(-150),
+            currency: "ILS",
             description: "Totally unrelated import row",
             merchantName: "Unrelated Merchant",
             providerReference: "ref-tier0-3",

@@ -51,6 +51,16 @@ export default async function TransactionsPage({
       ? `${account.nickname} — ${account.institutionName}`
       : `${account.institutionName} ••${account.last4}`,
   }));
+  // The currency is part of the label in the import form specifically:
+  // it decides which statement layouts are accepted and what every
+  // parsed amount means, so a user picking "QNB ••7669 · TRY" can see
+  // which ledger a file is about to land in. The manual-entry and
+  // receipt modals keep the plain label (they book ILS, §3q).
+  const importAccountOptions = bankAccounts.map((account, index) => ({
+    ...accountOptions[index],
+    label: `${accountOptions[index].label} · ${account.currency}`,
+    currency: account.currency,
+  }));
 
   const rows: TransactionRow[] = transactions.map((t) => ({
     id: t.id,
@@ -83,7 +93,7 @@ export default async function TransactionsPage({
         </div>
       </div>
       <div className="flex flex-wrap items-start gap-3">
-        <ImportCsvForm bankAccounts={accountOptions} />
+        <ImportCsvForm bankAccounts={importAccountOptions} />
         <AddTransactionModal bankAccounts={accountOptions} />
         <ReceiptScannerModal bankAccounts={accountOptions} />
       </div>

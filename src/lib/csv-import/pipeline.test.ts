@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CsvParseError, UnrecognizedFormatError, isClientFileError, parseStatementCsv } from "./pipeline";
+import { CsvParseError, CurrencyMismatchError, UnrecognizedFormatError, isClientFileError, parseStatementCsv } from "./pipeline";
 
 function csv(text: string): Uint8Array {
   return new TextEncoder().encode(text);
@@ -16,8 +16,8 @@ describe("parseStatementCsv", () => {
     expect(result.adapterId).toBe("generic");
     expect(result.errors).toEqual([]);
     expect(result.rows).toHaveLength(2);
-    expect(result.rows[0].amountAgorot).toBe(-25000);
-    expect(result.rows[1].amountAgorot).toBe(1800000);
+    expect(result.rows[0].nativeAmount).toBe(-25000);
+    expect(result.rows[1].nativeAmount).toBe(1800000);
   });
 
   it("parses a Hebrew-header debit/credit statement end to end", () => {
@@ -26,7 +26,7 @@ describe("parseStatementCsv", () => {
     );
 
     expect(result.adapterId).toBe("leumi");
-    expect(result.rows.map((row) => row.amountAgorot)).toEqual([-25000, 1800000]);
+    expect(result.rows.map((row) => row.nativeAmount)).toEqual([-25000, 1800000]);
   });
 
   it("handles a BOM, CRLF endings and quoted commas together", () => {
@@ -123,6 +123,71 @@ describe("isClientFileError", () => {
   it("identifies bad-file errors (→ 400) and not unexpected faults (→ 500)", () => {
     expect(isClientFileError(new UnrecognizedFormatError(["a"]))).toBe(true);
     expect(isClientFileError(new CsvParseError("empty_file", "x"))).toBe(true);
+    expect(isClientFileError(new CurrencyMismatchError("leumi", "ILS", "TRY"))).toBe(true);
     expect(isClientFileError(new Error("database exploded"))).toBe(false);
+  });
+});
+
+describe("parseStatementCsv — Turkish statements & currency", () => {
+  const TURKISH = [
+    "Tarih;Açıklama;Borç;Alacak",
+    "01.03.2026;MİGROS;1.234,56;",
+    "02.03.2026;MAAŞ;;45.000,00",
+    "03.03.2026;\"KAHVE; ÇAY\";45,50;",
+  ].join("\r\n");
+
+  it("parses a ;-delimited, comma-decimal, UTF-8 Turkish file for a TRY account end to end", () => {
+    const result = parseStatementCsv(csv(TURKISH), { expectedCurrency: "TRY" });
+
+    expect(result.adapterId).toBe("turkish-debit-credit");
+    expect(result.currency).toBe("TRY");
+    expect(result.errors).toEqual([]);
+    expect(result.rows.map((row) => row.nativeAmount)).toEqual([-123456, 4500000, -4550]);
+    expect(result.rows[2].description).toBe("KAHVE; ÇAY");
+    expect(result.rows.every((row) => row.currency === "TRY")).toBe(true);
+  });
+
+  it("parses the same file exported as windows-1254 bytes", () => {
+    // Hand-built: every non-ASCII letter as its single cp1254 byte.
+    const cp1254 = (text: string) =>
+      Uint8Array.from(text, (ch) => {
+        const map: Record<string, number> = { ç: 0xe7, ı: 0xfd, İ: 0xdd, ş: 0xfe, Ş: 0xde, ğ: 0xf0, Ç: 0xc7 };
+        const byte = map[ch] ?? ch.charCodeAt(0);
+        if (byte > 0xff) throw new Error(`fixture: cannot encode ${ch}`);
+        return byte;
+      });
+    const result = parseStatementCsv(cp1254("Tarih;Açıklama;Tutar\n01.03.2026;MİGROS;-1.234,56\n"), {
+      expectedCurrency: "TRY",
+    });
+    expect(result.adapterId).toBe("turkish-signed-amount");
+    expect(result.rows[0].description).toBe("MİGROS");
+    expect(result.rows[0].nativeAmount).toBe(-123456);
+  });
+
+  it("refuses a Turkish file for an ILS account as unrecognized rather than mis-parsing it", () => {
+    expect(() => parseStatementCsv(csv(TURKISH))).toThrow(UnrecognizedFormatError);
+  });
+
+  it("throws CurrencyMismatchError when a forced adapter's currency is not the account's", () => {
+    expect(() => parseStatementCsv(csv(TURKISH), { adapterId: "turkish-debit-credit", expectedCurrency: "ILS" })).toThrow(
+      CurrencyMismatchError,
+    );
+    expect(() => parseStatementCsv(csv(GENERIC), { adapterId: "leumi", expectedCurrency: "TRY" })).toThrow(
+      CurrencyMismatchError,
+    );
+  });
+
+  it("lets the currency-agnostic generic adapter serve a TRY account (dot-decimal, as declared)", () => {
+    const result = parseStatementCsv(csv(GENERIC), { expectedCurrency: "TRY" });
+    expect(result.adapterId).toBe("generic");
+    expect(result.currency).toBe("TRY");
+    expect(result.rows[0].nativeAmount).toBe(-25000);
+  });
+
+  it("gives an ILS file the identical rows and dedupe keys it always had (default currency is ILS)", () => {
+    const implicit = parseStatementCsv(csv(GENERIC));
+    const explicit = parseStatementCsv(csv(GENERIC), { expectedCurrency: "ILS" });
+    expect(implicit.currency).toBe("ILS");
+    expect(explicit.rows).toEqual(implicit.rows);
   });
 });

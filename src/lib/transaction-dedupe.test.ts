@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { agorot } from "./money";
+import { nativeAmount } from "./currency";
 import { assignDedupeKeys, buildDedupeKeySource, buildProviderTransactionId } from "./transaction-dedupe";
 
 const BASE_ROW = {
   occurredAt: new Date("2026-09-01T00:00:00.000Z"),
-  amountAgorot: agorot(-4500),
+  nativeAmount: nativeAmount(-4500),
   description: "Coffee",
   merchantName: "Cafe Aroma",
 };
@@ -22,6 +22,16 @@ describe("buildDedupeKeySource", () => {
     const withNullMerchant = { ...BASE_ROW, merchantName: null };
     expect(() => buildDedupeKeySource(withNullMerchant, 0)).not.toThrow();
   });
+
+  it("produces the exact key string (and content hash) an ILS row has always produced — the field rename to nativeAmount changed nothing on disk", () => {
+    // For an ILS statement the native amount IS the agorot amount, so
+    // every `csv:<adapter>:hash:` providerTransactionId ever stored must
+    // still be reproduced byte-for-byte, or re-importing an old file
+    // would duplicate every row. Pinned to literal values on purpose.
+    expect(buildDedupeKeySource(BASE_ROW, 0)).toBe("2026-09-01|-4500|Coffee|Cafe Aroma|#0");
+    const [row] = assignDedupeKeys([{ ...BASE_ROW, providerReference: null }]);
+    expect(buildProviderTransactionId(row, "csv", "generic")).toBe("csv:generic:hash:c003a01e88780f8880718a4f6fd77cdf");
+  });
 });
 
 describe("assignDedupeKeys", () => {
@@ -33,7 +43,7 @@ describe("assignDedupeKeys", () => {
   });
 
   it("re-assigning keys to the exact same batch reproduces the exact same keys — a true re-ingestion still dedupes", () => {
-    const rows = [BASE_ROW, { ...BASE_ROW, amountAgorot: agorot(-1000) }, BASE_ROW];
+    const rows = [BASE_ROW, { ...BASE_ROW, nativeAmount: nativeAmount(-1000) }, BASE_ROW];
     const first = assignDedupeKeys(rows).map((r) => r.dedupeKeySource);
     const second = assignDedupeKeys(rows).map((r) => r.dedupeKeySource);
     expect(second).toEqual(first);

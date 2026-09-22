@@ -3,10 +3,14 @@ import { categorizeTransaction } from "../../lib/categorization/cascade";
 import { applyRules, type TransactionRuleData } from "../../lib/categorization/rule-engine";
 import type { PastOccurrence } from "../../lib/categorization/types";
 import type { CanonicalImportRow } from "../../lib/csv-import/types";
+import { BASE_CURRENCY, type CurrencyCode } from "../../lib/currency";
+import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { buildProviderTransactionId as buildSharedProviderTransactionId } from "../../lib/transaction-dedupe";
+import { syncExchangeRates } from "../currency/rate-sync";
 import { withUserScope } from "../db/with-user-scope";
 import { getOrCreateUncategorizedCategory } from "./categories";
+import { getLatestRateFetchedAt, getLatestRateTable } from "./exchange-rates";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
 /** Bulk imports write row-by-row (see with-user-scope.ts) — well above Prisma's 5s default. */
@@ -17,6 +21,44 @@ export class BankAccountNotFoundError extends Error {
   constructor() {
     super("Bank account not found");
     this.name = "BankAccountNotFoundError";
+  }
+}
+
+/**
+ * The parsed rows are in a different currency than the target account.
+ * The pipeline parses in the account's currency by construction (the
+ * route passes `account.currency` as `expectedCurrency`), so reaching
+ * this means a caller wired the two up inconsistently — defense in
+ * depth, not an expected user-facing path.
+ */
+export class ImportCurrencyMismatchError extends Error {
+  readonly code = "currency_mismatch";
+  constructor(
+    readonly accountCurrency: CurrencyCode,
+    readonly rowCurrency: CurrencyCode,
+  ) {
+    super(`Rows are in ${rowCurrency} but the account is in ${accountCurrency}`);
+    this.name = "ImportCurrencyMismatchError";
+  }
+}
+
+/**
+ * A foreign-currency account has no REAL synced exchange rate yet, and
+ * fetching one on demand didn't produce it either. Refusing is the only
+ * correct answer: `amount` and `exchangeRateAtEntry` are frozen
+ * historical facts (AGENTS.md §3k), and freezing `FALLBACK_RATES`'s
+ * hardcoded guess into hundreds of rows would silently misprice a whole
+ * statement in a way that is never recomputed. Today's dashboard
+ * conversions may degrade to the fallback (law #5 — a live figure);
+ * an immutable one may not.
+ */
+export class NoExchangeRateError extends Error {
+  readonly code = "no_exchange_rate";
+  constructor(readonly currency: CurrencyCode) {
+    super(
+      `No exchange rate for ${currency} has been synced yet, so these rows can't be converted to shekels. Run the rate sync (npm run sync:rates) and try again.`,
+    );
+    this.name = "NoExchangeRateError";
   }
 }
 
@@ -45,11 +87,70 @@ export type ImportSummary = {
   importedIds: string[];
 };
 
+/**
+ * Where the import's conversion rate comes from. Injectable as one seam
+ * because `ExchangeRate` is a global, non-user-scoped table: a test that
+ * needs "no rate exists for TRY" can't arrange that in the shared dev
+ * database without racing every other test file that reads the real
+ * rows, so tests hand in a fake source instead. Production callers leave
+ * it at the default (the real DAL reads + the Frankfurter sync).
+ */
+export type ImportRateSource = {
+  getLatestRateFetchedAt: (currency: CurrencyCode) => Promise<Date | null>;
+  getLatestRateTable: () => Promise<Readonly<Record<CurrencyCode, number>>>;
+  syncRates: () => Promise<unknown>;
+};
+
+const DEFAULT_RATE_SOURCE: ImportRateSource = {
+  getLatestRateFetchedAt,
+  getLatestRateTable: () => getLatestRateTable(),
+  syncRates: () => syncExchangeRates(),
+};
+
 export type ImportTransactionsInput = {
   bankAccountId: string;
   adapterId: string;
   rows: readonly CanonicalImportRow[];
+  rateSource?: ImportRateSource;
 };
+
+/**
+ * Resolves the one conversion rate every row of this import is frozen
+ * at. ILS needs none (returns `null` without touching the source at
+ * all). For any other currency, a REAL stored rate is required — never
+ * `FALLBACK_RATE_TABLE`'s guess (see `NoExchangeRateError`): if nothing
+ * has ever been synced for it, one sync is attempted on demand (the
+ * first import into a brand-new TRY account shouldn't fail just because
+ * the nightly cron hasn't run yet), and if that still leaves no row, the
+ * import is refused.
+ *
+ * Accepted, documented limitation: the whole statement converts at the
+ * rate current at import time, not per-row historical rates — exactly
+ * the trade-off the PSD2 sync path (`sync-service.ts`) already makes,
+ * and the reason `exchangeRateAtEntry` is stored per row at all: the
+ * rate each row was actually booked at is on the row, auditable.
+ */
+export async function resolveImportRate(
+  currency: CurrencyCode,
+  source: ImportRateSource = DEFAULT_RATE_SOURCE,
+): Promise<number | null> {
+  if (currency === BASE_CURRENCY) return null;
+
+  if ((await source.getLatestRateFetchedAt(currency)) === null) {
+    try {
+      await source.syncRates();
+    } catch {
+      // A sync failure (including the stale-data circuit breaker firing
+      // for some OTHER currency) is not this import's error to surface;
+      // the re-check below decides.
+    }
+    if ((await source.getLatestRateFetchedAt(currency)) === null) {
+      throw new NoExchangeRateError(currency);
+    }
+  }
+
+  return (await source.getLatestRateTable())[currency];
+}
 
 /**
  * Writes parsed statement rows as `NotableTransaction`s, skipping any
@@ -79,13 +180,27 @@ export async function importTransactions(
   userId: string,
   input: ImportTransactionsInput,
 ): Promise<ImportSummary> {
+  // The account's currency decides whether a rate is needed at all, and
+  // resolving one may hit the network (an on-demand sync) — neither
+  // belongs inside the long-running write transaction below, so the
+  // account is read in its own short scoped read first.
+  const account = await withUserScope(userId, (tx) =>
+    tx.bankAccount.findFirst({ where: { id: input.bankAccountId, userId }, select: { id: true, currency: true } }),
+  );
+  // Same convention as every other DAL getter: an account that isn't
+  // this user's is indistinguishable from one that doesn't exist.
+  if (!account) throw new BankAccountNotFoundError();
+
+  const currency = account.currency as CurrencyCode;
+  for (const row of input.rows) {
+    if (row.currency !== currency) throw new ImportCurrencyMismatchError(currency, row.currency);
+  }
+
+  const rate = await resolveImportRate(currency, input.rateSource);
+
   return withUserScope(
     userId,
     async (tx) => {
-      const account = await tx.bankAccount.findFirst({ where: { id: input.bankAccountId, userId } });
-      // Same convention as every other DAL getter: an account that isn't
-      // this user's is indistinguishable from one that doesn't exist.
-      if (!account) throw new BankAccountNotFoundError();
 
       const categories = await tx.category.findMany({ where: { userId, archivedAt: null } });
       let uncategorized = categories.find((category) => category.isUncategorized);
@@ -150,6 +265,12 @@ export async function importTransactions(
 
         const merchantText = row.merchantName ?? row.description;
 
+        // The ILS figure this row is booked at — frozen here, with the
+        // rate it was converted at, never recomputed (AGENTS.md §3k). For
+        // an ILS account `convertNativeAmountToAgorot` is the identity
+        // and never reads the rate (`rate` is null there).
+        const amountAgorot = convertNativeAmountToAgorot(row.nativeAmount, currency, rate ?? 1);
+
         // Tier 0: user-defined deterministic rules, evaluated BEFORE the
         // cascade below. Rename/flag actions always apply regardless of
         // whether a rule also set a category; a resolved `categorySlug`
@@ -157,10 +278,13 @@ export async function importTransactions(
         // slug this user has no category for falls through to the
         // cascade instead of erroring, same reasoning Tier 2's own
         // slug-resolution failure already falls through in cascade.ts).
+        // Rules match on the converted ILS amount — a user's "over ₪500"
+        // rule means shekels regardless of which account the row came
+        // from.
         const tier0Input: TransactionRuleData = {
           merchantName: row.merchantName,
           description: row.description,
-          amountAgorot: row.amountAgorot,
+          amountAgorot,
         };
         const tier0 = applyRules(tier0Input, activeRules);
         const tier0CategoryId = tier0.categorySlug ? categoryIdBySlug.get(tier0.categorySlug) : undefined;
@@ -204,15 +328,15 @@ export async function importTransactions(
               categoryId,
               providerTransactionId,
               occurredAt: row.occurredAt,
-              amount: BigInt(row.amountAgorot),
-              // The CSV pipeline refuses foreign-currency rows outright
-              // (src/lib/csv-import/, AGENTS.md §3j — importing a USD
-              // amount as shekels would corrupt the ledger by roughly the
-              // FX rate), so every imported row is ILS-native: the native
-              // amount is the agorot amount, and no conversion happened,
-              // hence no exchangeRateAtEntry.
-              currency: "ILS",
-              nativeAmount: BigInt(row.amountAgorot),
+              // The pipeline parses every row in the ACCOUNT's currency
+              // and refuses a row whose currency cell says otherwise
+              // (src/lib/csv-import/, AGENTS.md §3j/§3bbb) — so
+              // `nativeAmount` is what the bank stated, `amount` is its
+              // ILS conversion at `rate`, and both are frozen facts.
+              currency,
+              nativeAmount: BigInt(row.nativeAmount),
+              amount: BigInt(amountAgorot),
+              exchangeRateAtEntry: rate === null ? null : rate.toString(),
               description: row.description,
               // A Tier 0 `rename` action overrides the imported merchant
               // name; otherwise unchanged.
