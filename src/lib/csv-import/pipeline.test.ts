@@ -131,12 +131,12 @@ describe("isClientFileError", () => {
 describe("parseStatementCsv — Turkish statements & currency", () => {
   const TURKISH = [
     "Tarih;Açıklama;Borç;Alacak",
-    "01.03.2026;MİGROS;1.234,56;",
-    "02.03.2026;MAAŞ;;45.000,00",
-    "03.03.2026;\"KAHVE; ÇAY\";45,50;",
+    "01.03.2026;MİGROS;1,234.56;",
+    "02.03.2026;MAAŞ;;45,000.00",
+    "03.03.2026;\"KAHVE; ÇAY\";45.50;",
   ].join("\r\n");
 
-  it("parses a ;-delimited, comma-decimal, UTF-8 Turkish file for a TRY account end to end", () => {
+  it("parses a ;-delimited, dot-decimal, UTF-8 Turkish file for a TRY account end to end", () => {
     const result = parseStatementCsv(csv(TURKISH), { expectedCurrency: "TRY" });
 
     expect(result.adapterId).toBe("turkish-debit-credit");
@@ -156,7 +156,7 @@ describe("parseStatementCsv — Turkish statements & currency", () => {
         if (byte > 0xff) throw new Error(`fixture: cannot encode ${ch}`);
         return byte;
       });
-    const result = parseStatementCsv(cp1254("Tarih;Açıklama;Tutar\n01.03.2026;MİGROS;-1.234,56\n"), {
+    const result = parseStatementCsv(cp1254("Tarih;Açıklama;Tutar\n01.03.2026;MİGROS;-1,234.56\n"), {
       expectedCurrency: "TRY",
     });
     expect(result.adapterId).toBe("turkish-signed-amount");

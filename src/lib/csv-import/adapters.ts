@@ -130,7 +130,18 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
   // Turkish bank exports (AGENTS.md §3bbb). Aliases are written as they
   // appear in the exports and matched after Turkish-aware folding (see
   // normalizeHeader), so `İşlem Tarihi`, `islem tarihi` and `İŞLEM TARİHİ`
-  // all resolve. Deliberately NO reference aliases: a Turkish slip number
+  // all resolve.
+  //
+  // `dot-decimal`, verified against a real QNB statement — NOT the
+  // comma-decimal these adapters originally assumed. QNB
+  // writes ₺1,279.54 as `1,279.54` in the amount column (comma groups
+  // thousands, dot marks kuruş) even though its own prose in the
+  // description is locale-formatted the other way (`5,00 USD alış,
+  // işlem kuru 46,050000 TL`). The column is machine-formatted; the
+  // prose is not. Had the parser "helpfully" swapped separators instead
+  // of enforcing a strict grammar, every row would have been off by
+  // 100x — `-300.00` read as -30000 kuruş. It refused instead, which is
+  // exactly why that grammar is strict. Deliberately NO reference aliases: a Turkish slip number
   // (fiş no / dekont no) restarts per account, and providerTransactionId
   // is unique per USER, so two TRY accounts at one bank would collide on
   // the `:ref:` path — the content-hash path is the safe key here. And
@@ -142,7 +153,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
     label: "Turkish bank statement (Tarih / Açıklama / Borç / Alacak)",
     dateFormat: "DD/MM/YYYY",
     amountConvention: "debit-credit",
-    numberFormat: "comma-decimal",
+    numberFormat: "dot-decimal",
     currency: "TRY",
     columns: {
       date: ["tarih", "işlem tarihi", "date", "transaction date"],
@@ -154,10 +165,10 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
   },
   {
     id: "turkish-signed-amount",
-    label: "Turkish bank / card statement (Tarih / Açıklama / Tutar)",
+    label: "Turkish bank statement (Tarih / Açıklama / Tutar) — verified against QNB",
     dateFormat: "DD/MM/YYYY",
     amountConvention: "signed",
-    numberFormat: "comma-decimal",
+    numberFormat: "dot-decimal",
     currency: "TRY",
     columns: {
       date: ["tarih", "işlem tarihi", "date", "transaction date"],
@@ -438,6 +449,29 @@ function resolveAmount(
   return amount;
 }
 
+/**
+ * A line that carries no date AND no amount isn't a transaction at all —
+ * it's a statement's own furniture. Real example (a Turkish bank's PDF
+ * export, §3bbb): a `DEVREDEN BAKİYE` ("balance carried forward")
+ * opening line with only a running-balance figure, no date, no `Tutar`.
+ *
+ * Skipped SILENTLY rather than reported, because surfacing it as a
+ * rejected row teaches the user to expect a rejection on every clean
+ * import and stop reading the count.
+ *
+ * Deliberately requires BOTH to be empty. A row with no date but a real
+ * amount is a genuine data problem — dropping that quietly would hide
+ * a transaction, so it still becomes a `RowError`.
+ */
+function isStatementFurniture(adapter: BankAdapter, record: string[], columns: ResolvedColumns): boolean {
+  if (cell(record, columns.date) !== "") return false;
+  const amountCells =
+    adapter.amountConvention === "debit-credit"
+      ? [cell(record, columns.debit), cell(record, columns.credit)]
+      : [cell(record, columns.amount)];
+  return amountCells.every((value) => value === "");
+}
+
 export type AdapterParseOutcome = {
   rows: Omit<CanonicalImportRow, "dedupeKeySource">[];
   errors: RowError[];
@@ -463,6 +497,7 @@ export function applyAdapter(
   records.forEach((record, recordIndex) => {
     // +2: the header occupies line 1, and lineNumber is 1-based.
     const lineNumber = recordIndex + 2;
+    if (isStatementFurniture(adapter, record, columns)) return;
     try {
       assertRowCurrency(record, columns.currency, expectedCurrency);
 

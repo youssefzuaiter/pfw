@@ -69,18 +69,27 @@ function stripBom(input: string): string {
  * trailing newlines and blank separator lines are ubiquitous in real
  * exports and are not row-level errors.
  */
-export type CsvDelimiter = "," | ";";
+export type CsvDelimiter = "," | ";" | "\t";
 
 /**
  * Decides the field delimiter from the FIRST physical line only, before
  * anything is tokenized. European/Turkish exports (Excel in a locale
- * whose decimal separator is already `,`) use `;`; this is a deterministic
- * rule, not a format guess: a line with no unquoted comma and at least one
- * semicolon is semicolon-delimited, anything else is comma-delimited
- * (the default, and every existing fixture). It must run BEFORE
- * `tokenizeCsv` — tokenizing a `;` file as comma-delimited first would
- * read each whole line as one cell and trip the per-cell length ceiling
- * on any long line, long before a "one header cell" check could run.
+ * whose decimal separator is already `,`) use `;`; text lifted out of a
+ * PDF's text layer comes through tab-separated (§3bbb). This is a
+ * deterministic rule, not a format guess: with no unquoted comma on the
+ * first line, a tab wins over a semicolon, and a semicolon over nothing;
+ * anything else is comma-delimited (the default, and every existing
+ * fixture).
+ *
+ * A comma on the first line always wins, because a genuine CSV header is
+ * far likelier than a comma inside a tab-separated header cell — and the
+ * amount columns that DO contain commas (`1,230.96`) live in data rows,
+ * which this never looks at.
+ *
+ * It must run BEFORE `tokenizeCsv` — tokenizing a `;` or tab file as
+ * comma-delimited first would read each whole line as one cell and trip
+ * the per-cell length ceiling on any long line, long before a "one header
+ * cell" check could run.
  */
 export function sniffDelimiter(input: string): CsvDelimiter {
   const text = stripBom(input);
@@ -90,13 +99,17 @@ export function sniffDelimiter(input: string): CsvDelimiter {
   let inQuotes = false;
   let sawComma = false;
   let sawSemicolon = false;
+  let sawTab = false;
   for (const char of firstLine) {
     if (char === '"') inQuotes = !inQuotes;
     else if (inQuotes) continue;
     else if (char === ",") sawComma = true;
     else if (char === ";") sawSemicolon = true;
+    else if (char === "\t") sawTab = true;
   }
-  return !sawComma && sawSemicolon ? ";" : ",";
+  if (sawComma) return ",";
+  if (sawTab) return "\t";
+  return sawSemicolon ? ";" : ",";
 }
 
 export function tokenizeCsv(

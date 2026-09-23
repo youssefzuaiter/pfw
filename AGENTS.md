@@ -7620,6 +7620,81 @@ sidecar); production build, `verify:client-bundle-secrets`, Gitleaks
 two documented CI throwaways already in `.gitleaksignore`. The dev
 database was re-seeded afterward and confirmed free of import residue.
 
+### Follow-up: QNB is dot-decimal, and PDF statements import by paste
+
+The first real statement — a QNB export, the user's own bank — arrived
+after the section above shipped, and immediately falsified two things
+written here.
+
+- **The Turkish adapters' `numberFormat` was wrong.** QNB writes ₺1,279.54
+  as `1,279.54` — comma groups thousands, dot marks kuruş — while its own
+  prose in the same row is locale-formatted the other way (`5,00 USD
+  alış, işlem kuru 46,050000 TL`). The column is machine-formatted; the
+  description is not. Both Turkish adapters are `dot-decimal` now.
+  The strict grammar earned its keep exactly as designed: every row was
+  REJECTED rather than separator-swapped, and a swap would have read
+  `-300.00` as -30000 kuruş — ₺300 booked as ₺3,000 — silently, on every
+  row. One test's premise inverted as a result (it asserted dot-decimal
+  is refused; it now asserts comma-decimal is), which is the right
+  outcome: whichever convention is declared, the other must fail loudly.
+- **"The PDF text layer is already tab-separated" was false.** Copying a
+  statement out of macOS Preview yields clean tab-separated columns, and
+  that is what made the layout look trivially parseable. But pdf.js's
+  `getTextContent()` returns positioned text runs — `str`, `x`, `y`,
+  `hasEOL` — and NO tabs at all (probed against a real PDF in
+  `node_modules`: 89 items on one page, zero tabs). The tabs are
+  **Preview's** doing; it infers columns from geometry. `pdfjs-dist` was
+  installed on the strength of the wrong premise and uninstalled once the
+  probe ran.
+
+So PDF import is a **paste** path, not a file path: the viewer has
+already solved column detection, and reproducing that as an x-gap
+heuristic would mean tuning geometry against a document this repo can
+never hold a copy of or test in CI. `src/lib/csv-import/pasted-table.ts`
+normalizes pasted text to TSV — header split on tabs-or-multiple-spaces
+(QNB separates `İşlem Açıklaması` from `Tutar` with spaces), data rows on
+tabs only (descriptions contain runs of spaces and otherwise shred from 5
+cells to 9), repeated per-page headers dropped, tab-less page furniture
+dropped. TSV rather than CSV because the data is full of commas that
+aren't delimiters, so tabs round-trip with no quoting at all;
+`sniffDelimiter` gained `"\t"` to detect it.
+
+`applyAdapter` also now skips a row with no date AND no amount —
+a statement's `DEVREDEN BAKİYE` opening line. Deliberately requires both
+to be empty: a dateless row that DOES carry an amount is a real data
+problem and still becomes a `RowError`, because silently dropping a
+transaction is worse than a confusing rejection.
+
+**A pre-existing test bug this surfaced**, unrelated to any of the above:
+`tests/integration/auth-credentials.test.ts` restored the demo row's
+email, password hash and display name but not the `failedLoginAttempts`
+it deliberately drives up by testing wrong passwords. Every local run
+left the counter one higher; the fifth (`LOCKOUT_THRESHOLD = 5`) locked
+the account permanently, breaking both the suite and the app's own Demo
+Login button with nothing pointing at the cause. CI never sees it — CI
+gets a fresh database per run, so only repeated local runs accumulate.
+Now reset in the same `afterEach`, verified by running that suite twice
+in a row with the counter at 0 after each.
+
+**Verified live**: pasted QNB-shaped text through the real
+`POST /api/transactions/import` on the running dev server with a real
+session — preview returned 4 rows / 0 rejected with correct signs
+(`-₺94.25`, `+₺921.00`) and August dates; the import wrote 4 rows stored
+as kuruş natively with the ILS conversion frozen at the real synced rate
+(0.062267) and `description` ciphertext at rest; re-importing the
+identical text returned 0 imported / 4 duplicates. `npm run check`
+1409/1412 (3 skip, the unrelated embedding sidecar). Test data removed
+afterward and confirmed gone.
+
+**Not verified, flagged rather than glossed over**: the import form's own
+React wiring was not clicked through in a browser — that page's form
+subtree would not finish hydrating under `next dev` in this session
+(the same friction the lesson below describes), so the paste path was
+exercised by building the identical `File` the form builds and POSTing
+it to the real route from the page's own console. The conversion beneath
+it has unit coverage; the three lines that turn a textarea's value into
+that `File` do not.
+
 ### A browser-automation lesson, recorded because it cost real time
 
 Driving the import form, synthetic `change` events (raw `dispatchEvent`,

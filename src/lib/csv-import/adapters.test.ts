@@ -334,8 +334,8 @@ describe("applyAdapter — turkish-debit-credit", () => {
       adapter,
       TURKISH_DC_HEADERS,
       [
-        ["01.03.2026", "MİGROS", "1.234,56", ""],
-        ["02.03.2026", "MAAŞ", "", "45.000,00"],
+        ["01.03.2026", "MİGROS", "1,234.56", ""],
+        ["02.03.2026", "MAAŞ", "", "45,000.00"],
       ],
       "TRY",
     );
@@ -352,9 +352,9 @@ describe("applyAdapter — turkish-debit-credit", () => {
       adapter,
       headers,
       [
-        ["01.03.2026", "A", "10,00", "", "TL"],
-        ["01.03.2026", "B", "10,00", "", "TRY"],
-        ["01.03.2026", "C", "10,00", "", "USD"],
+        ["01.03.2026", "A", "10.00", "", "TL"],
+        ["01.03.2026", "B", "10.00", "", "TRY"],
+        ["01.03.2026", "C", "10.00", "", "USD"],
       ],
       "TRY",
     );
@@ -363,10 +363,17 @@ describe("applyAdapter — turkish-debit-credit", () => {
     expect(errors[0].message).toMatch(/USD.*not supported/);
   });
 
-  it("reports a dot-decimal amount as a row error instead of a wrong number", () => {
-    const { rows, errors } = applyAdapter(adapter, TURKISH_DC_HEADERS, [["01.03.2026", "X", "1234.56", ""]], "TRY");
+  it("reports a comma-decimal amount as a row error instead of a wrong number", () => {
+    // These adapters declare dot-decimal (QNB's real format, §3bbb), so
+    // a European-style `1.234,56` is refused rather than silently
+    // separator-swapped. The direction of this check flipped when a real
+    // statement proved the original comma-decimal assumption wrong; the
+    // property under test did not — whichever convention is declared,
+    // the other one must fail loudly rather than parse to a wrong
+    // magnitude.
+    const { rows, errors } = applyAdapter(adapter, TURKISH_DC_HEADERS, [["01.03.2026", "X", "1.234,56", ""]], "TRY");
     expect(rows).toHaveLength(0);
-    expect(errors[0].message).toMatch(/comma-decimal/);
+    expect(errors[0].message).toMatch(/not a valid decimal amount/i);
   });
 });
 
@@ -378,8 +385,8 @@ describe("applyAdapter — turkish-signed-amount", () => {
       adapter,
       TURKISH_SIGNED_HEADERS,
       [
-        ["01.03.2026 14:23", "KAHVE", "-45,50"],
-        ["05.03.2026 09:00", "İADE", "45,50"],
+        ["01.03.2026 14:23", "KAHVE", "-45.50"],
+        ["05.03.2026 09:00", "İADE", "45.50"],
       ],
       "TRY",
     );

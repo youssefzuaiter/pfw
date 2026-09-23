@@ -57,7 +57,21 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Rea
     if (demoUserId) {
       await admin.user.update({
         where: { id: demoUserId },
-        data: { email: "demo@pfw.local", passwordHash: demoUserOriginalPasswordHash, displayName: demoUserOriginalDisplayName },
+        data: {
+          email: "demo@pfw.local",
+          passwordHash: demoUserOriginalPasswordHash,
+          displayName: demoUserOriginalDisplayName,
+          // Reset the lockout counters this file deliberately drives up
+          // by testing wrong passwords. Without this the demo row keeps
+          // its failed-attempt count BETWEEN runs, and the fifth local
+          // run of the suite (LOCKOUT_THRESHOLD = 5) locks the account
+          // permanently — breaking both this suite and the app's own
+          // Demo Login button, with nothing pointing at the cause. CI
+          // never sees it because CI gets a fresh database per run;
+          // only repeated local runs accumulate.
+          failedLoginAttempts: 0,
+          accountLockedAt: null,
+        },
       });
     }
     if (testEmails.length > 0) {
