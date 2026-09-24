@@ -35,6 +35,8 @@ const eslintConfig = defineConfig([
     // Vendored onnxruntime-web WASM-glue asset (AGENTS.md §3u), same
     // "self-hosted static file, not hand-authored code" treatment.
     "public/onnx-runtime/**",
+    // Vendored pdf.js worker (§3bbb) — a build artifact, not hand-authored source.
+    "public/pdfjs/**",
   ]),
 ]);
 

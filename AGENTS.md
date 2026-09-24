@@ -7620,11 +7620,11 @@ sidecar); production build, `verify:client-bundle-secrets`, Gitleaks
 two documented CI throwaways already in `.gitleaksignore`. The dev
 database was re-seeded afterward and confirmed free of import residue.
 
-### Follow-up: QNB is dot-decimal, and PDF statements import by paste
+### Follow-up: QNB is dot-decimal, and a PDF is just another upload
 
 The first real statement — a QNB export, the user's own bank — arrived
-after the section above shipped, and immediately falsified two things
-written here.
+after the section above shipped and falsified two things written here.
+The second one took two attempts to get right, both recorded.
 
 - **The Turkish adapters' `numberFormat` was wrong.** QNB writes ₺1,279.54
   as `1,279.54` — comma groups thousands, dot marks kuruş — while its own
@@ -7639,31 +7639,67 @@ written here.
   outcome: whichever convention is declared, the other must fail loudly.
 - **"The PDF text layer is already tab-separated" was false.** Copying a
   statement out of macOS Preview yields clean tab-separated columns, and
-  that is what made the layout look trivially parseable. But pdf.js's
+  that is what made the layout look trivially parseable. pdf.js's
   `getTextContent()` returns positioned text runs — `str`, `x`, `y`,
-  `hasEOL` — and NO tabs at all (probed against a real PDF in
-  `node_modules`: 89 items on one page, zero tabs). The tabs are
-  **Preview's** doing; it infers columns from geometry. `pdfjs-dist` was
-  installed on the strength of the wrong premise and uninstalled once the
-  probe ran.
+  `hasEOL` — and NO tabs at all (probed against a real PDF: 89 items on
+  one page, zero tabs). The tabs are **Preview's** doing; it infers
+  columns from geometry.
 
-So PDF import is a **paste** path, not a file path: the viewer has
-already solved column detection, and reproducing that as an x-gap
-heuristic would mean tuning geometry against a document this repo can
-never hold a copy of or test in CI. `src/lib/csv-import/pasted-table.ts`
-normalizes pasted text to TSV — header split on tabs-or-multiple-spaces
-(QNB separates `İşlem Açıklaması` from `Tutar` with spaces), data rows on
-tabs only (descriptions contain runs of spaces and otherwise shred from 5
-cells to 9), repeated per-page headers dropped, tab-less page furniture
-dropped. TSV rather than CSV because the data is full of commas that
-aren't delimiters, so tabs round-trip with no quoting at all;
-`sniffDelimiter` gained `"\t"` to detect it.
+**The first attempt was a paste box, and it was the wrong call.** The
+reasoning at the time — the viewer has already solved column detection,
+so normalizing pasted text is smaller than reproducing that — was sound
+about scope and wrong about the product: the user asked for PDFs to
+upload like CSVs, and a copy-paste step is a worse answer to that. It was
+also more fragile than it looked. The user's own paste came back
+space-separated with wrapped lines, not the tab-separated text an earlier
+paste into chat had shown, so the parse depended on which viewer the text
+came from — a hidden dependency that reads as a broken feature. It failed
+for them with "Could not recognize this file's columns."
 
-`applyAdapter` also now skips a row with no date AND no amount —
-a statement's `DEVREDEN BAKİYE` opening line. Deliberately requires both
-to be empty: a dateless row that DOES carry an amount is a real data
-problem and still becomes a `RowError`, because silently dropping a
-transaction is worse than a confusing rejection.
+So PDF import is a **file** path: `src/lib/pdf-extract.ts` (client-only,
+guarded like every other browser-only module) reads the text layer with
+pdf.js, and `src/lib/csv-import/text-items-to-rows.ts` — pure, over a
+plain `{ str, x, y, width }` shape, which is what makes every rule below
+testable with no PDF, no worker and no binary fixture — rebuilds the
+table. The file never leaves the device; only the extracted table is
+uploaded, the same posture as receipt OCR (§3q). pdf.js loads through a
+dynamic `import()`, so a CSV-only user pays none of its weight, and its
+worker is self-hosted under `public/pdfjs/` so `script-src`/`worker-src`
+stay `'self'` (§3q/§3u's precedent).
+
+Three decisions the reconstruction had to get right:
+
+- **Reading order is DESCENDING y.** PDF's origin is the bottom-left
+  corner, so a larger y is further UP the page. Sorting ascending yields
+  a statement in perfect reverse order, which still parses and still
+  imports — silently wrong, which is why it has its own test.
+- **A narrow gap joins with a space, never by concatenation.** pdf.js
+  splits one visual run at font or kerning changes, so `Pos` and `satış`
+  arrive separately and would otherwise fuse into `Possatış`.
+- **Columns are horizontal BANDS, not cell indexes** — the fix for a real
+  bug, found only by driving the finished form against a real PDF in a
+  real browser. The opening-balance line (`DEVREDEN BAKİYE … 352.66`) has
+  no date and no amount, so by index its two cells land in the date and
+  description columns: a dateless row carrying a number, which
+  `applyAdapter` rightly refuses rather than silently dropping. It came
+  back as a rejected row. `detectColumnBands` merges every cell's
+  [left, right] range across every line and treats each surviving gap as
+  a gutter; each cell then goes to the band containing its midpoint, and
+  rows are padded to a common width. Bands rather than left edges
+  specifically because an amount column is right-aligned — `-94.25` and
+  `1,230.96` start at different x but are one column, and clustering on
+  left edges alone would split it in two. After the fix that line is an
+  empty date AND an empty amount, which is exactly the furniture shape
+  `applyAdapter` drops: the same statement went from 1 rejected row to 0.
+
+The extracted table is emitted as TSV rather than CSV because this data
+is full of commas that aren't delimiters, so tabs round-trip with no
+quoting at all; `sniffDelimiter` gained `"\t"` to detect it.
+
+`applyAdapter` also now skips a row with no date AND no amount.
+Deliberately requires both to be empty: a dateless row that DOES carry an
+amount is a real data problem and still becomes a `RowError`, because
+silently dropping a transaction is worse than a confusing rejection.
 
 **A pre-existing test bug this surfaced**, unrelated to any of the above:
 `tests/integration/auth-credentials.test.ts` restored the demo row's
@@ -7676,43 +7712,55 @@ gets a fresh database per run, so only repeated local runs accumulate.
 Now reset in the same `afterEach`, verified by running that suite twice
 in a row with the counter at 0 after each.
 
-**Verified live**: pasted QNB-shaped text through the real
-`POST /api/transactions/import` on the running dev server with a real
-session — preview returned 4 rows / 0 rejected with correct signs
-(`-₺94.25`, `+₺921.00`) and August dates; the import wrote 4 rows stored
-as kuruş natively with the ILS conversion frozen at the real synced rate
-(0.062267) and `description` ciphertext at rest; re-importing the
-identical text returned 0 imported / 4 duplicates. `npm run check`
-1409/1412 (3 skip, the unrelated embedding sidecar). Test data removed
+**Verified live, in a real browser, through the real form.** A generated
+PDF laid out like a QNB statement (real `pg_dump`-free path: plain text →
+`cupsfilter` → a real 1-page PDF) was uploaded by setting the file input
+and clicking Preview for real, against a production build: pdf.js ran in
+the browser, the table rebuilt, the adapter was detected as the Turkish
+signed-amount layout, and the preview showed `-₺94.25` / `+₺921.00` with
+August dates and **0 rejected rows**. Earlier in the same pass the server
+half was verified against the real route with a real session — 4 rows
+imported, stored as kuruş natively with the ILS conversion frozen at the
+real synced rate (0.062267), `description` ciphertext at rest, and a
+re-import returning 0 imported / 4 duplicates. `npm run check`
+1410/1413 (3 skip, the unrelated embedding sidecar). Test data removed
 afterward and confirmed gone.
 
-**Not verified, flagged rather than glossed over**: the import form's own
-React wiring was not clicked through in a browser — that page's form
-subtree would not finish hydrating under `next dev` in this session
-(the same friction the lesson below describes), so the paste path was
-exercised by building the identical `File` the form builds and POSTing
-it to the real route from the page's own console. The conversion beneath
-it has unit coverage; the three lines that turn a textarea's value into
-that `File` do not.
+**Two verification lessons worth keeping, both of which cost real time:**
 
-### A browser-automation lesson, recorded because it cost real time
-
-Driving the import form, synthetic `change` events (raw `dispatchEvent`,
-and the browser tool's own `form_input`) did not reach React's delegated
-listener — the DOM `<select>` value changed while React state did not,
-which looks exactly like a product bug. Calling the element's own
-`__reactProps$…onChange` directly updated state immediately, proving the
-component was correct and only event *delivery* was failing. Worth
-checking that distinction before reporting a UI bug found through
-automation. (Clicks are delivered fine; it is specifically `change`.)
+1. **`__reactProps$` is not a hydration oracle.** Probing for it to decide
+   whether a form had hydrated reported `hydrated: false` on a production
+   build for a form that was, in fact, fully working — including
+   pre-existing components this pass never touched, which is what finally
+   made the reading suspicious. A real click settled it in one step. When
+   an instrument says a whole page is broken, check it against the thing
+   the instrument is supposed to be measuring before believing it.
+2. **Synthetic `change` events do not reach React's delegated listener** —
+   raw `dispatchEvent` and the browser tool's own `form_input` both left
+   the DOM `<select>` changed while React state was not, which looks
+   exactly like a product bug. Calling the element's own
+   `__reactProps$…onChange` directly updated state immediately, proving
+   the component was correct and only event *delivery* was failing.
+   Clicks are delivered fine; it is specifically `change`.
 
 ### Known limitations, left as such
 
 Both Turkish layouts are representative shapes, not byte-verified
 reproductions of any real bank's export — the preview step exists
 precisely because no sample file was available; adding a real one means
-adding an entry to `adapters.ts`, not restructuring anything. The
-importer still refuses a row whose currency cell names a currency other
+adding an entry to `adapters.ts`, not restructuring anything. The same
+gap applies to the PDF reconstruction: every geometry rule was verified
+against a PDF this repo generated, never against a real bank's own
+export, whose column positions and wrapping are its own. A statement
+whose description WRAPS onto a second visual line will produce a
+continuation row — one that carries no date, so it is rejected rather
+than merged, and the transaction itself still imports from the line that
+carried its amount. Merging a continuation into the row above is the
+obvious next step and was deliberately not guessed at without a real
+file to tune it against — the same mistake this section already records
+making once.
+
+The importer still refuses a row whose currency cell names a currency other
 than the account's rather than converting it. `/settings/ops` shows the
 outcome of the nightly cron, not a run history — no table records past
 runs, which was an explicit non-goal. And the equity-quote row is the
@@ -8064,9 +8112,11 @@ src/lib/valuation-freshness.ts   Fresh/Aging/Stale thresholds for manual assets
 src/lib/cash-flow-forecast.ts   60-day forecast, absolute minimum point
 src/lib/recurring-detection.ts  periodicity engine (3+ months, CV < 0.15)
 src/lib/categorization/         4-tier cascade (types, tier1-3, cascade orchestrator)
-src/lib/csv-import/             statement CSV pipeline: tokenizer (`,`/`;`, legacy
+src/lib/csv-import/             statement CSV pipeline: tokenizer (`,`/`;`/tab, legacy
                                   encodings), formula-injection guard, per-bank
-                                  adapters incl. Turkish (§3j, §3bbb)
+                                  adapters incl. Turkish (§3j, §3bbb), and
+                                  text-items-to-rows.ts (PDF geometry -> table)
+src/lib/pdf-extract.ts          client-only pdf.js text-layer reader (§3bbb)
 src/lib/insights/               7 generators + generate-insights.ts orchestrator
 src/lib/mock-market-data.ts     deterministic mock price feed + price history for /trading's chart
 sidecar/                        FastAPI/ONNX merchant-embedding service (Python)

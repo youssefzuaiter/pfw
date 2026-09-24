@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Badge } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
-import { pdfTextToTsv } from "../../../../lib/csv-import/pasted-table";
+import { textItemsToTsv } from "../../../../lib/csv-import/text-items-to-rows";
 
 type BankAccountOption = { id: string; label: string; currency: string };
 
@@ -52,8 +52,6 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [source, setSource] = useState<"file" | "paste">("file");
-  const [pastedText, setPastedText] = useState("");
   const [bankAccountId, setBankAccountId] = useState(bankAccounts[0]?.id ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,39 +74,31 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
     resetOutcome();
   }
 
-  function handlePastedTextChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    setPastedText(event.target.value);
-    resetOutcome();
-  }
-
-  function handleSourceChange(event: ChangeEvent<HTMLSelectElement>) {
-    setSource(event.target.value === "paste" ? "paste" : "file");
-    resetOutcome();
-  }
-
   function handleAccountChange(event: ChangeEvent<HTMLSelectElement>) {
     setBankAccountId(event.target.value);
     resetOutcome();
   }
 
   /**
-   * Both input modes end up as the same multipart upload, so the server
-   * keeps exactly one parsing path (AGENTS.md §3bbb). Pasted text is
-   * normalized to TSV here and wrapped in a `File` named after nothing
-   * but itself — the route's own `.csv` extension check is about
-   * rejecting stray binaries, and `sniffDelimiter` picks the tab
-   * delimiter up from the first line regardless of the name.
+   * A PDF is converted to the same tab-separated table a CSV upload
+   * already produces, IN THE BROWSER, and only that table is uploaded —
+   * the file itself never leaves the device (AGENTS.md §3bbb, the same
+   * posture as receipt OCR in §3q).
+   *
+   * pdf.js is imported dynamically by `extractPdfTextItems`, so none of
+   * its weight is paid by anyone who only ever uploads CSVs.
    */
-  function buildUpload(): File | null {
-    if (source === "file") return fileInputRef.current?.files?.[0] ?? null;
-    const tsv = pdfTextToTsv(pastedText);
-    if (tsv.trim() === "") return null;
-    return new File([tsv], "pasted-statement.csv", { type: "text/csv" });
+  async function buildUpload(file: File): Promise<File> {
+    if (!file.name.toLowerCase().endsWith(".pdf")) return file;
+
+    const { extractPdfTextItems } = await import("../../../../lib/pdf-extract");
+    const tsv = textItemsToTsv(await extractPdfTextItems(file));
+    return new File([tsv], `${file.name.replace(/\.pdf$/i, "")}.csv`, { type: "text/csv" });
   }
 
   async function submit(mode: "preview" | "import") {
-    const file = buildUpload();
-    if (!file || !bankAccountId) return;
+    const chosen = fileInputRef.current?.files?.[0];
+    if (!chosen || !bankAccountId) return;
 
     setIsSubmitting(true);
     setError(null);
@@ -117,7 +107,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", await buildUpload(chosen));
       formData.append("bankAccountId", bankAccountId);
       if (mode === "preview") formData.append("dryRun", "1");
 
@@ -148,7 +138,6 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         rejectedRows: body.rejectedRows ?? [],
       });
       setFileName(null);
-      setPastedText("");
       if (fileInputRef.current) fileInputRef.current.value = "";
       router.refresh();
     } catch (err) {
@@ -181,7 +170,8 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         Import statement
       </h2>
       <p className="mb-3 text-xs text-muted">
-        Upload a .csv bank or credit-card statement. Amounts are read in the selected account&apos;s currency
+        Upload a .csv or .pdf bank or credit-card statement. A PDF is read in your browser and never uploaded.
+        Amounts are read in the selected account&apos;s currency
         {selectedAccount ? ` (${selectedAccount.currency})` : ""}; you&apos;ll see a preview before anything is
         saved. Duplicate rows from a statement you have already imported are detected and skipped automatically.
       </p>
@@ -220,58 +210,22 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         </div>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor="import-source" className="text-xs font-medium text-muted">
-            Source
+          <label htmlFor="import-file" className="text-xs font-medium text-muted">
+            Statement file
           </label>
-          <select
-            id="import-source"
-            value={source}
-            onChange={handleSourceChange}
-            className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="file">CSV file</option>
-            <option value="paste">Paste from PDF</option>
-          </select>
+          <input
+            ref={fileInputRef}
+            id="import-file"
+            type="file"
+            accept=".csv,.pdf,text/csv,application/pdf"
+            onChange={handleFileChange}
+            className="max-w-[260px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg file:mr-3 file:rounded file:border-0 file:bg-elevated file:px-2 file:py-1 file:text-xs file:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
         </div>
-
-        {source === "file" ? (
-          <div className="flex flex-col gap-1">
-            <label htmlFor="import-file" className="text-xs font-medium text-muted">
-              Statement file
-            </label>
-            <input
-              ref={fileInputRef}
-              id="import-file"
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleFileChange}
-              className="max-w-[260px] rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg file:mr-3 file:rounded file:border-0 file:bg-elevated file:px-2 file:py-1 file:text-xs file:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
-        ) : (
-          <div className="flex min-w-0 grow basis-full flex-col gap-1">
-            <label htmlFor="import-paste" className="text-xs font-medium text-muted">
-              Statement text
-            </label>
-            <textarea
-              id="import-paste"
-              value={pastedText}
-              onChange={handlePastedTextChange}
-              rows={5}
-              spellCheck={false}
-              placeholder={"Open the PDF, select the transaction rows, copy, and paste here."}
-              className="w-full min-w-0 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures text-xs text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <p className="text-xs text-muted">
-              Include the header row. Your PDF viewer works out the columns when you copy; the file itself never leaves
-              your device.
-            </p>
-          </div>
-        )}
 
         <button
           type="submit"
-          disabled={isSubmitting || (source === "file" ? !fileName : pastedText.trim() === "")}
+          disabled={isSubmitting || !fileName}
           className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-elevated px-4 py-2 text-sm font-medium text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         >
           {isSubmitting && !preview && <Spinner />}
