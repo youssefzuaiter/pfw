@@ -190,6 +190,7 @@ export async function syncBankConnection(userId: string, connectionId: string): 
               merchantName: finalMerchantName,
               isManual: false,
               needsReview: finalNeedsReview,
+              isTransfer: tier0.isTransfer ?? false,
             },
           });
         } catch (error) {

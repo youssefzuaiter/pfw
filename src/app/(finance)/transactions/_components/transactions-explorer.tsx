@@ -17,6 +17,7 @@ type ApiRow = {
   categoryId: string;
   categoryName: string;
   needsReview: boolean;
+  isTransfer: boolean;
 };
 
 type SearchResponse = { mode: "semantic" | "substring"; results: ApiRow[] };
@@ -35,6 +36,7 @@ function toTransactionRow(row: ApiRow): TransactionRow {
     categoryId: row.categoryId,
     categoryName: row.categoryName,
     needsReview: row.needsReview,
+    isTransfer: row.isTransfer,
   };
 }
 

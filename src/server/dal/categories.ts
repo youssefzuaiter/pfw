@@ -107,6 +107,9 @@ export async function deleteCategoryWithReassignment(userId: string, id: string)
 
     const uncategorized = await getOrCreateUncategorizedCategory(tx, userId);
 
+    // Deliberately NOT filtered to live rows: a soft-deleted transaction
+    // still references this category, and the category itself is about
+    // to be hard-deleted, so its foreign key has to be moved too.
     const { count } = await tx.notableTransaction.updateMany({
       where: { userId, categoryId: id },
       data: { categoryId: uncategorized.id, needsReview: true },

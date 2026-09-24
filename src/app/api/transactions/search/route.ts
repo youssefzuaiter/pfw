@@ -44,6 +44,7 @@ type SearchRow = {
   categoryId: string;
   category: { name: string };
   needsReview: boolean;
+  isTransfer: boolean;
 };
 
 function serializeRow(row: SearchRow) {
@@ -60,6 +61,7 @@ function serializeRow(row: SearchRow) {
     categoryId: row.categoryId,
     categoryName: row.category.name,
     needsReview: row.needsReview,
+    isTransfer: row.isTransfer,
   };
 }
 

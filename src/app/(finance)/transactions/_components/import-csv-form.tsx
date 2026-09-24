@@ -32,6 +32,7 @@ type Preview = {
 
 type ImportSuccess = {
   adapterLabel: string;
+  importBatchId: string;
   importedCount: number;
   duplicateCount: number;
   rejectedCount: number;
@@ -59,6 +60,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [result, setResult] = useState<ImportSuccess | null>(null);
+  const [undone, setUndone] = useState<number | null>(null);
 
   const selectedAccount = bankAccounts.find((account) => account.id === bankAccountId) ?? null;
 
@@ -140,6 +142,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
       setPreview(null);
       setResult({
         adapterLabel: body.adapterLabel,
+        importBatchId: body.importBatchId,
         importedCount: body.importedCount,
         duplicateCount: body.duplicateCount,
         rejectedCount: body.rejectedCount,
@@ -161,7 +164,36 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
   }
 
   function handleImportClick() {
+    setUndone(null);
     void submit("import");
+  }
+
+  /**
+   * Undoes the import just performed, as a unit.
+   *
+   * Offered right here, while the result is still on screen, because
+   * this is the moment someone realises a statement went into the wrong
+   * account or parsed wrong — not later, hunting through 211 rows.
+   */
+  async function handleUndoClick() {
+    if (!result) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/transactions/import-batch/${result.importBatchId}`, {
+        method: "POST",
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? "Could not undo this import");
+
+      setUndone(body.deletedCount ?? 0);
+      setResult(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not undo this import");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   if (bankAccounts.length === 0) {
@@ -360,6 +392,12 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
           </div>
         )}
 
+        {undone !== null && (
+          <p className="text-sm text-positive">
+            Undone — {undone} row{undone === 1 ? "" : "s"} removed. The same file can be imported again.
+          </p>
+        )}
+
         {result && (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -374,6 +412,22 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
               )}
               <span className="text-xs text-muted">Detected format: {result.adapterLabel}</span>
             </div>
+
+            {result.importedCount > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleUndoClick}
+                  disabled={isSubmitting}
+                  className="rounded-md border border-border bg-elevated px-3 py-1.5 text-xs text-fg transition-colors hover:bg-elevated-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                >
+                  {isSubmitting ? "Undoing…" : `Undo this import (${result.importedCount} rows)`}
+                </button>
+                <span className="text-xs text-muted">
+                  Removes exactly these rows and lets the same file be imported again.
+                </span>
+              </div>
+            )}
 
             {result.rejectedRows.length > 0 && (
               <details className="text-xs text-muted">

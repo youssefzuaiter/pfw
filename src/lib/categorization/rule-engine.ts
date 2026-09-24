@@ -97,7 +97,27 @@ export const FlagActionSchema = z.object({
   value: z.boolean(),
 });
 
-export const RuleActionSchema = z.discriminatedUnion("type", [CategorizeActionSchema, RenameActionSchema, FlagActionSchema]);
+/**
+ * Marks a row as money moved between the user's own accounts, so every
+ * "what did I earn/spend" aggregate skips it.
+ *
+ * A rule action rather than only a manual toggle because the rows that
+ * need it arrive in bulk and look alike: a real Turkish statement
+ * carried ~100 `Yatırım İşlemleri … USD alış` rows in one month, each
+ * one the user's own money arriving from their own USD account. Flagging
+ * those by hand, every month, is not a workflow.
+ */
+export const TransferActionSchema = z.object({
+  type: z.literal("transfer"),
+  value: z.boolean(),
+});
+
+export const RuleActionSchema = z.discriminatedUnion("type", [
+  CategorizeActionSchema,
+  RenameActionSchema,
+  FlagActionSchema,
+  TransferActionSchema,
+]);
 export type RuleAction = z.infer<typeof RuleActionSchema>;
 
 export const RuleActionsSchema = z.array(RuleActionSchema).min(1).max(10);
@@ -129,6 +149,8 @@ export type RuleEvaluationResult = {
   renamedMerchantName?: string;
   /** Set by the first matching rule with a `flag` action. */
   forceNeedsReview?: boolean;
+  /** Set by the first matching rule with a `transfer` action. */
+  isTransfer?: boolean;
   /** Every rule that matched, in evaluation order — for observability/audit logging by the caller; this pure function itself persists nothing. */
   matchedRuleIds: string[];
 };
@@ -209,6 +231,8 @@ export function applyRules(
         result.renamedMerchantName = action.value;
       } else if (action.type === "flag" && result.forceNeedsReview === undefined) {
         result.forceNeedsReview = action.value;
+      } else if (action.type === "transfer" && result.isTransfer === undefined) {
+        result.isTransfer = action.value;
       }
     }
   }
