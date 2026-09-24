@@ -78,6 +78,18 @@ export type BankAdapter = {
    * layout, which then simply parses in whatever currency the account is.
    */
   currency?: CurrencyCode;
+  /**
+   * Column headings this layout has but the importer never reads.
+   *
+   * Declared rather than ignored by omission, because a PDF has to be
+   * told where its columns ARE before anything can be read out of them:
+   * a heading nobody recognizes is not a column boundary, and its values
+   * get swallowed by the neighbouring column. A real QNB statement puts
+   * `Kanal*` between the date and the description and `Bakiye` beside
+   * the amount — unnamed, the channel lands inside the date cell and the
+   * balance inside the amount.
+   */
+  ignoredColumns?: readonly string[];
   columns: ColumnAliases;
 };
 
@@ -162,6 +174,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       credit: ["alacak", "giren", "credit"],
       currency: ["para birimi", "currency"],
     },
+    ignoredColumns: ["kanal", "işlem kanalı", "channel", "bakiye", "balance"],
   },
   {
     id: "turkish-signed-amount",
@@ -176,6 +189,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       amount: ["tutar", "işlem tutarı", "amount"],
       currency: ["para birimi", "currency"],
     },
+    ignoredColumns: ["kanal", "işlem kanalı", "channel", "bakiye", "balance"],
   },
 ];
 
@@ -203,6 +217,35 @@ const CURRENCY_TOKENS: Record<CurrencyCode, readonly string[]> = {
  * combining marks in any bank header, so the Hebrew aliases are
  * unaffected (asserted in the tests).
  */
+/**
+ * Every heading any layout for this currency could use, normalized.
+ *
+ * Used to segment a PDF's header row back into columns: the fragments a
+ * PDF yields do not reliably correspond to cells, so the labels are what
+ * say where one column ends and the next begins.
+ */
+export function knownHeaderLabels(currency: CurrencyCode = BASE_CURRENCY): string[] {
+  const labels = new Set<string>();
+  for (const adapter of BANK_ADAPTERS) {
+    if (!adapterAcceptsCurrency(adapter, currency)) continue;
+    for (const aliases of Object.values(adapter.columns)) {
+      for (const alias of aliases ?? []) labels.add(normalizeHeader(alias));
+    }
+    for (const alias of adapter.ignoredColumns ?? []) labels.add(normalizeHeader(alias));
+  }
+  return [...labels];
+}
+
+/** How much of a failing row to quote back in its error message. */
+const ROW_PREVIEW_CHARS = 80;
+
+/** A failing row's own content, for an error message that can be acted on. */
+function describeRow(record: readonly string[]): string {
+  const text = record.map((cell) => cell.trim()).filter((cell) => cell !== "").join(" | ");
+  if (text === "") return "(empty)";
+  return text.length > ROW_PREVIEW_CHARS ? `${text.slice(0, ROW_PREVIEW_CHARS)}…` : text;
+}
+
 export function normalizeHeader(header: string): string {
   return header
     .replace(/İ/g, "I")
@@ -273,6 +316,49 @@ export function adapterAcceptsCurrency(adapter: BankAdapter, currency: CurrencyC
  * mis-dates every row in the file, which is far worse than refusing the
  * upload and telling the user which formats are supported.
  */
+/**
+ * How many leading rows may be statement preamble before the real
+ * column header.
+ *
+ * A CSV export starts at the header, but a PDF does not: a real bank
+ * statement opens with a letterhead, the account number, an IBAN, a date
+ * range and often a summary block, so the header is several rows down.
+ * Found the hard way — the first real QNB export failed as "could not
+ * recognize this file's columns" because row 0 was the bank's own name.
+ * Generous, because those blocks vary, and bounded, because scanning an
+ * entire statement for something header-shaped would eventually find a
+ * false one among the transactions.
+ */
+const MAX_PREAMBLE_ROWS = 30;
+
+/**
+ * Finds the row that is actually the column header, and the adapter that
+ * recognizes it — skipping whatever preamble sits above it.
+ *
+ * Returns the FIRST matching row rather than the best-scoring one: a
+ * statement has exactly one header, and the rows above it are prose, so
+ * the first row that satisfies an adapter's required columns is it.
+ */
+export function findStatementHeader(
+  table: readonly string[][],
+  expectedCurrency: CurrencyCode = BASE_CURRENCY,
+  forcedAdapter?: BankAdapter,
+): { index: number; adapter: BankAdapter } | null {
+  const limit = Math.min(table.length, MAX_PREAMBLE_ROWS);
+
+  for (let index = 0; index < limit; index += 1) {
+    const row = table[index];
+    if (forcedAdapter) {
+      if (adapterMatches(forcedAdapter, row)) return { index, adapter: forcedAdapter };
+      continue;
+    }
+    const adapter = detectAdapter(row, expectedCurrency);
+    if (adapter) return { index, adapter };
+  }
+
+  return null;
+}
+
 export function detectAdapter(headers: string[], expectedCurrency: CurrencyCode = BASE_CURRENCY): BankAdapter | null {
   return (
     BANK_ADAPTERS.find((adapter) => adapterAcceptsCurrency(adapter, expectedCurrency) && adapterMatches(adapter, headers)) ??
@@ -464,7 +550,18 @@ function resolveAmount(
  * a transaction, so it still becomes a `RowError`.
  */
 function isStatementFurniture(adapter: BankAdapter, record: string[], columns: ResolvedColumns): boolean {
-  if (cell(record, columns.date) !== "") return false;
+  // A date cell with no DIGIT in it is not a date in any format, so this
+  // row is not a transaction whatever else it holds. Real example, from
+  // a 6-page QNB export: every page's footer came through as
+  // `Γ | Sayfa: 1/6` — the page number drawn in a font whose glyphs map
+  // to Greek letters — and was reported as six date-parse failures,
+  // which reads alarmingly like six lost transactions.
+  const dateText = cell(record, columns.date);
+  if (/\p{N}/u.test(dateText)) return false;
+
+  // Both empty is still required. A row carrying an amount is a real
+  // data problem and must stay a visible RowError: silently dropping a
+  // transaction is worse than a confusing rejection.
   const amountCells =
     adapter.amountConvention === "debit-credit"
       ? [cell(record, columns.debit), cell(record, columns.credit)]
@@ -530,9 +627,15 @@ export function applyAdapter(
         providerReference: reference === "" ? null : reference,
       });
     } catch (error) {
+      // Quote the row back. "date \"Γ\" is not in DD/MM/YYYY format" alone
+      // cannot be acted on — it does not say whether the row is a real
+      // transaction with an odd date or, as on a real QNB export, a page
+      // footer whose glyphs the PDF's font maps to Greek letters. Six
+      // such rows in a 6-page statement is a very different thing from
+      // six lost transactions, and the message should make that visible.
       errors.push({
         lineNumber,
-        message: error instanceof Error ? error.message : "could not parse row",
+        message: `${error instanceof Error ? error.message : "could not parse row"} — row reads: ${describeRow(record)}`,
       });
     }
   });

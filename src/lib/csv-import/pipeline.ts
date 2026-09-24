@@ -1,5 +1,11 @@
 import { BASE_CURRENCY, type CurrencyCode } from "../currency";
-import { adapterAcceptsCurrency, applyAdapter, detectAdapter, getAdapterById, type BankAdapter } from "./adapters";
+import {
+  adapterAcceptsCurrency,
+  applyAdapter,
+  findStatementHeader,
+  getAdapterById,
+  type BankAdapter,
+} from "./adapters";
 import {
   CsvParseError,
   decodeCsvBytes,
@@ -13,16 +19,51 @@ import { assignDedupeKeys } from "../transaction-dedupe";
 
 export { CsvParseError } from "./csv-parse";
 
+/** How many of the file's own rows to quote back when nothing matched. */
+const ERROR_SAMPLE_ROWS = 12;
+/**
+ * Each quoted row is cut to this many characters.
+ *
+ * Enough rows to reach past a statement's header block, but each one
+ * short enough that the user is not pasting a full IBAN or address to
+ * ask for help — the column STRUCTURE is what diagnoses this, not the
+ * contents.
+ */
+const ERROR_SAMPLE_ROW_CHARS = 110;
+
 export class UnrecognizedFormatError extends Error {
   readonly code = "unrecognized_format";
+  readonly headers: string[];
+
+  /**
+   * Quotes the file's own first rows back at the user.
+   *
+   * Without this the message is unactionable — a real QNB export failed
+   * here and neither the user nor the person who wrote the adapters could
+   * tell whether the columns were named something unexpected, the header
+   * sat below a letterhead, or the text layer came out garbled. The rows
+   * are the user's own statement, rendered only in their own browser, so
+   * showing them discloses nothing they cannot already see.
+   */
   constructor(
-    readonly headers: string[],
+    table: readonly string[][],
     readonly currency: CurrencyCode = BASE_CURRENCY,
   ) {
+    const sample = table
+      .slice(0, ERROR_SAMPLE_ROWS)
+      .map((row, index) => {
+        const text = row.filter((cell) => cell !== "").join(" | ");
+        const clipped =
+          text.length > ERROR_SAMPLE_ROW_CHARS ? `${text.slice(0, ERROR_SAMPLE_ROW_CHARS)}…` : text;
+        return `  ${index + 1}. ${clipped}`;
+      })
+      .join("\n");
+
     super(
-      `Could not recognize this file's columns for this ${currency} account. Supported layouts: a generic Date/Description/Amount export, an Israeli bank export with debit & credit columns, an Israeli credit-card export, or a Turkish bank export (Tarih/Açıklama with Borç/Alacak or Tutar).`,
+      `Could not recognize this file's columns for this ${currency} account. Supported layouts: a generic Date/Description/Amount export, an Israeli bank export with debit & credit columns, an Israeli credit-card export, or a Turkish bank export (Tarih/Açıklama with Borç/Alacak or Tutar).\n\nThe first rows read from this file were:\n${sample}`,
     );
     this.name = "UnrecognizedFormatError";
+    this.headers = table[0] ? [...table[0]] : [];
   }
 }
 
@@ -79,20 +120,32 @@ export function parseStatementCsv(bytes: Uint8Array, options: ParseStatementOpti
   // tokenizing — see sniffDelimiter for why the order matters.
   const table = tokenizeCsv(text, limits, sniffDelimiter(text));
 
-  const [headers, ...records] = table;
-
-  let adapter: BankAdapter | null;
+  let forced: BankAdapter | undefined;
   if (options.adapterId) {
-    adapter = getAdapterById(options.adapterId);
-    if (!adapter) throw new UnrecognizedFormatError(headers, expectedCurrency);
-    if (!adapterAcceptsCurrency(adapter, expectedCurrency)) {
+    const chosen = getAdapterById(options.adapterId);
+    if (!chosen) throw new UnrecognizedFormatError(table, expectedCurrency);
+    if (!adapterAcceptsCurrency(chosen, expectedCurrency)) {
       // `adapterAcceptsCurrency` is false only when a currency is declared.
-      throw new CurrencyMismatchError(adapter.id, adapter.currency as CurrencyCode, expectedCurrency);
+      throw new CurrencyMismatchError(chosen.id, chosen.currency as CurrencyCode, expectedCurrency);
     }
-  } else {
-    adapter = detectAdapter(headers, expectedCurrency);
-    if (!adapter) throw new UnrecognizedFormatError(headers, expectedCurrency);
+    forced = chosen;
   }
+
+  // The header is NOT necessarily row 0 — a PDF statement opens with a
+  // letterhead and account details. See findStatementHeader.
+  const located = findStatementHeader(table, expectedCurrency, forced);
+  if (!located) throw new UnrecognizedFormatError(table, expectedCurrency);
+
+  const { index, adapter } = located;
+  const headers = table[index];
+
+  // A multi-page statement repeats its column header on every page.
+  // Those rows are not transactions — left in, each one becomes a row
+  // whose date cell says "İşlem Tarihi" and therefore a RowError, so a
+  // 5-page statement would report 4 rejected rows that are not problems
+  // with the user's data at all.
+  const headerKey = headers.join("\u0000");
+  const records = table.slice(index + 1).filter((row) => row.join("\u0000") !== headerKey);
 
   const { rows: parsedRows, errors } = applyAdapter(adapter, headers, records, expectedCurrency);
   const rows: CanonicalImportRow[] = assignDedupeKeys(parsedRows);

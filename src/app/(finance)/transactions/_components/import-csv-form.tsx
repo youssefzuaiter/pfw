@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Badge } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
+import { knownHeaderLabels } from "../../../../lib/csv-import/adapters";
 import { textItemsToTsv } from "../../../../lib/csv-import/text-items-to-rows";
+import type { CurrencyCode } from "../../../../lib/currency";
 
 type BankAccountOption = { id: string; label: string; currency: string };
 
@@ -92,7 +94,13 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
     if (!file.name.toLowerCase().endsWith(".pdf")) return file;
 
     const { extractPdfTextItems } = await import("../../../../lib/pdf-extract");
-    const tsv = textItemsToTsv(await extractPdfTextItems(file));
+    // The header row is what defines this statement's columns, so the
+    // reconstruction has to be able to find one. The headings come from
+    // the adapters themselves rather than a second, drifting list.
+    const currency = (selectedAccount?.currency ?? "ILS") as CurrencyCode;
+    const tsv = textItemsToTsv(await extractPdfTextItems(file), {
+      headerLabels: knownHeaderLabels(currency),
+    });
     return new File([tsv], `${file.name.replace(/\.pdf$/i, "")}.csv`, { type: "text/csv" });
   }
 
@@ -236,7 +244,12 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
       {/* `role="status"` (a polite live region) so a screen reader announces
           the outcome without the user having to go hunting for it. */}
       <div role="status" aria-live="polite" className="mt-3 empty:mt-0">
-        {error && <p className="text-sm text-negative">{error}</p>}
+        {/*
+         * `whitespace-pre-wrap` is load-bearing: an unrecognized-format
+         * error quotes the file's own first rows back on separate lines,
+         * which is the whole point of that message (§3bbb).
+         */}
+        {error && <p className="whitespace-pre-wrap text-sm text-negative">{error}</p>}
 
         {preview && (
           <div className="flex flex-col gap-3">
@@ -247,6 +260,32 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
                 Detected format: {preview.adapterLabel} · amounts in {preview.currency}
               </span>
             </div>
+
+            {/*
+              * Directly under the count and open by default: a rejection
+              * is the one thing on this screen that should stop someone
+              * importing, and it used to sit collapsed BELOW the preview
+              * table, off the bottom of the screen. A real statement came
+              * back with 186 rejected rows and the reasons were
+              * unreachable without scrolling past everything else.
+              */}
+            {preview.rejectedRows.length > 0 && (
+              <details open className="rounded-md border border-negative/40 bg-negative/5 p-3 text-xs text-muted">
+                <summary className="cursor-pointer rounded font-medium text-negative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  Why {preview.totals.rejected} rows were rejected
+                </summary>
+                <ul className="mt-2 flex flex-col gap-0.5 pl-4">
+                  {preview.rejectedRows.map((row) => (
+                    <li key={row.lineNumber} className="list-disc">
+                      Line {row.lineNumber}: {row.message}
+                    </li>
+                  ))}
+                  {preview.totals.rejected > preview.rejectedRows.length && (
+                    <li className="list-disc">…and {preview.totals.rejected - preview.rejectedRows.length} more</li>
+                  )}
+                </ul>
+              </details>
+            )}
 
             <div className="overflow-x-auto rounded-md border border-border">
               <table className="w-full text-left text-xs">
@@ -311,23 +350,6 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
               </button>
             </div>
 
-            {preview.rejectedRows.length > 0 && (
-              <details className="text-xs text-muted">
-                <summary className="cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  Show rejected rows
-                </summary>
-                <ul className="mt-1 flex flex-col gap-0.5 pl-4">
-                  {preview.rejectedRows.map((row) => (
-                    <li key={row.lineNumber} className="list-disc">
-                      Line {row.lineNumber}: {row.message}
-                    </li>
-                  ))}
-                  {preview.totals.rejected > preview.rejectedRows.length && (
-                    <li className="list-disc">…and {preview.totals.rejected - preview.rejectedRows.length} more</li>
-                  )}
-                </ul>
-              </details>
-            )}
           </div>
         )}
 

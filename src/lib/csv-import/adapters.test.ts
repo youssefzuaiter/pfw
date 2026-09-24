@@ -394,3 +394,54 @@ describe("applyAdapter — turkish-signed-amount", () => {
     expect(rows.map((row) => row.nativeAmount)).toEqual([-4550, 4550]);
   });
 });
+
+describe("page furniture is dropped, not rejected", () => {
+  it("drops a footer whose date cell holds no digits and which has no amount", () => {
+    // A real 6-page QNB export ends every page with `Γ | Sayfa: 1/6` —
+    // the page number in a font whose glyphs map to Greek letters.
+    const { rows, errors } = applyAdapter(
+      getAdapterById("generic")!,
+      ["Date", "Description", "Amount"],
+      [
+        ["2026-01-05", "Shufersal", "-250.00"],
+        ["Γ", "Sayfa: 1/6", ""],
+      ],
+      "ILS",
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
+
+  it("still REJECTS a dateless row that carries an amount", () => {
+    // Dropping this one silently would lose a real transaction.
+    const { rows, errors } = applyAdapter(
+      getAdapterById("generic")!,
+      ["Date", "Description", "Amount"],
+      [["Γ", "Something real", "-250.00"]],
+      "ILS",
+    );
+
+    expect(rows).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+  });
+});
+
+describe("a rejected row quotes itself back", () => {
+  it("includes the row's own cells, so a real loss can be told from junk", () => {
+    // Six rows of a real 6-page QNB statement failed with `date "Γ" is
+    // not in DD/MM/YYYY format`, and the message alone could not say
+    // whether those were lost transactions or page furniture. Quoting
+    // the row settled it in one look: `Γ | Sayfa: 1/6`.
+    const { errors } = applyAdapter(
+      getAdapterById("generic")!,
+      ["Date", "Description", "Amount"],
+      [["31/31/2026", "VITAMIN ISTANBUL", "-250.00"]],
+      "ILS",
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain("is not in");
+    expect(errors[0].message).toContain("VITAMIN ISTANBUL");
+  });
+});

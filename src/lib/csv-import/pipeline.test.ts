@@ -29,6 +29,73 @@ describe("parseStatementCsv", () => {
     expect(result.rows.map((row) => row.nativeAmount)).toEqual([-25000, 1800000]);
   });
 
+  it("finds the header below a statement's preamble, not at row 0", () => {
+    // A CSV export starts at the header; a PDF statement does not. A real
+    // QNB export failed as "could not recognize this file's columns"
+    // because row 0 was the bank's own letterhead.
+    const result = parseStatementCsv(
+      csv(
+        [
+          "QNB Finansbank A.S.",
+          "Hesap Hareketleri",
+          "IBAN TR00 0000 0000 0000 0000 0000 00",
+          "01/08/2026 - 31/08/2026",
+          "",
+          "Date,Description,Amount",
+          "2026-01-05,Shufersal,-250.00",
+        ].join("\n"),
+      ),
+    );
+
+    expect(result.adapterId).toBe("generic");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].nativeAmount).toBe(-25000);
+  });
+
+  it("does not mistake a transaction row for the header", () => {
+    // The scan returns the FIRST matching row, so a later row that
+    // happens to contain header-ish words can never win.
+    const result = parseStatementCsv(
+      csv(["Bank statement", "Date,Description,Amount", "2026-01-05,Date Description Amount,-250.00"].join("\n")),
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].description).toBe("Date Description Amount");
+  });
+
+  it("quotes the file's own first rows back when nothing matches", () => {
+    // Without this the message is unactionable — it could equally mean
+    // unexpected column names, a header below a letterhead, or a garbled
+    // text layer.
+    try {
+      parseStatementCsv(csv(["QNB Finansbank A.S.", "Hesap Hareketleri", "no,columns,here"].join("\n")));
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnrecognizedFormatError);
+      expect((error as UnrecognizedFormatError).message).toContain("QNB Finansbank A.S.");
+      expect((error as UnrecognizedFormatError).message).toContain("Hesap Hareketleri");
+    }
+  });
+
+  it("drops the header that a multi-page statement repeats on every page", () => {
+    // Left in, each repeat becomes a row whose date cell says "Date" —
+    // a RowError, so a 5-page statement would report 4 rejected rows
+    // that are not problems with the user's data at all.
+    const result = parseStatementCsv(
+      csv(
+        [
+          "Date,Description,Amount",
+          "2026-01-05,Shufersal,-250.00",
+          "Date,Description,Amount",
+          "2026-01-06,Salary,18000.00",
+        ].join("\n"),
+      ),
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toHaveLength(2);
+  });
+
   it("handles a BOM, CRLF endings and quoted commas together", () => {
     const result = parseStatementCsv(csv('﻿Date,Description,Amount\r\n2026-01-05,"Levy, Rami",-250.00\r\n'));
 
@@ -121,7 +188,7 @@ describe("dedupe keys", () => {
 
 describe("isClientFileError", () => {
   it("identifies bad-file errors (→ 400) and not unexpected faults (→ 500)", () => {
-    expect(isClientFileError(new UnrecognizedFormatError(["a"]))).toBe(true);
+    expect(isClientFileError(new UnrecognizedFormatError([["a"]]))).toBe(true);
     expect(isClientFileError(new CsvParseError("empty_file", "x"))).toBe(true);
     expect(isClientFileError(new CurrencyMismatchError("leumi", "ILS", "TRY"))).toBe(true);
     expect(isClientFileError(new Error("database exploded"))).toBe(false);
