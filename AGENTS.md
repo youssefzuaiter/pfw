@@ -7743,6 +7743,100 @@ afterward and confirmed gone.
    the component was correct and only event *delivery* was failing.
    Clicks are delivered fine; it is specifically `change`.
 
+### What the first real statement actually took
+
+The file-upload path above shipped against a PDF this repo generates.
+The first REAL QNB export then failed eight times in a row. Every failure
+was a genuine defect, none was visible in the rendered output, and each
+one is now pinned by a test built from the file's own measured
+coordinates. Recorded in the order they surfaced, because the sequence is
+the lesson: each fix exposed the next, and no amount of reasoning about
+the format would have found them.
+
+1. **Pages were stacked on top of each other.** y restarts at the top of
+   every page, so page 1's third row and page 5's third row share a
+   baseline and fused: five dates, five channels and five amounts in one
+   row. Fragments now carry `page`, and a page break always starts a new
+   line. The comment claiming append order preserved this was simply
+   wrong — `textItemsToRows` sorts, and a sort has no memory of the order
+   items arrived in.
+2. **The header is not row 0.** A CSV starts at its header; a statement
+   opens with a letterhead, IBAN, TCKN and date range, so column names
+   were being matched against the bank's own name. `findStatementHeader`
+   scans up to `MAX_PREAMBLE_ROWS` for it, and the pipeline drops the
+   header's repeats on later pages rather than parsing them as
+   transactions with `İşlem Tarihi` in the date cell.
+3. **Prose defined the columns.** A full-width preamble line's text range
+   spans every column at once; merging ranges across all lines fused them
+   into one, and every row came back as a single cell.
+4. **No single gap threshold can work.** The gutter between `İşlem
+   Tarihi` and `Kanal*` — two genuinely different columns — is NARROWER
+   than the padding inside one description. Every threshold either fused
+   real columns or shredded descriptions. Only the header resolves it:
+   `İşlem Açıklaması` is one label over three description sub-fields,
+   while `Tutar` and `Bakiye` are two labels.
+5. **Matching the header on merged cells is circular.** Gap-merging is
+   what fuses `Tutar Bakiye`, so a matcher fed the merged form can never
+   fire. Headings are matched against RAW fragments, joining up to
+   `MAX_FRAGMENTS_PER_LABEL` consecutive ones (a heading can arrive in
+   pieces) and tolerating a footnote mark (`Kanal*`). `knownHeaderLabels`
+   comes from the adapters themselves, and `ignoredColumns` declares the
+   headings a layout HAS but the importer never reads — unnamed, `Kanal`
+   lands inside the date cell and `Bakiye` inside the amount.
+6. **A heading can be CENTRED over its column.** Measured: headings at
+   x = 16.8, 65.7, **232.3**, 458.2, 530.5 against content at 17.5, 69.1,
+   **96.0**, 476.9, 554.5. Four are left-aligned; `İşlem Açıklaması` is
+   centred over a column spanning 96–411, so taking each label's left
+   edge discarded everything from 96 to 232 — the transaction type and
+   the merchant — leaving 186 of 218 rows with no description at all.
+   Headings now locate columns and the DATA bounds them.
+7. **A regression from fixing 6**: "every line below the header is data"
+   is true on one page and false on six, because each page repeats the
+   preamble and one such line refuses every column. A position counts
+   toward a column only if `MIN_LINE_SHARE_FOR_COLUMN` of lines has text
+   there — the preamble is ~36 lines of 218 and loses its vote.
+8. **A long description wraps, with the date centred between its two
+   lines.** One transaction occupies three lines: half the description,
+   the dated line, the rest. All three were rejected — 104 of 218.
+   `foldFragmentsIntoRows` folds a line that occupies a single column AND
+   fits inside it into the vertically nearest real row, which resolves
+   the sandwich in both directions. Recognizing a fragment structurally
+   means no knowledge of which column holds the date. The fit test is
+   load-bearing: without it the full-width preamble looks like a fragment
+   too and corrupts whatever row it lands on.
+
+**Two diagnostics did more than any of the fixes.**
+`UnrecognizedFormatError` quotes the file's own first rows back (12,
+truncated to `ERROR_SAMPLE_ROW_CHARS`), and a `RowError` quotes its row.
+Six rows failing as `date "Γ" is not in DD/MM/YYYY format` was
+indistinguishable from six lost transactions until the row read
+`Γ | Sayfa: 1/6` — page footers, the page number drawn in a font whose
+glyphs map to Greek letters. `isStatementFurniture` now also drops a row
+whose date cell holds no digit, but ONLY when it carries no amount:
+silently dropping a real transaction stays worse than a confusing
+rejection. `scripts/inspect-statement-pdf.ts` prints where a statement's
+text actually sits — headings in full, every value masked after four
+characters, since the geometry diagnoses a layout and the contents never
+do. Several rounds were aimed at the wrong cause before it existed.
+
+**The preview now reads the ledger.** Dedupe always held, but the dry run
+only parsed the file, so after a real 211-row import it still said "211
+rows ready" — identical to the first time, with no way to tell a working
+dedupe from a broken one before pressing a button that cannot be undone.
+`countAlreadyImported` (read-only, outside any write transaction) backs
+"0 new rows / 211 already imported" and disables the button.
+
+**Result on the real file**: 211 rows, 0 rejected, descriptions whole,
+signs correct against the statement's own running balance, and the stored
+conversion exact (−45,000.00 TRY × 0.062267 = −2,802.02 ILS, frozen per
+row). Re-previewing reports 0 new / 211 already imported. This app had
+never held a real transaction before.
+
+**Two of the eight were self-inflicted** (5 and 7), both from fixing what
+one page or one fixture showed without testing the shape the real
+statement has. That is the failure mode worth remembering here, not the
+geometry.
+
 ### Known limitations, left as such
 
 Both Turkish layouts are representative shapes, not byte-verified
@@ -8117,6 +8211,8 @@ src/lib/csv-import/             statement CSV pipeline: tokenizer (`,`/`;`/tab, 
                                   adapters incl. Turkish (§3j, §3bbb), and
                                   text-items-to-rows.ts (PDF geometry -> table)
 src/lib/pdf-extract.ts          client-only pdf.js text-layer reader (§3bbb)
+scripts/inspect-statement-pdf.ts  masked geometry dump for a statement PDF —
+                                    headings in full, values masked (§3bbb)
 src/lib/insights/               7 generators + generate-insights.ts orchestrator
 src/lib/mock-market-data.ts     deterministic mock price feed + price history for /trading's chart
 sidecar/                        FastAPI/ONNX merchant-embedding service (Python)
