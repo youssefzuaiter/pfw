@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
         amount: formatNativeAmount(row.nativeAmount, row.currency, { showPositiveSign: true }),
         isExpense: row.nativeAmount < 0,
       })),
-      rejectedRows: parsed.errors.slice(0, 10),
+      rejectedRows: parsed.errors.slice(0, 20),
     });
   }
 
@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
       // Capped: a pathological file could produce thousands of row
       // errors, and neither the response nor the UI needs all of them.
       rejectedCount: parsed.errors.length,
-      rejectedRows: parsed.errors.slice(0, 10),
+      rejectedRows: parsed.errors.slice(0, 20),
     });
   } catch (error) {
     if (error instanceof BankAccountNotFoundError) {

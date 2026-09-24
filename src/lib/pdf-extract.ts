@@ -60,14 +60,20 @@ export class PdfExtractionError extends Error {
 }
 
 /**
- * Every page's text fragments, concatenated in page order.
+ * Every page's text fragments, each tagged with the page it came from.
  *
- * Pages are deliberately NOT separated by a marker: each page of a
- * statement repeats the same column layout, and the row reconstruction
- * groups by y WITHIN a page's items before the next page's are appended,
- * so page 2's rows follow page 1's in reading order. A repeated per-page
- * header simply becomes another row, which the adapter's own header
- * matching and the "no date and no amount" rule already handle.
+ * The page number is load-bearing. y restarts at the top of every page,
+ * so page 1's third row and page 5's third row share a baseline, and
+ * grouping by y alone merges them into one line. A real 5-page QNB
+ * statement came back with five dates, five channels and five amounts
+ * crammed into a single row before this was tagged — the earlier version
+ * of this comment claimed page order was preserved by append order,
+ * which is wrong: `textItemsToRows` sorts, and a sort has no memory of
+ * the order items arrived in.
+ *
+ * A repeated per-page header is just another row, which the pipeline's
+ * own duplicate-header rule and the "no date and no amount" furniture
+ * rule already handle.
  */
 export async function extractPdfTextItems(file: File): Promise<PositionedTextItem[]> {
   let pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -102,7 +108,7 @@ export async function extractPdfTextItems(file: File): Promise<PositionedTextIte
       const content = await page.getTextContent();
       for (const raw of content.items as RawTextItem[]) {
         const positioned = toPositionedItem(raw);
-        if (positioned) items.push(positioned);
+        if (positioned) items.push({ ...positioned, page: pageNumber });
       }
       // Frees the page's own resources as we go; a year-long statement
       // is many pages and there is no reason to hold them all.
