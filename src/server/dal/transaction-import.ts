@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import "server-only";
 import { categorizeTransaction } from "../../lib/categorization/cascade";
 import { applyRules, type TransactionRuleData } from "../../lib/categorization/rule-engine";
@@ -81,6 +82,8 @@ export function buildProviderTransactionId(row: Parameters<typeof buildSharedPro
 }
 
 export type ImportSummary = {
+  /** Identifies this import, so the whole of it can be undone later. */
+  importBatchId: string;
   importedCount: number;
   duplicateCount: number;
   /** Row-level failures surfaced by the parser, passed through unchanged so the route can report parse and write outcomes together. */
@@ -180,6 +183,10 @@ export async function importTransactions(
   userId: string,
   input: ImportTransactionsInput,
 ): Promise<ImportSummary> {
+  // One id for this whole import, so `softDeleteImportBatch` can undo it
+  // as a unit.
+  const importBatchId = randomUUID();
+
   // The account's currency decides whether a rate is needed at all, and
   // resolving one may hit the network (an on-demand sync) — neither
   // belongs inside the long-running write transaction below, so the
@@ -327,6 +334,10 @@ export async function importTransactions(
               bankAccountId: input.bankAccountId,
               categoryId,
               providerTransactionId,
+              // Stamped on every row of this import so the whole import
+              // can be undone as a unit — one row at a time is not an
+              // undo when a statement writes 211 of them.
+              importBatchId,
               occurredAt: row.occurredAt,
               // The pipeline parses every row in the ACCOUNT's currency
               // and refuses a row whose currency cell says otherwise
@@ -346,6 +357,7 @@ export async function importTransactions(
               // flagged for the user, UNLESS a Tier 0 `flag` action
               // explicitly forced this one way or the other.
               needsReview: finalNeedsReview,
+              isTransfer: tier0.isTransfer ?? false,
             },
             select: { id: true },
           });
@@ -378,7 +390,7 @@ export async function importTransactions(
         pastByMerchant.set(key, bucket);
       }
 
-      return { importedCount, duplicateCount, importedIds };
+      return { importBatchId, importedCount, duplicateCount, importedIds };
     },
     { timeoutMs: IMPORT_TRANSACTION_TIMEOUT_MS },
   );

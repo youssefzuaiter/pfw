@@ -10,6 +10,14 @@ services:
     image: pgvector/pgvector:pg17
     container_name: pfw_local_db
     restart: unless-stopped
+    # Postgres defaults to 100 connections. Vitest runs the integration
+    # project across one worker PER FILE in parallel, each opening its
+    # own Prisma pool (app client + admin client), so the suite alone
+    # exhausted the default once the file count passed ~145 — surfacing
+    # as `Too many database connections opened` in whichever files
+    # happened to start last, which reads exactly like a flaky test and
+    # is not one.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_DB: pfw_local
       POSTGRES_USER: pfw_app

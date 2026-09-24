@@ -1,6 +1,7 @@
 import { formatAgorot, type Agorot } from "../../../../lib/money";
 import { CategorySelect } from "./category-select";
 import { LedgerHistoryModal } from "./ledger-history-modal";
+import { TransactionRowActions } from "./transaction-row-actions";
 
 export type TransactionRow = {
   id: string;
@@ -11,6 +12,8 @@ export type TransactionRow = {
   categoryId: string;
   categoryName: string;
   needsReview: boolean;
+  /** Money between the user's own accounts — shown, but left out of earned/spent figures. */
+  isTransfer: boolean;
 };
 
 type Category = { id: string; name: string };
@@ -79,7 +82,11 @@ export function TransactionsTable({
                   <AmountCell amount={row.amount} />
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
-                  <LedgerHistoryModal transactionId={row.id} label={row.merchantName ?? row.description} />
+                  <span className="inline-flex items-center gap-1">
+                    <LedgerHistoryModal transactionId={row.id} label={row.merchantName ?? row.description} />
+              <TransactionRowActions transactionId={row.id} isTransfer={row.isTransfer} />
+                    <TransactionRowActions transactionId={row.id} isTransfer={row.isTransfer} />
+                  </span>
                 </td>
               </tr>
             ))}

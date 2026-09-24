@@ -1,3 +1,4 @@
+import { REAL_MONEY } from "./transactions";
 import "server-only";
 import { monthKeyToExclusiveEndDate } from "../../lib/date-month";
 import { computeAvailableToBudget, computeRollingBalance, type MonthlyEnvelopeActivity } from "../../lib/envelope-math";
@@ -44,7 +45,7 @@ export async function getAvailableToBudget(userId: string, month: string): Promi
 
     const [incomeResult, allocationResult] = await Promise.all([
       tx.notableTransaction.aggregate({
-        where: { userId, occurredAt: { lt: cutoff }, amount: { gt: 0n } },
+        where: { userId, occurredAt: { lt: cutoff }, amount: { gt: 0n }, ...REAL_MONEY },
         _sum: { amount: true },
       }),
       tx.envelopeAllocation.aggregate({
@@ -80,7 +81,7 @@ export async function getEnvelopeBalances(userId: string, month: string): Promis
         select: { categoryId: true, month: true, amountAgorot: true, sharedGroupId: true },
       }),
       tx.notableTransaction.findMany({
-        where: { userId, occurredAt: { lt: cutoff }, amount: { lt: 0n } },
+        where: { userId, occurredAt: { lt: cutoff }, amount: { lt: 0n }, ...REAL_MONEY },
         select: { categoryId: true, occurredAt: true, amount: true },
       }),
     ]);

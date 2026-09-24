@@ -16,10 +16,29 @@ import { BankAccountNotFoundError } from "./transaction-import";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
 /** See bank-accounts.ts for why this returns `null` rather than throwing on a mismatch. */
+/**
+ * The two filters every transaction read needs, defined once.
+ *
+ * `LIVE` — not soft-deleted. Every read wants this: a deleted row must
+ * not appear in a list, a search, a total, or a dedupe check.
+ *
+ * `REAL_MONEY` — live AND not a transfer. Only for the aggregates that
+ * answer "what did I earn or spend": income/expense history, spend by
+ * category, envelope balances, burn rate, the anomaly window. A transfer
+ * between the user's own accounts is not spending, and counting it as
+ * such overstated one real month's income by ~100,000 TRY.
+ *
+ * Deliberately NOT applied to listings, search, or the ledger view: a
+ * transfer really happened and the balance really moved, so hiding it
+ * from the user's own history would be a different lie.
+ */
+export const LIVE = { deletedAt: null } as const;
+export const REAL_MONEY = { deletedAt: null, isTransfer: false } as const;
+
 export async function getTransactionById(userId: string, id: string) {
   return withUserScope(userId, (tx) =>
     tx.notableTransaction.findFirst({
-      where: { id, userId },
+      where: { id, userId, ...LIVE },
       include: { category: true, bankAccount: true },
     }),
   );
@@ -63,7 +82,7 @@ export type TransactionFilters = {
  * plan optimality.
  */
 export async function listTransactions(userId: string, filters: TransactionFilters = {}) {
-  const where: Prisma.NotableTransactionWhereInput = { userId };
+  const where: Prisma.NotableTransactionWhereInput = { userId, ...LIVE };
   if (filters.categoryId) where.categoryId = filters.categoryId;
   if (filters.dateFrom || filters.dateTo) {
     where.occurredAt = {
@@ -126,6 +145,10 @@ export async function searchTransactionsSemantic(
   return withUserScope(userId, async (tx) => {
     const conditions = [
       Prisma.sql`"userId" = ${userId}`,
+      // The raw ranking query bypasses Prisma's where-builder, so LIVE
+      // has to be spelled out here too — a deleted row must not surface
+      // in search any more than in a list.
+      Prisma.sql`"deletedAt" IS NULL`,
       Prisma.sql`"searchEmbedding" IS NOT NULL`,
       Prisma.sql`"searchEmbedding" <=> ${vectorLiteral}::vector <= ${MAX_COSINE_DISTANCE}`,
     ];
@@ -151,7 +174,7 @@ export async function searchTransactionsSemantic(
     if (ranked.length === 0) return [];
 
     const rows = await tx.notableTransaction.findMany({
-      where: { id: { in: ranked.map((r) => r.id) }, userId },
+      where: { id: { in: ranked.map((r) => r.id) }, userId, ...LIVE },
       include: { category: true, bankAccount: true },
     });
 
@@ -208,7 +231,7 @@ export async function listTransactionsByIds(userId: string, ids: readonly string
   if (ids.length === 0) return [];
   return withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
-      where: { id: { in: [...ids] }, userId },
+      where: { id: { in: [...ids] }, userId, ...LIVE },
       include: { category: true, bankAccount: true },
     }),
   );
@@ -297,7 +320,7 @@ export async function updateTransactionCategory(
 }
 
 export async function countNeedsReview(userId: string): Promise<number> {
-  return withUserScope(userId, (tx) => tx.notableTransaction.count({ where: { userId, needsReview: true } }));
+  return withUserScope(userId, (tx) => tx.notableTransaction.count({ where: { userId, needsReview: true, ...LIVE } }));
 }
 
 export type CreateTransactionInput = {
@@ -439,6 +462,7 @@ export async function createTransaction(userId: string, input: CreateTransaction
         merchantName: finalMerchantName,
         isManual: true,
         needsReview: finalNeedsReview,
+        isTransfer: tier0.isTransfer ?? false,
       },
       include: { category: true, bankAccount: true },
     });
@@ -475,7 +499,7 @@ export async function getSpendByCategoryInRange(userId: string, from: Date, to: 
   return withUserScope(userId, async (tx) => {
     const grouped = await tx.notableTransaction.groupBy({
       by: ["categoryId"],
-      where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n } },
+      where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n }, ...REAL_MONEY },
       _sum: { amount: true },
     });
     return grouped.map((g) => ({
@@ -499,7 +523,7 @@ export async function getMonthlyIncomeExpenseHistory(
 ): Promise<MonthlyIncomeExpense[]> {
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
-      where: { userId, occurredAt: { gte: from, lt: to } },
+      where: { userId, occurredAt: { gte: from, lt: to }, ...REAL_MONEY },
       select: { occurredAt: true, amount: true },
     }),
   );
@@ -542,7 +566,7 @@ export type DailyNetCashFlow = {
 export async function getDailyNetCashFlow(userId: string, from: Date, to: Date): Promise<DailyNetCashFlow[]> {
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
-      where: { userId, occurredAt: { gte: from, lt: to } },
+      where: { userId, occurredAt: { gte: from, lt: to }, ...REAL_MONEY },
       select: { occurredAt: true, amount: true },
     }),
   );
@@ -599,7 +623,7 @@ export async function getRecentExpenseTransactionsForAnomalyDetection(
 ): Promise<SpendingAnomalyTransactionRow[]> {
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
-      where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n } },
+      where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n }, ...REAL_MONEY },
       select: { occurredAt: true, amount: true, category: { select: { slug: true } } },
     }),
   );
@@ -638,7 +662,7 @@ export type MerchantOccurrenceRow = {
 export async function getTransactionOccurrencesSince(userId: string, since: Date): Promise<MerchantOccurrenceRow[]> {
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
-      where: { userId, occurredAt: { gte: since } },
+      where: { userId, occurredAt: { gte: since }, ...REAL_MONEY },
       select: { merchantName: true, description: true, amount: true, occurredAt: true, currency: true, nativeAmount: true },
     }),
   );
@@ -653,5 +677,164 @@ export async function getTransactionOccurrencesSince(userId: string, since: Date
       currency: row.currency,
       nativeAmount: row.nativeAmount,
     };
+  });
+}
+
+export type DeleteTransactionResult =
+  | { ok: true; deletedCount: number }
+  | { ok: false; error: "not_found" };
+
+/**
+ * Soft-deletes one transaction, recording it on the ledger chain.
+ *
+ * Soft because a hard delete is impossible by construction: LedgerCommit
+ * cascades from this row and is append-only at the database level, so
+ * the cascade would be rejected by its own trigger. That constraint
+ * points the right way anyway — the reason this exists is that a
+ * 211-row import that went in wrong had no way back, and "gone forever"
+ * is a worse answer than "hidden and restorable".
+ *
+ * `providerTransactionId` is RELEASED (set to null) and preserved in the
+ * DELETE commit's own snapshot. Without that, undoing a bad import would
+ * leave its rows still holding the dedupe keys, so re-importing the
+ * corrected file would find nothing new — an undo that cannot be redone.
+ * Releasing it also keeps Prisma's `@@unique([userId, providerTransactionId])`
+ * exactly as declared, rather than needing a partial index the schema
+ * cannot express.
+ */
+export async function softDeleteTransaction(
+  userId: string,
+  id: string,
+): Promise<DeleteTransactionResult> {
+  return withUserScope(userId, async (tx) => {
+    const row = await tx.notableTransaction.findFirst({
+      where: { id, userId, ...LIVE },
+      include: { category: true },
+    });
+    if (!row) return { ok: false, error: "not_found" };
+
+    await tx.notableTransaction.update({
+      where: { id },
+      data: { deletedAt: new Date(), providerTransactionId: null },
+    });
+
+    await appendLedgerCommit(tx, userId, {
+      transactionId: id,
+      action: "DELETE",
+      // The released key rides along in the snapshot so a restore can
+      // put it back.
+      state: {
+        ...buildLedgerState({ ...row, categoryName: row.category.name }),
+        providerTransactionId: row.providerTransactionId,
+      },
+    });
+
+    return { ok: true, deletedCount: 1 };
+  });
+}
+
+/**
+ * Undoes a soft delete, restoring the dedupe key the DELETE released.
+ *
+ * If that key has since been taken — the user deleted an import, then
+ * re-imported the same file — the row comes back WITHOUT it rather than
+ * failing: the live row that now holds the key is the one that should
+ * keep it, and refusing the restore would strand this row permanently.
+ */
+export async function restoreTransaction(
+  userId: string,
+  id: string,
+): Promise<DeleteTransactionResult> {
+  return withUserScope(userId, async (tx) => {
+    const row = await tx.notableTransaction.findFirst({
+      where: { id, userId, deletedAt: { not: null } },
+      include: { category: true },
+    });
+    if (!row) return { ok: false, error: "not_found" };
+
+    const deleteCommit = await tx.ledgerCommit.findFirst({
+      where: { userId, transactionId: id, action: "DELETE" },
+      orderBy: { createdAt: "desc" },
+    });
+    const released = (deleteCommit?.patchData as { providerTransactionId?: string | null } | null)
+      ?.providerTransactionId;
+
+    const keyIsFree =
+      !released ||
+      (await tx.notableTransaction.count({ where: { userId, providerTransactionId: released } })) === 0;
+
+    await tx.notableTransaction.update({
+      where: { id },
+      data: { deletedAt: null, ...(keyIsFree && released ? { providerTransactionId: released } : {}) },
+    });
+
+    await appendLedgerCommit(tx, userId, {
+      transactionId: id,
+      action: "RESTORE",
+      state: buildLedgerState({ ...row, categoryName: row.category.name }),
+    });
+
+    return { ok: true, deletedCount: 1 };
+  });
+}
+
+/**
+ * Soft-deletes every row written by one statement import.
+ *
+ * The unit that actually matters: an import writes hundreds of rows at
+ * once, so undoing it one row at a time is not an undo. Each row still
+ * gets its own ledger commit, because the chain is per-transaction and
+ * a batch is not a thing the ledger knows about.
+ */
+export async function softDeleteImportBatch(
+  userId: string,
+  importBatchId: string,
+): Promise<DeleteTransactionResult> {
+  return withUserScope(
+    userId,
+    async (tx) => {
+      const rows = await tx.notableTransaction.findMany({
+        where: { userId, importBatchId, ...LIVE },
+        include: { category: true },
+      });
+      if (rows.length === 0) return { ok: false, error: "not_found" as const };
+
+      const deletedAt = new Date();
+      for (const row of rows) {
+        await tx.notableTransaction.update({
+          where: { id: row.id },
+          data: { deletedAt, providerTransactionId: null },
+        });
+        await appendLedgerCommit(tx, userId, {
+          transactionId: row.id,
+          action: "DELETE",
+          state: {
+            ...buildLedgerState({ ...row, categoryName: row.category.name }),
+            providerTransactionId: row.providerTransactionId,
+          },
+        });
+      }
+
+      return { ok: true as const, deletedCount: rows.length };
+    },
+    // Same reasoning as importTransactions' own raised timeout: hundreds
+    // of single-row updates plus a commit each legitimately exceed
+    // Prisma's 5s default.
+    { timeoutMs: 120_000 },
+  );
+}
+
+/** Sets or clears the transfer flag — money between the user's own accounts. */
+export async function setTransactionTransfer(
+  userId: string,
+  id: string,
+  isTransfer: boolean,
+): Promise<DeleteTransactionResult> {
+  return withUserScope(userId, async (tx) => {
+    const row = await tx.notableTransaction.findFirst({ where: { id, userId, ...LIVE } });
+    if (!row) return { ok: false, error: "not_found" };
+
+    await tx.notableTransaction.update({ where: { id }, data: { isTransfer } });
+    return { ok: true, deletedCount: 1 };
   });
 }

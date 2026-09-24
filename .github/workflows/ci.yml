@@ -45,6 +45,13 @@ jobs:
           POSTGRES_DB: pfw_local
           POSTGRES_USER: pfw_app
           POSTGRES_PASSWORD: pfw_local_dev_password
+          # Same reason compose.yaml raises it: Vitest runs one worker
+          # per integration file in parallel, each with its own Prisma
+          # pool, and the suite exhausts Postgres' default 100 once the
+          # file count passes ~145. POSTGRES_INITDB_ARGS is how a
+          # service container gets a server setting — it has no
+          # `command:` of its own.
+          POSTGRES_INITDB_ARGS: "-c max_connections=300"
         ports:
           # Same host port compose.yaml uses locally (5433, not Postgres'
           # default 5432) — purely for consistency with DATABASE_URL
@@ -239,6 +246,13 @@ jobs:
           POSTGRES_DB: pfw_local
           POSTGRES_USER: pfw_app
           POSTGRES_PASSWORD: pfw_local_dev_password
+          # Same reason compose.yaml raises it: Vitest runs one worker
+          # per integration file in parallel, each with its own Prisma
+          # pool, and the suite exhausts Postgres' default 100 once the
+          # file count passes ~145. POSTGRES_INITDB_ARGS is how a
+          # service container gets a server setting — it has no
+          # `command:` of its own.
+          POSTGRES_INITDB_ARGS: "-c max_connections=300"
         ports:
           - 5433:5432
         options: >-

@@ -71,6 +71,7 @@ export default async function TransactionsPage({
     categoryId: t.categoryId,
     categoryName: t.category.name,
     needsReview: t.needsReview,
+    isTransfer: t.isTransfer,
   }));
 
   return (

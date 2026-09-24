@@ -162,6 +162,14 @@ enum AuditAction {
 enum LedgerCommitAction {
   CREATE
   UPDATE
+  /// A soft delete. The row stays; `NotableTransaction.deletedAt` is set.
+  /// A hard delete is impossible by construction anyway — LedgerCommit
+  /// cascades from the transaction and is append-only at the database
+  /// level, so the cascade would be rejected by its own trigger.
+  DELETE
+  /// An undone delete. Recorded as its own link rather than a second
+  /// UPDATE so the chain says plainly that a row came back.
+  RESTORE
 }
 
 /// A SharedGroup member's standing. OWNER is exactly the group's creator
@@ -751,6 +759,31 @@ model NotableTransaction {
   merchantName          String?
   isManual              Boolean                     @default(false)
   needsReview           Boolean                     @default(false)
+  /// Money moved between the user's OWN accounts, not income or spending.
+  ///
+  /// Excluded from every aggregate that answers "what did I earn/spend"
+  /// — income/expense history, spend by category, envelope balances,
+  /// burn rate — while still appearing in the ledger, because it did
+  /// happen and the account balance moved.
+  ///
+  /// Real case this exists for: a Turkish account funded by converting
+  /// USD sent from family. Every `Yatırım İşlemleri … USD alış` row is
+  /// the user's own money arriving from their own USD account, and
+  /// counting them as income overstated one month by ~100,000 TRY —
+  /// roughly doubling apparent income. Importing the USD side as well
+  /// would have counted the same money twice.
+  isTransfer            Boolean                     @default(false)
+  /// Set when soft-deleted; null for a live row.
+  ///
+  /// Soft, not hard: LedgerCommit cascades from this row and is
+  /// append-only at the database level, so a real DELETE is rejected by
+  /// its own trigger. Being reversible is the point regardless — a
+  /// 211-row import that went in wrong needs undoing, not archaeology.
+  deletedAt             DateTime?
+  /// Groups the rows written by one statement import, so a whole import
+  /// can be undone as a unit. Null for a manually entered row, a paper
+  /// trade, or anything imported before this column existed.
+  importBatchId         String?
   createdAt             DateTime                    @default(now())
   updatedAt             DateTime                    @updatedAt
   /// Semantic search index (AGENTS.md §3cc) — a 384-dim pgvector
@@ -787,6 +820,7 @@ model NotableTransaction {
 
   @@unique([userId, providerTransactionId])
   @@index([userId, occurredAt])
+  @@index([userId, importBatchId])
   @@index([userId, categoryId])
   @@index([userId, bankAccountId])
 }

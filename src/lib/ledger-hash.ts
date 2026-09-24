@@ -35,6 +35,15 @@ export type LedgerCommitState = {
   occurredAtIso: string;
   description: string;
   merchantName: string | null;
+  /**
+   * Only on a DELETE commit: the `providerTransactionId` the delete
+   * released, so a restore can put it back.
+   *
+   * Optional, and absent from every other action's state, so existing
+   * commits hash exactly as they did — `canonicalJson` sorts keys and
+   * simply has one fewer to serialize.
+   */
+  providerTransactionId?: string | null;
 };
 
 /**

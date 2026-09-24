@@ -175,3 +175,39 @@ describe("RuleActionSchema", () => {
     expect(RuleActionSchema.safeParse({ type: "delete", value: true }).success).toBe(false);
   });
 });
+
+describe("the transfer action", () => {
+  it("flags money between the user's own accounts, and the first matching rule wins", () => {
+    // The rows that need this arrive in bulk and look alike: one real
+    // Turkish statement carried ~100 `Yatırım İşlemleri … USD alış`
+    // rows in a single month, each the user's own money arriving from
+    // their own USD account, all counted as income.
+    const conversion = transaction({
+      merchantName: null,
+      description: "Yatırım İşlemleri - Mobil Bankacılık 5,00 USD alış",
+      amountAgorot: agorot(23025),
+    });
+
+    const result = applyRules(conversion, [
+      rule({
+        id: "flag-it",
+        priority: 0,
+        conditions: [{ field: "description", operator: "contains", value: "Yatırım" }],
+        actions: [{ type: "transfer", value: true }],
+      }),
+      rule({
+        id: "later-rule",
+        priority: 1,
+        conditions: [{ field: "description", operator: "contains", value: "Yatırım" }],
+        actions: [{ type: "transfer", value: false }],
+      }),
+    ]);
+
+    expect(result.isTransfer).toBe(true);
+    expect(result.matchedRuleIds).toEqual(["flag-it", "later-rule"]);
+  });
+
+  it("leaves isTransfer undefined when no rule says otherwise", () => {
+    expect(applyRules(transaction(), [rule()]).isTransfer).toBeUndefined();
+  });
+});
