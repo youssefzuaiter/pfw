@@ -51,7 +51,13 @@ These apply to every line of code in this repo, in every phase:
    merchant-name matching goes through it, never a hand-rolled `\b` regex.
 5. **Derived truth.** Goal progress derives from contributions, never stored
    redundantly. `NetWorthSnapshot` rows are historical; today's net worth is
-   always computed live.
+   always computed live. Since §3ccc, two flags decide what an aggregate
+   may see at all: a soft-deleted row (`deletedAt`) is invisible to
+   every read, and a transfer between the user's own accounts
+   (`isTransfer`) is excluded from every "what did I earn or spend"
+   figure while staying in the ledger — named once as `LIVE` and
+   `REAL_MONEY` in `src/server/dal/transactions.ts`, never re-spelled
+   per call site.
 6. **Secrets & AI isolation.** `ANTHROPIC_API_KEY`, `DATABASE_URL`,
    `APP_DATABASE_URL`, and `ENCRYPTION_KEY` are read only through
    `src/server/env.ts` (a `server-only`-guarded module). The advisor streams
@@ -7863,6 +7869,127 @@ to sync" and "the sync has never worked"; it resolves that in favour of
 the former, which is correct today and would need revisiting if quotes
 ever covered the mock universe too.
 
+## 3ccc. Transfers, and an undo for imports (ad hoc)
+
+Two gaps the first real statement (§3bbb) exposed once its 211 rows were
+actually in the ledger. Both were found by looking at real figures, not
+by review: one made the app state something untrue, the other made every
+mistake permanent.
+
+### Transfers
+
+The account is funded by converting USD sent from family, so every
+`Yatırım İşlemleri … USD alış` row is the user's own money arriving from
+their own USD account. The app counted all of it as income. Measured on
+the real data before building anything: flagging those 63 rows dropped
+August income from ₪21,153.76 to ₪16,727.83 with spending untouched —
+the correct shape, since the conversions are all inbound. Importing the
+USD side as well would have counted the same money twice.
+
+`NotableTransaction.isTransfer` is excluded from every aggregate that
+answers "what did I earn or spend" — income/expense history, spend by
+category, envelope balances, the anomaly window, subscription detection
+— and from nothing else. A transfer still appears in listings, search
+and the ledger, because it happened and the balance moved; hiding it
+from the user's own history would be a different lie.
+
+The two rules are named ONCE in `transactions.ts` rather than spelled
+out at each of ~20 read sites, which is what makes a missed site
+visible rather than silently wrong:
+
+- `LIVE` — not soft-deleted. Every read wants this.
+- `REAL_MONEY` — live AND not a transfer. Aggregates only.
+
+`searchTransactionsSemantic`'s raw pgvector query spells out
+`"deletedAt" IS NULL` itself, because it bypasses Prisma's where-builder
+entirely (the same trap §3cc documents for the field-encryption
+extension, hit here for a different reason).
+
+`categories.ts`'s reassign-on-delete `updateMany` is deliberately NOT
+filtered: a soft-deleted row still references the category being
+hard-deleted, so its foreign key has to move too.
+
+A Tier-0 rule action (`{ type: "transfer", value }`) sets the flag,
+because the rows that need it arrive in bulk and look alike — flagging
+~100 a month by hand is not a workflow. A per-row toggle covers the
+stragglers.
+
+### Soft delete
+
+"A mistake is permanent" was the honest description of this app, and
+211 real rows had just landed. Delete is soft — which is also the only
+thing possible: `LedgerCommit` cascades from the transaction and is
+append-only at the database level (§3mm), so a hard delete is rejected
+by its own trigger. The constraint points the right way anyway; being
+reversible is the point.
+
+`LedgerCommitAction` gains `DELETE` and `RESTORE`, so the tamper-evident
+chain records a removal rather than losing it. §3mm's note that
+"transactions are never deleted in this app, so there's no DELETE case"
+is superseded.
+
+**Deleting RELEASES `providerTransactionId`**, and the DELETE commit's
+own snapshot carries it (`LedgerCommitState.providerTransactionId`,
+optional so every existing commit hashes exactly as before). Without
+that, undoing a bad import would leave its rows still holding the dedupe
+keys, so re-importing the corrected file would find nothing new — an
+undo that cannot be redone. Restore puts the key back unless a live row
+has taken it since (the user deleted an import, then re-imported), in
+which case the row returns WITHOUT it rather than failing and stranding
+itself permanently.
+
+Releasing the key also keeps Prisma's
+`@@unique([userId, providerTransactionId])` exactly as declared. The
+alternative — a partial unique index `WHERE "deletedAt" IS NULL` — is
+what Postgres would want but Prisma's schema cannot express, and an
+index Prisma does not know about is one `migrate diff` would keep
+proposing to drop (unlike the RLS policies and triggers this repo
+already hand-maintains, which Prisma models not at all).
+
+`importBatchId` groups one import so the whole of it can be undone from
+the result panel while it is still on screen — the moment someone
+realises a statement went into the wrong account, not later hunting
+through 211 rows. Row by row is not an undo at that size. Each row still
+gets its own ledger commit, because the chain is per-transaction and
+knows nothing about batches.
+
+### A real infrastructure bug this surfaced, not flakiness
+
+Several full-suite runs went red with `Too many database connections
+opened` and were dismissed as noise more than once before the pattern
+was clear. Vitest runs one worker PER INTEGRATION FILE in parallel, each
+opening its own Prisma pool (app client plus admin client), and the
+suite had quietly outgrown Postgres' default `max_connections = 100` as
+the file count passed ~145. It surfaces in whichever files happen to
+start last, which is exactly what a flaky test looks like. `compose.yaml`
+and BOTH CI service definitions now set `max_connections=300` (a service
+container has no `command:`, so CI uses `POSTGRES_INITDB_ARGS`). The
+suite goes from intermittently red to 1441/1444 green.
+
+### Verified
+
+Against the real imported statement, not fixtures: the income figures
+above, and a delete/restore round trip through the real UI (234 → 233 →
+234 rows, confirmed by direct query that nothing was left deleted or
+flagged). Plus 7 integration tests against real Postgres — transfer
+exclusion in both directions, soft delete hiding a row from list AND
+aggregates, dedupe-key release and recovery, batch undo, the DELETE
+ledger commit, and cross-user IDOR on delete. Production build,
+`verify:client-bundle-secrets`, Gitleaks `v8.30.1` and Semgrep `1.174.0`
+all clean.
+
+### Known limitations, left as such
+
+Rules apply at import, manual entry and sync only — there is no path
+that applies them to transactions ALREADY stored, so a rule written
+today does nothing for the 209 rows already sitting in Uncategorized.
+That is the next obvious piece of work and is why this section stops
+short of claiming categorisation is solved. There is also no bulk
+"mark these as transfers" beyond a rule, no UI listing soft-deleted rows
+(restore is only offered inline, immediately after deleting), and
+`importBatchId` is null for every row imported before it existed —
+forward-only, the same accepted shape §3u and §3cc already document.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
@@ -8181,6 +8308,9 @@ src/app/advisor/                _components/advisor-chat.tsx — streaming chat 
 src/app/welcome/                entry-surface landing page (Phase 6) — the R3F hero, not /dashboard
 src/app/api/transactions/[id]/  PATCH — recategorization, the first hardened route
 src/app/api/transactions/import/  POST — multipart CSV statement upload (§3j)
+src/app/api/transactions/[id]/delete/    POST — soft delete / restore (§3ccc)
+src/app/api/transactions/[id]/transfer/  POST — mark as own-account transfer (§3ccc)
+src/app/api/transactions/import-batch/[batchId]/  POST — undo a whole import (§3ccc)
 src/app/api/{categories,budgets,goals,debts,assets,trades}/  guardMutation()-fronted CRUD routes
 src/app/api/advisor/route.ts    POST — streams text deltas only, see §3d
 src/components/nav/             TopNav (desktop), MobileNav (4 tabs + More drawer)
