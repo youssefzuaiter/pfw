@@ -11,6 +11,7 @@ import {
   ImportCurrencyMismatchError,
   importTransactions,
   NoExchangeRateError,
+  countAlreadyImported,
 } from "../../../../server/dal/transaction-import";
 
 /**
@@ -121,13 +122,22 @@ export async function POST(request: NextRequest) {
   }
 
   if (dryRun) {
+    // What is ALREADY in the ledger, so the preview can say so before
+    // anything irreversible happens.
+    const alreadyImported = await countAlreadyImported(user.id, parsed.rows, parsed.adapterId);
+
     return NextResponse.json({
       ok: true,
       dryRun: true,
       adapterId: parsed.adapterId,
       adapterLabel: parsed.adapterLabel,
       currency: parsed.currency,
-      totals: { count: parsed.rows.length, rejected: parsed.errors.length },
+      totals: {
+        count: parsed.rows.length,
+        rejected: parsed.errors.length,
+        alreadyImported,
+        newRows: parsed.rows.length - alreadyImported,
+      },
       rows: parsed.rows.slice(0, PREVIEW_ROW_LIMIT).map((row) => ({
         lineNumber: row.lineNumber,
         date: row.occurredAt.toISOString().slice(0, 10),
