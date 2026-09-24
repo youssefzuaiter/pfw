@@ -25,7 +25,7 @@ type PreviewRow = {
 type Preview = {
   adapterLabel: string;
   currency: string;
-  totals: { count: number; rejected: number };
+  totals: { count: number; rejected: number; alreadyImported: number; newRows: number };
   rows: PreviewRow[];
   rejectedRows: RejectedRow[];
 };
@@ -254,7 +254,10 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
         {preview && (
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge variant="neutral">{preview.totals.count} rows ready</Badge>
+              <Badge variant="neutral">{preview.totals.newRows} new rows</Badge>
+              {preview.totals.alreadyImported > 0 && (
+                <Badge variant="positive">{preview.totals.alreadyImported} already imported</Badge>
+              )}
               {preview.totals.rejected > 0 && <Badge variant="warning">{preview.totals.rejected} rows rejected</Badge>}
               <span className="text-xs text-muted">
                 Detected format: {preview.adapterLabel} · amounts in {preview.currency}
@@ -334,11 +337,15 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
               <button
                 type="button"
                 onClick={handleImportClick}
-                disabled={isSubmitting}
+                disabled={isSubmitting || preview.totals.newRows === 0}
                 className="uv-btn-press flex items-center gap-2 rounded-md border border-transparent bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               >
                 {isSubmitting && <Spinner />}
-                {isSubmitting ? "Importing…" : `Import ${preview.totals.count} rows`}
+                {isSubmitting
+                  ? "Importing…"
+                  : preview.totals.newRows === 0
+                    ? "Nothing new to import"
+                    : `Import ${preview.totals.newRows} row${preview.totals.newRows === 1 ? "" : "s"}`}
               </button>
               <button
                 type="button"

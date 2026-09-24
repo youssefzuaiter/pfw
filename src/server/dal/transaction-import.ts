@@ -383,3 +383,31 @@ export async function importTransactions(
     { timeoutMs: IMPORT_TRANSACTION_TIMEOUT_MS },
   );
 }
+
+/**
+ * How many of these rows this user has already imported.
+ *
+ * Exists so the PREVIEW can say so before anything is written. The dry
+ * run parses the file and nothing else, so after a successful import it
+ * still reported "211 rows ready" — the same wording as the first time,
+ * with no hint that all 211 were already in the ledger. Dedupe does hold
+ * (`importTransactions` pre-checks, and the unique constraint backs it),
+ * but a preview that cannot show it leaves the user to trust an
+ * irreversible button, which is the wrong way round.
+ *
+ * Read-only and outside any write transaction: this only ever informs a
+ * preview, and the import path does its own check inside the transaction
+ * that actually writes.
+ */
+export async function countAlreadyImported(
+  userId: string,
+  rows: readonly CanonicalImportRow[],
+  adapterId: string,
+): Promise<number> {
+  if (rows.length === 0) return 0;
+
+  const keys = rows.map((row) => buildProviderTransactionId(row, adapterId));
+  return withUserScope(userId, (tx) =>
+    tx.notableTransaction.count({ where: { userId, providerTransactionId: { in: keys } } }),
+  );
+}
