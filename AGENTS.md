@@ -7980,15 +7980,116 @@ all clean.
 
 ### Known limitations, left as such
 
-Rules apply at import, manual entry and sync only — there is no path
-that applies them to transactions ALREADY stored, so a rule written
-today does nothing for the 209 rows already sitting in Uncategorized.
-That is the next obvious piece of work and is why this section stops
-short of claiming categorisation is solved. There is also no bulk
-"mark these as transfers" beyond a rule, no UI listing soft-deleted rows
-(restore is only offered inline, immediately after deleting), and
-`importBatchId` is null for every row imported before it existed —
-forward-only, the same accepted shape §3u and §3cc already document.
+Rules applied at import, manual entry and sync only — there was no path
+that applied them to transactions ALREADY stored, so a rule written
+against the 209 rows sitting in Uncategorized did nothing for them.
+**Closed in §3ddd.** There is also no bulk "mark these as transfers"
+beyond a rule, no UI listing soft-deleted rows (restore is only offered
+inline, immediately after deleting), and `importBatchId` is null for
+every row imported before it existed — forward-only, the same accepted
+shape §3u and §3cc already document.
+
+## 3ddd. Rules, retroactively (ad hoc)
+
+Explicit user request, the piece §3ccc's own closing note flagged as
+"the next obvious piece of work": a Tier-0 rule only ever ran at import,
+manual entry and sync (§3rr) — nothing applied it to a transaction
+already sitting in the ledger, so the first real statement's 209
+Uncategorized rows stayed Uncategorized no matter what rule got written
+against them. Confirmed by grep before writing anything: `applyRules` is
+called from exactly `transaction-import.ts`, `transactions.ts`'s
+`createTransaction`, `sync-service.ts` and `paper-trades.ts` — never over
+rows already stored.
+
+- **`applyRulesToExistingTransactions`** (`src/server/dal/transactions.ts`):
+  scans every LIVE row for the user, runs the same `applyRules` engine
+  §3rr already built against each one, and reports — or, outside a dry
+  run, writes — exactly what would change. `dryRun` defaults `true` at
+  every layer (the DAL option, the route's Zod schema, the UI's first
+  button) for the same reason the statement importer's own preview does
+  (§3bbb): this can rewrite hundreds of rows in one call and
+  categorisation has no undo the way soft-delete gives a transaction one.
+  - **Protects a hand-categorised row's CATEGORY only** — `needsReview:
+    false` on a real (non-Uncategorized) category is this app's existing
+    proxy for "a person chose this" (§3j: the schema has no
+    `categoryConfirmedAt`, and `isManual` means something else). A rule
+    matching that row is counted as `protectedByManualChoice` and never
+    overwrites the category — but a rename or transfer action on the
+    SAME rule still applies, because neither is the choice being
+    protected; a person picking "Dining" for a transaction never implied
+    an opinion about its merchant spelling or whether it's a transfer.
+  - **`alreadyCorrect` vs. a real change**: a rule can match a row that
+    already holds every value the rule would set (the row was corrected
+    by hand, or a previous apply already ran) — counted separately so
+    the preview reads as "N would change, M already fine" rather than
+    inflating N with rows nothing will touch.
+  - **One ledger commit per real write**, through the same
+    `appendLedgerCommit` a manual recategorisation uses (§3mm) — a rule
+    changing a stored transaction is exactly as much a change to it as a
+    person changing it by hand, and the tamper-evident chain doesn't
+    distinguish who initiated an `UPDATE`.
+  - Raised transaction timeout (120s, matching `importTransactions`'s
+    own reasoning) — hundreds of single-row updates each with their own
+    ledger-commit write can legitimately exceed Prisma's 5s default.
+- **`POST /api/transactions/rules/apply`**: `guardMutation`-fronted like
+  every other mutating route; `dryRun` in the body defaults `true`
+  (an empty/missing body is treated as the safe default, not a 400).
+  A real (non-zero-update) apply is audit-logged as one bulk entry
+  (`entityId: "bulk:apply-rules"`) rather than one `AuditLog` row per
+  transaction, which would be noise at this scale for a single user
+  action.
+- **`ApplyRulesPanel`** (`src/app/(finance)/transactions/rules/_components/`,
+  mounted on `/transactions/rules`): Preview always runs first; Apply
+  only appears once a preview reports at least one real change, showing
+  a sample (`PREVIEW_LIMIT = 25`) of the actual rows and what changes on
+  each, plus badges for the would-change/already-correct/protected
+  counts. Named handlers throughout, not inline arrows on `<button>` —
+  the `=>`-truncates-the-focus-visible-guard's-regex trap this history
+  has hit repeatedly since §3c.
+- **A real test-isolation bug, caught by the test suite itself, not
+  assumed correct**: the first draft of the integration test hard-deleted
+  a row via `admin.notableTransaction.delete` between cases. A row this
+  function actually WROTE to (a real, non-dry-run apply) now has a real
+  `LedgerCommit`, and `LedgerCommit` cascades from `NotableTransaction`
+  and is append-only at the database level (§3mm) — a cascading DELETE
+  still fires the child table's own `BEFORE DELETE` trigger, so the
+  delete threw `LedgerCommit is append-only`, silently skipping every
+  statement after it in that test body (including the rule's own
+  cleanup), and the NEXT test then ran against a database that still
+  held the previous test's row and rule — exactly the same class of bug
+  §3mm's own `deleteTestUsersWithLedgerCommits` exists to prevent at the
+  `afterAll` level, just not previously hit mid-file between individual
+  `it` blocks. Fixed by soft-deleting between tests instead
+  (`deletedAt: new Date()`, an UPDATE, no cascade) — the same operation
+  the app itself performs, and the DAL's own `LIVE` filter already
+  excludes a soft-deleted row from the next test's scan.
+- **Verified live, not just by test**: `npm run check` clean — 1448/1451
+  passing (3 skip, the unrelated embedding sidecar), including 7 new
+  integration tests (a real categorisation + ledger commit, dry-run
+  writing nothing, the protected-category-but-still-renames-and-
+  transfers case, `alreadyCorrect` counting a no-op match, a
+  non-matching row left untouched, cross-user IDOR, and the zero-rules
+  short-circuit). A full round trip against the real seeded demo
+  account, through the real UI: with zero rules, Preview correctly
+  reported "0 would change / nothing to change"; created a real rule
+  (`AliExpress -> Shopping`) via the Create Rule form against a real
+  pre-existing Uncategorized row (a genuine seeded demo transaction, not
+  a fixture); Preview correctly showed "1 would change" plus "1 already
+  correct" (a different, already-correctly-categorised AliExpress row in
+  the same account) with the real transaction's date/name/category-
+  transition rendered in the table; Apply correctly updated exactly that
+  one row — confirmed via direct query that its category flipped to
+  Shopping, `needsReview` cleared, and a real `UPDATE` `LedgerCommit` row
+  now exists for it. Production build, `verify:client-bundle-secrets`,
+  Gitleaks `v8.30.1` and Semgrep `1.174.0` (the pinned CI versions, run
+  against a `git archive` export of the tracked tree plus this pass's own
+  new file, matching what CI actually checks out) all clean — Gitleaks'
+  only two findings are the pre-existing documented CI throwaways
+  already in `.gitleaksignore`. The demo account's test rule/row were
+  reverted via `npm run db:seed`; two batches of unrelated test-account
+  residue predating this session (`debug-rules-*`/`dedupe-preview-*
+  @example.com`) were found and cleaned up in the same pass, confirmed
+  via direct query that only the five real users remain.
 
 ## 4. Design system (Phase 0)
 
@@ -8311,6 +8412,7 @@ src/app/api/transactions/import/  POST — multipart CSV statement upload (§3j)
 src/app/api/transactions/[id]/delete/    POST — soft delete / restore (§3ccc)
 src/app/api/transactions/[id]/transfer/  POST — mark as own-account transfer (§3ccc)
 src/app/api/transactions/import-batch/[batchId]/  POST — undo a whole import (§3ccc)
+src/app/api/transactions/rules/apply/  POST — apply Tier-0 rules retroactively (§3ddd)
 src/app/api/{categories,budgets,goals,debts,assets,trades}/  guardMutation()-fronted CRUD routes
 src/app/api/advisor/route.ts    POST — streams text deltas only, see §3d
 src/components/nav/             TopNav (desktop), MobileNav (4 tabs + More drawer)

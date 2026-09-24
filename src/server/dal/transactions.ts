@@ -838,3 +838,174 @@ export async function setTransactionTransfer(
     return { ok: true, deletedCount: 1 };
   });
 }
+
+export type RuleApplicationChange = {
+  transactionId: string;
+  occurredAt: Date;
+  /** What the user sees in the list — merchant when there is one, else the description. */
+  label: string;
+  categoryFrom: string | null;
+  categoryTo: string | null;
+  renameTo: string | null;
+  transferTo: boolean | null;
+};
+
+export type RuleApplicationResult = {
+  /** How many rows would change in total — `changes` is only a sample of these. */
+  totalChanges: number;
+  /** A sample of the rows a rule matched AND would actually change. */
+  changes: RuleApplicationChange[];
+  /** Rows a rule matched but which already hold the values it would set. */
+  alreadyCorrect: number;
+  /** Rows skipped because the user had categorised them by hand. */
+  protectedByManualChoice: number;
+  /** Rows written — always 0 for a dry run. */
+  updatedCount: number;
+};
+
+/**
+ * Runs the Tier-0 rules over transactions ALREADY stored.
+ *
+ * Rules otherwise only fire at import, manual entry and sync, so a rule
+ * written today did nothing for what was already there — which made the
+ * feature close to useless in the one situation that calls for it. A
+ * real first import left 209 of 211 rows in Uncategorized, and the only
+ * remedy was 209 dropdowns.
+ *
+ * DOES NOT touch a row the user categorised by hand. `needsReview` is
+ * the proxy for "a human decided this" (§3j documents why: the schema
+ * has no `categoryConfirmedAt`, and `isManual` means manually ENTERED,
+ * which is different). So a row is eligible only while it is still
+ * Uncategorized or still flagged for review — a deliberate choice is
+ * never overwritten by a rule written afterwards.
+ *
+ * `dryRun` returns exactly what would change and writes nothing, the
+ * same shape the statement importer uses, and for the same reason: this
+ * can touch hundreds of rows at once and categorisation has no undo.
+ */
+export async function applyRulesToExistingTransactions(
+  userId: string,
+  options: { dryRun: boolean; limit?: number },
+): Promise<RuleApplicationResult> {
+  return withUserScope(
+    userId,
+    async (tx) => {
+      const rules = await fetchActiveRulesForEvaluation(tx, userId);
+      if (rules.length === 0) {
+        return { totalChanges: 0, changes: [], alreadyCorrect: 0, protectedByManualChoice: 0, updatedCount: 0 };
+      }
+
+      const categories = await tx.category.findMany({ where: { userId, archivedAt: null } });
+      const categoryIdBySlug = new Map(categories.map((c) => [c.slug, c.id]));
+      const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
+      const uncategorizedId = categories.find((c) => c.isUncategorized)?.id ?? null;
+
+      const rows = await tx.notableTransaction.findMany({
+        where: { userId, ...LIVE },
+        select: {
+          id: true,
+          occurredAt: true,
+          description: true,
+          merchantName: true,
+          amount: true,
+          categoryId: true,
+          needsReview: true,
+          isTransfer: true,
+        },
+        orderBy: { occurredAt: "desc" },
+      });
+
+      const changes: RuleApplicationChange[] = [];
+      let alreadyCorrect = 0;
+      let protectedByManualChoice = 0;
+      let updatedCount = 0;
+
+      for (const row of rows) {
+        const result = applyRules(
+          {
+            merchantName: row.merchantName,
+            description: row.description,
+            amountAgorot: agorot(Number(row.amount)),
+          },
+          rules,
+        );
+        if (result.matchedRuleIds.length === 0) continue;
+
+        const targetCategoryId = result.categorySlug ? categoryIdBySlug.get(result.categorySlug) : undefined;
+        const wantsCategory = targetCategoryId !== undefined && targetCategoryId !== row.categoryId;
+        const wantsRename =
+          result.renamedMerchantName !== undefined && result.renamedMerchantName !== row.merchantName;
+        const wantsTransfer = result.isTransfer !== undefined && result.isTransfer !== row.isTransfer;
+
+        if (!wantsCategory && !wantsRename && !wantsTransfer) {
+          alreadyCorrect += 1;
+          continue;
+        }
+
+        // A hand-categorised row is off limits for the CATEGORY only —
+        // renaming and the transfer flag are orthogonal to that choice.
+        const handCategorised = !row.needsReview && row.categoryId !== uncategorizedId;
+        const applyCategory = wantsCategory && !handCategorised;
+        if (wantsCategory && handCategorised) protectedByManualChoice += 1;
+
+        if (!applyCategory && !wantsRename && !wantsTransfer) continue;
+
+        changes.push({
+          transactionId: row.id,
+          occurredAt: row.occurredAt,
+          label: row.merchantName ?? row.description,
+          categoryFrom: applyCategory ? (categoryNameById.get(row.categoryId) ?? null) : null,
+          categoryTo: applyCategory ? (categoryNameById.get(targetCategoryId!) ?? null) : null,
+          renameTo: wantsRename ? (result.renamedMerchantName ?? null) : null,
+          transferTo: wantsTransfer ? (result.isTransfer ?? null) : null,
+        });
+
+        if (options.dryRun) continue;
+
+        const before = await tx.notableTransaction.findUnique({
+          where: { id: row.id },
+          include: { category: true },
+        });
+        if (!before) continue;
+
+        await tx.notableTransaction.update({
+          where: { id: row.id },
+          data: {
+            ...(applyCategory ? { categoryId: targetCategoryId, needsReview: false } : {}),
+            ...(wantsRename ? { merchantName: result.renamedMerchantName } : {}),
+            ...(wantsTransfer ? { isTransfer: result.isTransfer } : {}),
+          },
+        });
+        updatedCount += 1;
+
+        // Same chain a manual recategorisation writes (§3mm): a rule
+        // changing a stored transaction is still a change to it.
+        if (applyCategory || wantsRename) {
+          const after = await tx.notableTransaction.findUnique({
+            where: { id: row.id },
+            include: { category: true },
+          });
+          if (after) {
+            await appendLedgerCommit(tx, userId, {
+              transactionId: row.id,
+              action: "UPDATE",
+              state: buildLedgerState({ ...after, categoryName: after.category.name }),
+            });
+          }
+        }
+      }
+
+      const limit = options.limit ?? changes.length;
+      return {
+        totalChanges: changes.length,
+        changes: changes.slice(0, limit),
+        alreadyCorrect,
+        protectedByManualChoice,
+        updatedCount,
+      };
+    },
+    // Hundreds of single-row updates plus a ledger commit each, same
+    // reasoning as importTransactions' own raised ceiling.
+    { timeoutMs: 120_000 },
+  );
+}

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { listCategories } from "../../../../server/dal/categories";
 import { listTransactionRules } from "../../../../server/dal/transaction-rules";
+import { ApplyRulesPanel } from "./_components/apply-rules-panel";
 import { CreateRuleForm } from "./_components/create-rule-form";
 import { RuleRowActions } from "./_components/rule-row-actions";
 
@@ -58,6 +59,8 @@ export default async function TransactionRulesPage() {
         <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">New rule</h2>
         <CreateRuleForm categories={categories.map((c) => ({ slug: c.slug, name: c.name }))} />
       </section>
+
+      <ApplyRulesPanel />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">Rules ({rules.length})</h2>
