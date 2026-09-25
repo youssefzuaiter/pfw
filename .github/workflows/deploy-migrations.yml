@@ -27,6 +27,19 @@ on:
       confirm:
         description: 'Type "deploy" to confirm — this applies pending migrations to production.'
         required: true
+      resolve_rolled_back:
+        description: >-
+          Optional: a migration folder name to mark as rolled back before
+          deploying (prisma migrate resolve --rolled-back), for recovering
+          from a migration that failed partway (e.g. wrong role, killed
+          mid-run) with no actual schema change applied. Leave blank on a
+          normal run. Only use this when you have confirmed by hand (via
+          `prisma migrate status` or the "Show pending migrations" step's
+          own log) that the named migration genuinely made no change to
+          the database — this command only edits Prisma's own bookkeeping
+          table, it never touches or reverts real schema.
+        required: false
+        default: ""
 
 jobs:
   deploy:
@@ -72,6 +85,25 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: npx prisma migrate status || true
+
+      # Only runs when the operator explicitly filled in the
+      # resolve_rolled_back input above — this is what recovers from a
+      # migration Prisma's own bookkeeping table still marks FAILED (e.g.
+      # from an earlier run that hit the wrong Postgres role partway
+      # through, before the role was fixed): `migrate deploy` otherwise
+      # refuses with P3009 forever, since Prisma will never silently
+      # retry a migration it once saw fail. RESOLVE_MIGRATION goes
+      # through `env:`, same shell-injection-avoidance reasoning as
+      # CONFIRM_INPUT above — never splice a github.event.inputs.* value
+      # straight into `run:`. `migrate resolve` only edits Prisma's
+      # `_prisma_migrations` bookkeeping row; it never runs the
+      # migration's own SQL and never touches real schema.
+      - name: Resolve a failed migration (only if requested)
+        if: ${{ github.event.inputs.resolve_rolled_back != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          RESOLVE_MIGRATION: ${{ github.event.inputs.resolve_rolled_back }}
+        run: npx prisma migrate resolve --rolled-back "$RESOLVE_MIGRATION"
 
       # `migrate deploy`, not `migrate dev` — same reasoning as
       # ci.yml's identical step: non-interactive, no drift-detection
