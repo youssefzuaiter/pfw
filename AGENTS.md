@@ -8091,6 +8091,142 @@ rows already stored.
   @example.com`) were found and cleaned up in the same pass, confirmed
   via direct query that only the five real users remain.
 
+## 3eee. A stuck migration took production down for a day, and the recovery
+path was worse than the outage (ad hoc)
+
+Not a feature request — a real production incident, triggered by §3ddd's own
+migration (`20260924120000_transfers_and_soft_delete`) shipping normally.
+Documented because the actual lesson isn't "a migration failed" (that will
+happen again) but that this app's recovery path for that specific failure
+mode was, until this pass, a genuinely dangerous local-terminal workflow —
+and now isn't.
+
+- **The failure, in order.** `20260924120000_transfers_and_soft_delete`
+  started applying against production at 2026-09-24 15:27:23 UTC via
+  `deploy-migrations.yml`. Its FIRST statement,
+  `ALTER TYPE "LedgerCommitAction" ADD VALUE IF NOT EXISTS 'DELETE';`, failed
+  with Postgres `P3018 "must be owner of type"` — `PRODUCTION_DATABASE_URL`
+  (the environment secret §3aa's gate reads) was, at that moment, not a
+  `neondb_owner` connection string. Zero schema changed (the failure was on
+  the very first statement, and Postgres DDL is transactional), but Prisma's
+  own `_prisma_migrations` bookkeeping table now permanently remembered this
+  migration as FAILED — and `migrate deploy` refuses to touch anything else
+  in a database with a FAILED migration on record, forever, until that
+  specific row is explicitly resolved. Meanwhile the application code
+  §3ccc/§3ddd shipped alongside this migration was already live on Vercel
+  (auto-deployed on push, per §3pp — a separate, unrelated pipeline from the
+  manually-gated migration one), so every authenticated `/dashboard` render
+  started throwing `P2022: The column NotableTransaction.deletedAt does not
+  exist` — the exact error the user's own screenshot first surfaced.
+- **The role got fixed; the bookkeeping didn't, and that's a different
+  problem.** `PRODUCTION_DATABASE_URL` was corrected to a real `neondb_owner`
+  connection string, and a subsequent run got past the ownership error
+  entirely — confirmed by watching its error change to a completely
+  different failure (`P1002`, an advisory-lock timeout, `SELECT
+  pg_advisory_lock(72707369)` timing out at 10000ms — a one-off Neon
+  cold-start on a compute that had gone idle, not a structural problem: a
+  bare retry a day later, once the compute was already warm from the
+  attempt that timed out, sailed past this with no config change, and an
+  EARLIER successful `deploy-migrations.yml` run had used the exact same
+  pooler host, ruling out "PgBouncer can't do advisory locks" as the cause
+  here). But every retry still hit `P3009 "migrate found failed
+  migrations"` — the role was never the whole story once Prisma had already
+  recorded a FAILED row; that bookkeeping entry needed its own explicit fix
+  (`prisma migrate resolve --rolled-back <name>`) no matter how healthy the
+  connection became.
+- **The actual danger wasn't the outage — it was how "just run the resolve
+  command" was attempted.** Several hours were spent trying to build and run
+  `prisma migrate resolve --rolled-back "20260924120000_transfers_and_soft_delete"`
+  from a local terminal against a copy-pasted production connection string:
+  Neon's Connect dialog defaulting to the `pfw_runtime` role instead of
+  `neondb_owner`; a manual text-selection copy silently grabbing a truncated
+  substring instead of the full string; the wrong terminal tab/directory
+  resolving an unpinned `prisma@8.0.0-rc.15` pre-release with renamed CLI
+  commands instead of this repo's pinned 7.10.0; and finally a `P1013:
+  scheme not recognized` even against a correct-length value, never
+  conclusively explained (the leading hypothesis: double-quote shell
+  expansion corrupting a password containing `$` or a backtick — bash and
+  zsh both still expand `$...`/backticks inside double quotes). **One step
+  in this process asked the user to screenshot their terminal mid-command,
+  which would have exposed the real, unmasked production database password
+  in plaintext** — caught by the user before it happened
+  ("what about the secret then you will have it dumbass"), not by any
+  safeguard in the process itself. This is exactly the failure mode this
+  session's own persistent-memory rule (`secrets-handling-rules.md`) exists
+  to prevent, and the near-miss is why it gets a permanent fix here instead
+  of a one-time apology.
+- **The fix: teach the existing gated pipeline to do this instead of a
+  human's local shell** (`.github/workflows/deploy-migrations.yml`,
+  commit `1bd60a8`). A new optional `resolve_rolled_back` workflow input —
+  left blank, the workflow behaves exactly as before. When set, a new step
+  runs `prisma migrate resolve --rolled-back "$RESOLVE_MIGRATION"` before
+  the existing `migrate deploy` step, using the SAME `PRODUCTION_DATABASE_URL`
+  environment secret the deploy step already reads, behind the SAME
+  `environment: production` required-reviewer gate §3aa built — no new
+  secret, no new approval surface, no shell a human has to hand-build
+  against a raw connection string. `RESOLVE_MIGRATION` is passed through
+  `env:`, never spliced into `run:` via `${{ }}`, the identical
+  shell-injection-avoidance pattern this same file's `CONFIRM_INPUT` already
+  uses (and the exact class of bug Semgrep's `run-shell-injection` rule
+  caught in this file once before, §3aa). The input's own description
+  states the one real precondition explicitly: `--rolled-back` is only
+  correct when the failed migration made *zero* actual schema change (true
+  here — it failed on its first statement) — a migration that fails
+  partway, after some statements already applied, needs manual inspection
+  before choosing `--rolled-back` vs. `--applied`, and this input doesn't
+  (and can't) make that judgment call for you.
+- **Verified live, not just by reading the log.** Run `36128268777`
+  (2026-09-25, `resolve_rolled_back=20260924120000_transfers_and_soft_delete`,
+  `confirm=deploy`, approved through the same required-reviewer gate as
+  every other production migration run): the resolve step logged "Migration
+  20260924120000_transfers_and_soft_delete marked as rolled back," and the
+  very next step then genuinely applied it — "Applying migration
+  `20260924120000_transfers_and_soft_delete`" / "The following migration(s)
+  have been applied." Confirmed independently via Vercel's runtime-error
+  aggregation (`get_runtime_errors`), not taken on faith: the
+  `P2022 NotableTransaction.deletedAt does not exist` error group's last
+  occurrence was `2026-09-25T11:01:50Z` — before the fix landed at
+  `11:15:21Z` — and a query scoped to the window after `11:15:30Z` shows
+  zero further occurrences of that error group, only the pre-existing,
+  unrelated `pg` SSL-mode-alias deprecation warning that already appears on
+  every route regardless of this incident.
+- **Process discipline this incident actually argues for, not just the code
+  fix** — the gap this pass closes is "resolving a stuck migration is now
+  safe," not "a migration can no longer fail":
+  1. Vercel auto-deploys application code on every push to `main`;
+     `deploy-migrations.yml` only runs when a human triggers and approves
+     it. Those two pipelines are decoupled by design (§3aa: no automatic
+     trigger on this workflow, on purpose), which means a commit that pairs
+     a migration with code that depends on it can go live in the wrong
+     order if the migration step is deferred or fails silently-to-the-
+     pusher. Run and confirm the migration gate succeeded in the same
+     sitting as pushing a migration-bearing commit — not "later."
+  2. A failed `deploy-migrations.yml` run is a stop-the-line event, not a
+     background task — it now costs one extra input field to recover from,
+     so there's no longer a reason to let it sit.
+  3. No future one-off production-database action should be attempted from
+     a local shell against a pasted connection string — extend this gated
+     workflow with one more narrowly-scoped, `env:`-indirected input
+     instead, the same pattern this fix and §3aa's rejected hardware-gate
+     alternative both already establish.
+  4. GitHub notifies whoever triggered a `workflow_dispatch` run when it
+     fails, via their own notification settings (Settings → Notifications
+     on github.com) — that signal existed and sat unread for about a day
+     here; worth confirming it's actually on rather than assuming it is.
+- **Known limitations, left as such**: `resolve_rolled_back` cannot verify
+  its own precondition — it will happily mark a migration "rolled back" even
+  if that migration actually applied several statements before failing,
+  silently corrupting Prisma's bookkeeping in the opposite direction (making
+  it think a change was never made when part of it was). The input's own
+  description says to confirm this by hand first (via the "Show pending
+  migrations" step's own `migrate status` output, or `psql`), but nothing in
+  the workflow enforces it. The P1002 advisory-lock timeout's root cause
+  (Neon compute cold-start vs. Prisma's fixed 10-second lock-acquisition
+  window) is diagnosed, not fixed — a genuinely idle compute could still
+  time out a first attempt; a bare retry is the accepted mitigation, not a
+  structural fix, since Prisma's own advisory-lock timeout isn't
+  user-configurable at the CLI level.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
