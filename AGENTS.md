@@ -8227,6 +8227,195 @@ and now isn't.
   structural fix, since Prisma's own advisory-lock timeout isn't
   user-configurable at the CLI level.
 
+## 3fff. The long-term core on the website: a read-only mirror (ad hoc)
+
+Explicit user request ("let's do it"), the follow-up the long-term core's own
+status had been naming since it merged to `~/paper-trader`'s `main` (PR #5):
+until now PFW's trading screens showed only the news agent, so the core could
+be running, waiting on the owner, or broken and the website would say nothing.
+Built across two repositories on matching feature branches — `feat/core-agent-page`
+here, `feat/core-pfw-sync` in `~/paper-trader` — and **nothing was committed,
+pushed, merged or migrated in production at the time of writing**.
+
+Four defaults were announced before building and not contradicted, and they
+shape everything below: **push**, with the router's **journal as its own
+outbox**; PFW keeps the core in **separate tables**, never mixed into the
+news agent's `Trade`/`PortfolioHolding` or into net worth; the page is
+**read-only** (approving a plan stays a signed `core_ctl` command from the
+router's host); and the requests are signed with the **existing
+`WEBHOOK_SECRET`**.
+
+- **A mirror, not receipts.** The core's policy still says
+  `receipts_to_pfw = false` — PFW's ledger has no notion of a second account,
+  and the core's fills would mix with the news agent's — and that is unchanged.
+  This sends something different: a copy of the router's journal, its status and
+  its account, into three tables nothing else reads. The core's paper money
+  cannot reach the ledger, an envelope, a budget insight or net worth, because
+  nothing that computes those reads these tables.
+- **The wire contract** (`src/server/paper-trader/core-sync-schema.ts`, version
+  1; the router's side is `risk_router/core_sync.py`). `POST /api/webhooks/core`
+  takes two kinds of request. `journal`: a run of up to 100 entries, each
+  `{ index, hash, prev, raw }` — `raw` being the journal line exactly as the
+  router wrote it — under a `chain_id` (the sha256 of the journal's first line,
+  so one journal file is one chain and a router whose state directory was reset
+  starts a new one without colliding with the old). `report`: the router's own
+  `/health` answer in a fixed shape plus, hourly and whenever a plan closes, its
+  account — equity, cash and each position as **integer USD cents**, share
+  quantities as decimal strings of at most nine places, and the policy's target
+  weights. Unknown fields are ignored on purpose, so the two services can be
+  deployed in either order. Responses are the router's control surface: 201/200
+  store-or-already-stored with `next_index`; **409 `gap`** (PFW holds fewer
+  entries than the batch assumes — a restored database — with the index to
+  rewind to); **409 `chain_conflict`** (two versions of one entry would exist:
+  nothing is stored); 400 `invalid_entry`; 503 `paper_trading_user_unresolved`
+  or `core_mirror_unavailable` (retryable, losing nothing). The route is on the
+  proxy's public allowlist for the same reason as the other two webhooks (§3oo
+  explains the line between a real caller with a real secret and a webhook with
+  no real caller): the whole authentication is the HMAC over the raw bytes,
+  checked before a field is read, and the target account comes from
+  `PAPER_TRADING_USER_EMAIL`, never the body.
+- **The journal is the outbox.** There is no second queue. The router sends
+  from a cursor (`core-sync-state.json`) over its own journal and moves it only
+  when PFW's answer says it holds the entries; PFW's `next_index` is
+  authoritative, so a PFW database restored from backup is caught up rather than
+  left with a hole, and a lost cursor costs one pass of duplicates, which PFW
+  stores once (`INSERT … ON CONFLICT DO NOTHING` on `(userId, chainId,
+  entryIndex)`). A hash chain proves integrity, not authorship — anyone can
+  compute sha256 — so authorship is the HMAC, and the mirror is checked twice:
+  on ingest (every line must hash to its claimed hash and link to its
+  predecessor) and again on every page load, from the stored lines, which is why
+  the table keeps the raw line and derives everything else from it (law #5).
+- **Schema** (migration `20261004160000_core_agent_mirror`, generated with
+  `prisma migrate diff`, checked for drift afterwards): `CoreJournalEntry`,
+  `CoreSnapshot`, `CoreRouterStatus`, all user-scoped and RLS-`FORCE`d, grants
+  explicit (the §3uu lesson). **`CoreJournalEntry` is insert-only for the web
+  app's own role** — the migration grants SELECT and INSERT and then REVOKEs
+  UPDATE and DELETE, in that order, because the default-privileges rule grants
+  full DML on a new table; proven against Postgres, not read off the SQL
+  (`pfw_runtime` gets `permission denied` for both). Defence in depth for a
+  copy, not the trigger-enforced immutability `AuditLog`/`LedgerCommit` need for
+  being the record themselves; the migrating role keeps its rights, which is
+  what a cascading user delete and test cleanup need. `CoreSnapshot` and
+  `CoreRouterStatus` keep full DML (the status is one replaced row per user; a
+  report older than the stored one is ignored, so a delayed retry cannot
+  overwrite a newer state).
+- **Pure engines, `src/lib/`** (§3b): `core-journal.ts` (hash-chain verification,
+  the ingest planner — append / duplicate / gap / conflict / invalid — plan
+  replay from the journal, one-line event descriptions, allocation against
+  target, router freshness), `decimal-string.ts` (exact `BigInt` arithmetic on
+  the router's decimal strings: a quantity of nine decimals times a price is the
+  float round trip law #1 forbids, so products are summed exactly and
+  *truncated* to the cent, which is how the router records a plan's traded
+  dollars — the page and `core_ctl status` agree to the cent), `core-format.ts`
+  (zone-explicit UTC; a page rendered on Vercel and on a laptop must not
+  disagree about what time it is). Plans are **derived, never stored**: the
+  open plan and the plan history are replayed from the journal on every read.
+- **DAL** `src/server/dal/core-mirror.ts`: verify, then plan, then write, in
+  that order; race-safe (two copies of one batch arriving together leave one set
+  of rows and two successes). **Degrades when the migration has not run** —
+  this app deploys on every push but a migration is a separate gated workflow
+  (§3eee is the incident that taught it): a missing table reads as "not set up
+  on this deployment" on the page and as a retryable 503 on the webhook. The
+  detection is `P2021`/`P2022` and **nothing else**; the code was checked
+  against the real pg driver adapter by renaming each table in turn, not
+  assumed, and any other failure (a database outage) still propagates.
+- **The page** `/trading/core` (a sub-view, in `TradingNav` and `TradingSidebar`,
+  not a primary destination): router status and freshness (fresh ≤ 15 min, stale
+  ≤ a day — a router on a laptop is off overnight, so not alarming — silent
+  beyond), the router's own attention list, the account (USD native, shekels at
+  the live synced rate, through the shared `CurrencyAmount`, which gained an
+  optional `nativeOptions`), holdings against target (a table, and a two-line
+  list below `sm` — the drift is the one column that would scroll off a phone),
+  the open plan, closed plans with their orders and fills, and the journal. It
+  says plainly when the stored copy no longer verifies, and where. **Read-only by
+  design and in code**: no button, no route that can approve, halt or trade — this
+  app holds no credential for the router, so a stolen login cannot become a
+  trading account. Every router-supplied string is rendered as a text node and
+  tested as such (`<img onerror>` stays text).
+- **Demo data**: the seed (`prisma/seed/core-mirror.ts`, drawn *last* so no
+  earlier RNG-driven choice shifts) gives the demo account a real hash chain for
+  a $10,000 build five weeks ago, so Demo Login and the accessibility audit see
+  the populated page. `/trading/core` is now in `accessibility.spec.ts`'s list.
+- **The router's side** (`~/paper-trader`): `risk_router/core_sync.py`, a task of
+  its own inside the core router, **off unless `CORE_PFW_SYNC_URL` is set**.
+  Read-only by construction and by test (journal and plan-state bytes unchanged
+  across passes; no order submitted or cancelled; the secret never in a log, a
+  URL or `/health`): it reads the journal file, the account and the router's
+  `/health`, and sends. It runs whether or not trading is enabled — a router
+  that cannot trade is exactly when the owner most wants to see why — but not on
+  a router that lost the single-instance lock. Whatever fails (PFW down, a
+  rejection, a bug) is counted and retried and cannot reach the execution loop:
+  `run_once` never raises. Transient failures back off (a minute, doubling, to ten);
+  a 4xx that will not fix itself (wrong secret, a route not deployed yet) is
+  retried every 10 minutes and, after 30 minutes of failing, appears in the
+  router's `/health` attention list — a PFW redeploy does not cry wolf. `/health`
+  gained `pfw_sync`; it deliberately does not name the website, since `/health`
+  is unauthenticated. The preflight gained a `website mirror` check that never
+  FAILs: it can only advise.
+- **The cross-repository contract is a committed fixture, not a promise.**
+  The trader's test drives a whole initial build through its real router with a
+  frozen clock and compares the two request bodies it produces with
+  `tests/fixtures/pfw_core_sync_contract.json`; a byte-for-byte copy lives here
+  (`tests/fixtures/core-sync-contract.json`) and is replayed through the real
+  route — Python's canonical JSON, signed over those exact bytes — and read back
+  as the initial build it describes. Change the wire format on either side and
+  that side's test fails; the fixture is regenerated in the trader's repo with
+  `UPDATE_PFW_FIXTURE=1` and copied across. (The policy hash is frozen in the
+  fixture so that editing `policy/core.toml` does not rewrite it.)
+- **Verified, in layers.** `npm run check`: typecheck and lint clean (one pre-existing warning, untouched), **1,715 passed, 3 skipped** (the embedding sidecar). `npm run test:e2e`
+  (a real production build): **40/40** — the existing 37, with `/trading/core` added to the axe audit, plus three in `core-page.spec.ts` (no console, page or CSP errors on the populated page; nothing on it can approve, halt or trade; the currency toggle works on it), including axe over the populated
+  `/trading/core`. The router's suite: **467 passed, 1 skipped**, 69 of them new (60 for the sync itself, 8 for its place inside the running app, 1 for the preflight); `ruff` clean. Both
+  repositories' pinned Gitleaks (`v8.30.1`) and Semgrep (`1.174.0`, each repo's
+  own CI rulesets) clean over an export of exactly what would be committed.
+  **Mutation-checked** on both sides — each mutant (a cursor that never advances,
+  a gap treated as permanent, a signature timestamp from the injected clock, a
+  chain break not detected, half-even rounding, a boundary off by one…) had to
+  make a test fail; the survivors found this way were real test gaps and were
+  closed (no test had a sale and a buy in one closing entry; none sent a 429;
+  none sat exactly on the attention threshold). **Live, against the real local
+  stack**: the real router (fake broker) drove an initial build — proposed, then
+  approved, executed and closed — with the real signing and real HTTP into the
+  dev server, and the page showed each stage in a browser: the router's own
+  "waiting for your signed approval" line, then the plan done and its six fills,
+  "$9,998.58 traded" (hand-checked: 499.93 + 5 × 1899.73), the restart as its own
+  journal entry, and "1 earlier journal kept". Every stored hash was then
+  compared with the router's journal file, entry for entry: identical. **Failure
+  drills, live**: a wrong secret was refused (403, `stuck`, nothing stored); a
+  database with the table renamed answered 503 `core_mirror_unavailable`
+  (retryable, not stuck); a dead port was a transient failure; and the one cursor
+  then delivered everything in a single pass with nothing lost.
+- **Real findings while building it** (not the plan's, the code's): Python's
+  `json.dumps(sort_keys=True)` sorts *nested* keys too, so a closing entry's
+  `orders` arrive in client-order-id order — neither submission order nor
+  sells-first — and the page sorts them itself; the router's `at` omits the
+  fractional part when it is zero, so a parser that assumed microseconds would be
+  wrong half the time; the signature's timestamp must come from the wall clock
+  even where the scheduling clock is injected (a test pins it, since a fixed
+  fake clock is a guaranteed 403 against a real replay window); `FakeBroker`'s
+  positions carry no market value, so the account builder tolerates a position
+  with none rather than assuming Alpaca's full shape; and test secrets are
+  zero-entropy repeated characters because a plausible-looking one is what a
+  secret scanner flags.
+- **Deploy order** (none of it done): merge both; **run `deploy-migrations.yml`
+  for `core_agent_mirror` in the same sitting as the merge** (§3eee — the code
+  tolerates the gap, but only the migration makes it work); set
+  `CORE_PFW_SYNC_URL` on the router's host. `PAPER_TRADING_USER_EMAIL` must name
+  the account that should see the core, and `WEBHOOK_SECRET` must be the same
+  value on both sides (a mismatch shows as a 403 and an attention line).
+- **Known limitations, left as such**: no approve/halt/raise-cash from the
+  website (that needs the router reachable from Vercel and a deliberate decision
+  about giving PFW a credential for it; the core is still not hosted anywhere);
+  no equity-over-time chart (the snapshots are stored hourly for it; with
+  weeks of data it is the obvious next view); the core is not on `/dashboard`
+  and never in net worth; one shared secret (a forged request could only mislead
+  what one page shows — it cannot approve or move anything — but a dedicated
+  secret is a cheap later hardening); a `chain_conflict` is resolved by a person
+  comparing the two journals; the whole current journal is read on every page
+  load (tens of entries a quarter; make the verification incremental if that
+  ever stops being small); average entry prices are stored in whole cents like
+  every other per-share price here, losing sub-cent precision; the page shows the
+  paper-trading account's mirror only, anyone else sees the empty state.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
