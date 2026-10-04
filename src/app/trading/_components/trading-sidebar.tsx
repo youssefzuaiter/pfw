@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ArrowLeft, LineChart, PieChart, Receipt, type LucideIcon } from "lucide-react";
+import { Activity, Anchor, ArrowLeft, LineChart, PieChart, Receipt, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -15,6 +15,7 @@ const TRADING_LINKS: SidebarLink[] = [
   { href: "/trading/portfolio", label: "Portfolio", icon: PieChart },
   { href: "/trading/tax", label: "Tax & Capital Gains", icon: Receipt },
   { href: "/trading/agent", label: "Agent Activity", icon: Activity },
+  { href: "/trading/core", label: "Long-term core", icon: Anchor },
 ];
 
 function isTradingLinkActive(pathname: string | null, href: string): boolean {

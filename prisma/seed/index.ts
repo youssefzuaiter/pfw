@@ -17,6 +17,7 @@ import {
   MOCK_USD_TO_ILS_RATE,
   SEED_USER,
 } from "./israeli-data";
+import { seedCoreMirror } from "./core-mirror";
 import { SeededRng, getMonthlySeed, monthKeyFor } from "./rng";
 
 /**
@@ -679,6 +680,13 @@ async function main() {
   });
   await prisma.bankAccount.update({ where: { id: checking.id }, data: { sharedGroupId: household.id } });
 
+  // --- Long-term core mirror (AGENTS.md §3fff) --------------------------
+  // A populated /trading/core for the demo account, drawn LAST so it
+  // cannot shift any RNG-driven choice made above (the monthly-seeded
+  // determinism this script promises). The mirror's tables cascade from
+  // User, so the reset at the top already removed any earlier one.
+  const coreMirror = await seedCoreMirror(prisma, user.id, now, rng);
+
   console.log("Seed complete:", {
     user: user.email,
     demoLogin: demoMode ? "claimed with the shared demo password (NEXT_PUBLIC_DEMO_MODE=true)" : "unclaimed — first registration inherits this ledger",
@@ -686,6 +694,7 @@ async function main() {
     savings: savings.id,
     creditCard: creditCard.id,
     household: { id: household.id, spouse: spouse.email, roommate: roommate.email },
+    coreMirror,
   });
 
   await prisma.$disconnect();

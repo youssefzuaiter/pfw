@@ -11,7 +11,14 @@ import { PRIMARY_NAV_ITEMS } from "../../src/components/nav/nav-items";
 // System/Light/Dark toggle was removed entirely (ad hoc, at explicit
 // user request; see globals.css's own doc comment), so there is only
 // ever one theme to check now.
-const ROUTES = PRIMARY_NAV_ITEMS.map((item) => item.href);
+//
+// Plus the long-term core's page (AGENTS.md §3fff): a sub-view, not a
+// primary destination, so it is not in the nav list above, but it is a
+// dense screen — two tables, a disclosure list, a feed and a stack of
+// status colours — and exactly the kind the contrast sweep (§3tt) found
+// failing everywhere else. The demo account's seed gives it a populated
+// mirror, so the audit sees the real page, not the empty state.
+const ROUTES = [...PRIMARY_NAV_ITEMS.map((item) => item.href), "/trading/core"];
 
 test.describe("accessibility", () => {
   for (const route of ROUTES) {

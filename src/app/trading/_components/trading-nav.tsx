@@ -1,15 +1,16 @@
 import Link from "next/link";
 
-export type TradingView = "desk" | "portfolio" | "tax" | "agent";
+export type TradingView = "desk" | "portfolio" | "tax" | "agent" | "core";
 
 const TABS: { view: TradingView; href: string; label: string }[] = [
   { view: "desk", href: "/trading", label: "Trading desk" },
   { view: "portfolio", href: "/trading/portfolio", label: "Portfolio" },
   { view: "tax", href: "/trading/tax", label: "Tax & Capital Gains" },
   { view: "agent", href: "/trading/agent", label: "Agent Activity" },
+  { view: "core", href: "/trading/core", label: "Long-term core" },
 ];
 
-/** The tab switcher shared by all three /trading sub-views (desk, portfolio, tax) — extracted once three copies of the same markup would otherwise exist. */
+/** The tab switcher shared by every /trading sub-view — extracted once three copies of the same markup would otherwise exist. */
 export function TradingNav({ active }: { active: TradingView }) {
   return (
     <nav className="flex flex-wrap gap-2" aria-label="Trading views">
