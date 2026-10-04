@@ -27,6 +27,7 @@ export function CurrencyAmount({
   primaryClassName = "font-tabular-figures text-fg",
   secondaryClassName = "font-tabular-figures text-xs text-muted",
   agorotOptions,
+  nativeOptions,
 }: {
   agorotValue: Agorot;
   nativeValue: NativeAmount;
@@ -34,6 +35,8 @@ export function CurrencyAmount({
   primaryClassName?: string;
   secondaryClassName?: string;
   agorotOptions?: Parameters<typeof formatAgorot>[1];
+  /** The native-figure counterpart of `agorotOptions` (e.g. `showPositiveSign` for a day's change), so both lines of a signed amount agree. */
+  nativeOptions?: Parameters<typeof formatNativeAmount>[2];
 }) {
   const mode = useCurrencyDisplayMode();
 
@@ -43,7 +46,7 @@ export function CurrencyAmount({
     return <p className={primaryClassName}>{ilsText}</p>;
   }
 
-  const nativeText = formatNativeAmount(nativeValue, currency);
+  const nativeText = formatNativeAmount(nativeValue, currency, nativeOptions);
   const [primaryText, secondaryText] = mode === "native" ? [nativeText, ilsText] : [ilsText, nativeText];
 
   return (
