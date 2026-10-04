@@ -132,10 +132,12 @@ person and integrated deliberately. Diagrams below draw that line explicitly.
                                                                        └───────────────────────┘
 ```
 
-Two arrows in the right-hand box are worth calling out explicitly, because
-they run in opposite directions and use different trust mechanisms:
+The arrows between PFW and the trader repository are worth calling out
+explicitly, because they run in both directions and use different trust
+mechanisms (the diagram above draws the news agent's; the long-term core's
+is the second bullet):
 
-- **paper-trader → PFW** (`POST /api/webhooks/trades`, `POST /api/webhooks/metrics`):
+- **paper-trader (news agent) → PFW** (`POST /api/webhooks/trades`, `POST /api/webhooks/metrics`):
   the agent pushes signed trade receipts and scenario telemetry. No user
   session exists on this path — the trust boundary is entirely an
   HMAC-SHA256 signature over the raw request body (`WEBHOOK_SECRET`, shared
@@ -150,6 +152,23 @@ they run in opposite directions and use different trust mechanisms:
   lost or never seen gets booked. PFW re-prices every
   receipt's native USD amount at its OWN synced FX rate — the agent's
   `exchange_rate_at_entry`/agorot fields are informational only.
+- **paper-trader's long-term core → PFW** (`POST /api/webhooks/core`, AGENTS.md
+  §3fff): a *third* signed push, from a different service — the core router
+  (`risk_router/core_sync.py`, optional, off unless `CORE_PFW_SYNC_URL` is set)
+  mirrors its append-only, hash-chained journal and its own status/account so
+  the owner can watch the core at `/trading/core`. Same trust boundary as the
+  other two (HMAC over the raw body, `WEBHOOK_SECRET`, no session), but a
+  different shape: the **journal is the outbox** — the router sends from a
+  cursor over the journal itself and advances it only when PFW's response
+  says it holds the entries (`next_index`), so there is no second queue to
+  lose and a PFW database restored from backup is caught up rather than left
+  with a hole. PFW keeps a **read-only copy in three tables of its own**
+  (`CoreJournalEntry`, `CoreSnapshot`, `CoreRouterStatus`) that nothing else
+  reads: the core's paper money never touches the ledger, the news agent's
+  trades or net worth. The copy re-verifies its own hash chain on every page
+  load. It is a mirror, not a control: PFW holds no credential for the core
+  router and cannot approve, halt or trade — those stay signed commands from
+  the router's own console (`core_ctl`).
 - **PFW → paper-trader** (`GET /api/agent/health`, `GET /api/agent/telemetry`,
   `POST /api/agent/halt`): the *browser* never talks to paper-trader directly
   — true without exception since the trader-integration hardening pass
@@ -257,8 +276,8 @@ window). Read-only, side-effect-free routes (`GET /api/analytics/monte-carlo`,
 `GET /api/agent/health`, etc.) deliberately skip the Origin check but keep
 identity resolution and rate limiting.
 
-The two webhook routes (`/api/webhooks/trades`, `/api/webhooks/metrics`) are
-the **one deliberate exception** to `guardMutation()` — there is no user
+The three webhook routes (`/api/webhooks/trades`, `/api/webhooks/metrics`,
+`/api/webhooks/core`) are the **one deliberate exception** to `guardMutation()` — there is no user
 session on that path at all, by design (the caller is a separate process,
 not a browser), so the trust boundary is entirely the HMAC signature
 described in §2 and §4.
