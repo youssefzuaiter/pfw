@@ -53,4 +53,19 @@ describe("CurrencyAmount", () => {
     expect(document.querySelector(".custom-primary")).not.toBeNull();
     expect(document.querySelector(".custom-secondary")).not.toBeNull();
   });
+
+  it("signs the native line too when asked, so a day's change reads the same on both lines", () => {
+    render(
+      <CurrencyAmount
+        agorotValue={agorot(370_00)}
+        nativeValue={nativeAmount(100_00)}
+        currency="USD"
+        agorotOptions={{ showPositiveSign: true }}
+        nativeOptions={{ showPositiveSign: true }}
+      />,
+    );
+    const [primary, secondary] = screen.getAllByText(/./, { selector: "p" });
+    expect(primary).toHaveTextContent("+₪370.00");
+    expect(secondary).toHaveTextContent("+$100.00");
+  });
 });
