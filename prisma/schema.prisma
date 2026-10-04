@@ -336,6 +336,9 @@ model User {
   holdingLots              HoldingLot[]
   trades                   Trade[]
   scenarioMetrics          ScenarioMetrics[]
+  coreJournalEntries       CoreJournalEntry[]
+  coreSnapshots            CoreSnapshot[]
+  coreRouterStatus         CoreRouterStatus?
   netWorthSnapshots        NetWorthSnapshot[]
   merchantEmbeddings       MerchantEmbedding[]
   dividends                Dividend[]
@@ -1241,6 +1244,125 @@ model ScenarioMetrics {
 
   @@index([userId, ticker, createdAt])
   @@index([hash])
+}
+
+/// A read-only MIRROR of the long-term core's journal (ad hoc, AGENTS.md
+/// §3fff). The core is a separate service with its own Alpaca paper
+/// account and an append-only, hash-chained journal (`core-journal.jsonl`,
+/// one JSON line per step, each carrying the sha256 of the line before
+/// it). The router pushes that journal here, signed with the same shared
+/// secret as every other trader webhook, so the owner can watch the core
+/// from this app. This app can read it and can never act on it: nothing
+/// here approves, halts or trades.
+///
+/// `rawLine` is the record: the line exactly as the router wrote it.
+/// Everything else about an entry — what happened, which plan it belongs
+/// to, what it contained — is DERIVED from it on read (law #5), so there is
+/// one source of truth and nothing to drift. `entryHash` is the hash the
+/// router claims for that line; this app recomputes it (`sha256(rawLine)`)
+/// on ingest and again whenever the page verifies the chain, so a mirror
+/// that was altered after the fact shows as broken instead of being taken
+/// on trust. `event`, `planId` and `occurredAt` are denormalized copies of
+/// fields inside `rawLine`, kept only so the feed can be ordered and a
+/// plan's entries found without parsing every line.
+///
+/// `chainId` is the sha256 of the journal's FIRST line, so one journal file
+/// is one chain. A router whose state directory was reset starts a new
+/// journal and therefore a new chain; it never collides with the old one,
+/// which stays here as history.
+///
+/// Append-only at the database level for the app's own role (see the
+/// migration's REVOKE): the web app can insert an entry and read it back,
+/// and cannot update or delete one. The migrating role can, which is what
+/// account deletion and test cleanup need — the real record lives on the
+/// router's disk, so this is defence in depth for a mirror, not the
+/// trigger-enforced immutability `AuditLog`/`LedgerCommit` need for being
+/// the record themselves.
+model CoreJournalEntry {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chainId    String
+  /// 0-based position of the entry within its chain.
+  entryIndex Int
+  entryHash  String
+  prevHash   String
+  event      String
+  planId     String?
+  occurredAt DateTime
+  rawLine    String
+  /// When this app received the entry, not when the router wrote it.
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, chainId, entryIndex])
+  @@index([userId, occurredAt])
+  @@index([userId, planId])
+}
+
+/// The long-term core's account as the router last saw it (ad hoc,
+/// AGENTS.md §3fff): equity, cash and each position, in USD cents — the
+/// core's account is a US-dollar Alpaca paper account, so its figures are
+/// native USD and are converted to shekels at READ time at the latest
+/// synced rate, never stored (law #3, and the same split `BankAccount`
+/// makes). A snapshot is a fact about one moment, so rows are only ever
+/// added.
+///
+/// `positions` is `[{ symbol, qty, marketValueUsdCents,
+/// avgEntryPriceUsdCents, currentPriceUsdCents }]`, `targets` is
+/// `{ symbol: "0.19" }` (the policy's weights, decimal strings). Both are
+/// validated field by field with Zod when they arrive and read back
+/// through the same schema, which is why they are JSON and not their own
+/// tables: the page only ever reads the latest snapshot's positions as a
+/// whole, never queries across them.
+model CoreSnapshot {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  takenAt            DateTime
+  equityUsdCents     BigInt
+  cashUsdCents       BigInt
+  /// Equity as of the previous close (Alpaca's `last_equity`), for the day's change.
+  lastEquityUsdCents BigInt?
+  positions          Json
+  targets            Json
+  createdAt          DateTime @default(now())
+
+  @@unique([userId, takenAt])
+}
+
+/// The router's latest self-report (ad hoc, AGENTS.md §3fff): is it
+/// trading, halted, waiting on the owner, and when did it last say so.
+/// One row per user, replaced on every report — the history of anything
+/// that mattered is already in the journal, and a row per heartbeat would
+/// be hundreds of rows a day saying "still fine". A report older than the
+/// stored one is ignored, so a delayed retry can never overwrite a newer
+/// state with an older one.
+///
+/// `attention` is the router's own list of things a person should look at
+/// (an empty list is the all-clear), a JSON array of short strings.
+model CoreRouterStatus {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reportedAt          DateTime
+  tradingEnabled      Boolean
+  disabledReason      String?
+  halted              Boolean
+  haltReason          String?
+  policySha256        String?
+  /// A calendar date (YYYY-MM-DD), not an instant: the first session the policy may trade.
+  policyEffectiveFrom String?
+  planId              String?
+  planKind            String?
+  planStatus          String?
+  planExecuteOn       String?
+  journalOk           Boolean
+  journalEntries      Int
+  journalReason       String?
+  tickAgeSeconds      Float?
+  tickFailures        Int
+  attention           Json
+  updatedAt           DateTime @updatedAt
 }
 
 /// Fixed-window request counters backing `src/server/api/rate-limit.ts`
