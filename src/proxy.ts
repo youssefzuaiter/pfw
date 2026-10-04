@@ -46,6 +46,16 @@ import { auth } from "./server/auth/auth";
  * trades one because it writes a different table (ScenarioMetrics) for a
  * different purpose (AI-strategy analytics, not the financial ledger),
  * not because it needs a different security posture.
+ *
+ * `/api/webhooks/core` (the long-term core's mirror, ad hoc §3fff): same
+ * caller family, same shared WEBHOOK_SECRET, same internal HMAC check
+ * over the raw body (src/app/api/webhooks/core/route.ts). The core router
+ * pushes its append-only journal and its latest self-report here so the
+ * owner can watch it from this app. It writes a read-only MIRROR into
+ * tables nothing else reads — never the ledger, never net worth — so a
+ * forged request could only mislead what one page shows, and this app
+ * holds no credential that could approve, halt or trade anything on the
+ * core.
  */
 // "/forgot-password", "/reset-password/[token]", "/verify-email/[token]"
 // (auth hardening pass, ad hoc post-§3ff) — same reasoning as the
@@ -89,6 +99,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/api/cron",
   "/api/webhooks/trades",
   "/api/webhooks/metrics",
+  "/api/webhooks/core",
 ]);
 const PUBLIC_PATH_PREFIXES = [
   "/api/auth/",
