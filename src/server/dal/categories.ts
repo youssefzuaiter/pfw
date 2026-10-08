@@ -110,10 +110,18 @@ export async function deleteCategoryWithReassignment(userId: string, id: string)
     // Deliberately NOT filtered to live rows: a soft-deleted transaction
     // still references this category, and the category itself is about
     // to be hard-deleted, so its foreign key has to be moved too.
-    const { count } = await tx.notableTransaction.updateMany({
-      where: { userId, categoryId: id },
-      data: { categoryId: uncategorized.id, needsReview: true },
-    });
+    //
+    // Raw SQL, not `updateMany`: the field-encryption extension refuses
+    // every createMany/updateMany on NotableTransaction (a batch write
+    // could persist `description` as plaintext), so the Prisma call here
+    // threw on every delete. Nothing below touches an encrypted column,
+    // and the statement still runs inside this scoped transaction, so RLS
+    // and the explicit userId filter both apply. `updatedAt` is set by
+    // hand because Prisma's @updatedAt is a client-side behavior.
+    const count = await tx.$executeRaw`
+      UPDATE "NotableTransaction"
+      SET "categoryId" = ${uncategorized.id}, "needsReview" = true, "updatedAt" = now()
+      WHERE "userId" = ${userId} AND "categoryId" = ${id}`;
 
     // EnvelopeAllocation rows cascade-delete automatically (schema.prisma's onDelete: Cascade).
     await tx.category.delete({ where: { id } });
