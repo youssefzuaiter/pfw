@@ -7984,10 +7984,10 @@ Rules applied at import, manual entry and sync only — there was no path
 that applied them to transactions ALREADY stored, so a rule written
 against the 209 rows sitting in Uncategorized did nothing for them.
 **Closed in §3ddd.** There is also no bulk "mark these as transfers"
-beyond a rule, no UI listing soft-deleted rows (restore is only offered
-inline, immediately after deleting), and `importBatchId` is null for
-every row imported before it existed — forward-only, the same accepted
-shape §3u and §3cc already document.
+beyond a rule, no UI listing soft-deleted rows (restore was only offered
+inline, immediately after deleting) — **closed in §3ggg** — and
+`importBatchId` is null for every row imported before it existed —
+forward-only, the same accepted shape §3u and §3cc already document.
 
 ## 3ddd. Rules, retroactively (ad hoc)
 
@@ -8415,6 +8415,47 @@ router's host); and the requests are signed with the **existing
   ever stops being small); average entry prices are stored in whole cents like
   every other per-share price here, losing sub-cent precision; the page shows the
   paper-trading account's mirror only, anyone else sees the empty state.
+
+## 3ggg. Recently deleted: a way back for soft-deleted transactions (ad hoc)
+
+Closes the gap §3ccc named. Delete was soft, but the only restore was the
+"Undo delete" button shown in the row right after deleting it: navigate away
+and the row was stranded, and a deleted 211-row import could only come back
+one row at a time, from nowhere.
+
+- **`/transactions/deleted`** (a sub-view, linked from `/transactions`, not a
+  primary destination): every soft-deleted transaction, most recently deleted
+  first, with its date, category, account, amount and a Restore button. A
+  deleted statement import (two or more rows) also gets one banner with
+  "Restore all N". Capped at `DELETED_LIST_LIMIT` (500) and says so; a batch's
+  count is taken over ALL its deleted rows, not the listed ones.
+- **`listDeletedTransactions`, `restoreImportBatch`** in
+  `src/server/dal/transactions.ts`. The per-row restore moved into
+  `restoreRowInTransaction`, shared by the single and batch paths so they
+  cannot drift. A row whose dedupe key a live row took in the meantime (the
+  same file re-imported after the undo) comes back without it, never failing
+  the batch. Each restored row appends its own `RESTORE` ledger commit.
+- **`POST /api/transactions/import-batch/[batchId]/restore`**: the counterpart
+  of the undo-import route, `guardMutation`-fronted, 404 for a batch that
+  does not exist, is someone else's, or has nothing deleted. Single-row
+  restore reuses the existing `POST /api/transactions/[id]/delete` with
+  `{ deleted: false }`. Registered in `tests/routes/mutating-route-registry.ts`,
+  which the inventory guard requires.
+- **Only `nickname`/`institutionName` are read from the account**, never
+  `last4`: it is encrypted, and a nested relation read does not pass through
+  the field-encryption extension, so it would arrive as ciphertext (§3jj).
+- **Verified**: 6 integration tests against real Postgres (list order and
+  readable fields, another user's rows never listed, batch counts, a batch
+  restored with keys back and a valid chain, the key-taken case, not-found
+  cases), 4 component tests, and 2 Playwright tests on the production build
+  (an axe scan of the populated page, no console errors, restore one row and
+  restore a whole import). Mutation-checked: a list that also returned live
+  rows and a restore that forgot the dedupe key were both caught. Dropping the
+  `userId` filter from the batch query is NOT caught, correctly: row-level
+  security still hides other users' rows, which is the design's second layer.
+- **Not built**: restoring a category deleted with reassignment (rows keep
+  moving to Uncategorized; that delete is real), and a purge-after-N-days
+  (nothing is ever really erased, by design).
 
 ## 4. Design system (Phase 0)
 
