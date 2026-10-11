@@ -7,6 +7,7 @@ import {
   getEmbeddingSidecarUrl,
   getEncryptionKey,
   getEncryptionKeyNext,
+  getSentryDsn,
   SECRET_ENV_VAR_NAMES,
 } from "./env";
 
@@ -182,6 +183,26 @@ describe("server env accessors", () => {
       process.env.BANK_API_CLIENT_SECRET = "shh-its-a-secret";
       process.env.BANK_API_BASE_URL = "not-a-url";
       expect(() => getBankApiCredentials()).toThrow(/BANK_API_BASE_URL/);
+    });
+  });
+
+  describe("getSentryDsn", () => {
+    const originalDsn = process.env.SENTRY_DSN;
+    afterEach(() => {
+      if (originalDsn === undefined) delete process.env.SENTRY_DSN;
+      else process.env.SENTRY_DSN = originalDsn;
+    });
+
+    it("is null when unset or blank, so reporting stays off", () => {
+      delete process.env.SENTRY_DSN;
+      expect(getSentryDsn()).toBeNull();
+      process.env.SENTRY_DSN = "   ";
+      expect(getSentryDsn()).toBeNull();
+    });
+
+    it("returns the trimmed value when set", () => {
+      process.env.SENTRY_DSN = "  https://example@o0.ingest.sentry.io/0  ";
+      expect(getSentryDsn()).toBe("https://example@o0.ingest.sentry.io/0");
     });
   });
 });
