@@ -365,6 +365,19 @@ export function getOperatorAlertEmail(): string | null {
 }
 
 /**
+ * Server-side error reporting (Sentry, AGENTS.md §3 observability). Read
+ * on the server only, so the value is never built into the browser bundle
+ * and no client code reports anything. Optional: `null` when unset, which
+ * turns reporting off entirely. A DSN is write-only (it can submit
+ * reports, never read them), so it is configured as a plain server
+ * variable rather than a `NEXT_PUBLIC_` one.
+ */
+export function getSentryDsn(): string | null {
+  const value = process.env.SENTRY_DSN?.trim();
+  return value ? value : null;
+}
+
+/**
  * Not a secret — the app's own public origin, used only to build
  * absolute links inside outbound emails (a password-reset/email-
  * verification link has to be a full URL, not a relative path, since it's
