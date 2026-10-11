@@ -174,7 +174,13 @@ most likely to get subtly wrong.
   overrides it; `PG_PROBE_IMAGE` (default `postgres:18`) is only used
   for that one `SHOW server_version_num` query and can be anything with
   a `psql` in it.
+- **A failed night opens a GitHub issue.** The workflow's `report` job
+  opens "Nightly database backup failed" (or comments on it if it is
+  already open) and closes it when a later night succeeds, so a failure is
+  an email to the repository's watchers instead of a red mark on a tab
+  nobody opens. Seven nights failed unnoticed in October 2026 before this
+  existed. Make sure Watch on the repository is set to include issues.
 - **GitHub disables `schedule` after 60 days without commits.** The
-  Actions tab's run list is the heartbeat; the cron operator alert
-  (`OPERATOR_ALERT_EMAIL`) does not cover this workflow, because a run
-  that never starts cannot send anything.
+  Actions tab's run list is the heartbeat; neither the issue above nor the
+  cron operator alert (`OPERATOR_ALERT_EMAIL`) covers this, because a run
+  that never starts cannot report anything.
