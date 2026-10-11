@@ -244,12 +244,6 @@ export const proxy = auth((request) => {
   // touches; every exception here is independently justified, narrow (no
   // wildcard broader than one documented CDN subdomain shape per entry),
   // and audited together rather than one being addressed in isolation.
-  //
-  // *.ingest.sentry.io (+ the US and EU regions): where error reports are
-  // POSTED when NEXT_PUBLIC_SENTRY_DSN is set. Only reports leave the app,
-  // scrubbed by src/lib/observability/scrub-sentry-event.ts; nothing is
-  // fetched from these hosts. Wildcard because the org's ingest host is
-  // o<id>.ingest.<region>.sentry.io and the id is not known to this file.
   const csp = `
     default-src 'self';
     script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval';
@@ -257,7 +251,7 @@ export const proxy = auth((request) => {
     style-src 'self' 'nonce-${nonce}';
     img-src 'self' blob: data:;
     font-src 'self';
-    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io;
+    connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.aws.cdn.hf.co https://*.gcp.cdn.hf.co https://*.xethub.hf.co;
     object-src 'none';
     base-uri 'self';
     form-action 'self';
