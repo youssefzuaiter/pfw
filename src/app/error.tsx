@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
 /**
@@ -33,6 +34,7 @@ export default function RouteError({
     // Server-thrown errors are already logged server-side; this covers
     // the client-render half, which otherwise leaves no trace at all.
     console.error("Route error boundary caught:", error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (
