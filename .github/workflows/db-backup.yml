@@ -25,9 +25,11 @@ name: Database backup
 #
 # Artifacts of a PUBLIC repository are downloadable by anyone with a GitHub
 # account, which is why the script uploads nothing that is not encrypted
-# and why the plaintext dump never leaves the runner. Note GitHub pauses
-# scheduled workflows in a repository with no commits for 60 days — the
-# run history on the Actions tab is the check that this is still firing.
+# and why the plaintext dump never leaves the runner. A failed run opens an
+# issue (the `report` job below). That cannot cover a run that never starts:
+# GitHub pauses scheduled workflows in a repository with no commits for 60
+# days, so the run history on the Actions tab is still the check that this
+# is firing at all.
 on:
   schedule:
     - cron: "30 3 * * *"
@@ -64,3 +66,47 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           compression-level: 0
+
+  # A failed night used to be visible only on the Actions tab, and seven in a
+  # row (2026-10-05 to 2026-10-11, a table the backup role could not read) went
+  # unnoticed. This turns a failure into an open issue, which GitHub emails to
+  # the repository's watchers, and closes it again when a night succeeds. It is
+  # its own job so it holds `issues: write` and nothing else: the backup job
+  # has the database secrets and must not also be able to write to the repo.
+  # The issue is public (so is the repository), and carries only the run link.
+  report:
+    name: Report backup status
+    needs: backup
+    if: always() && needs.backup.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BACKUP_RESULT: ${{ needs.backup.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the failure issue
+        run: |
+          set -euo pipefail
+          title="Nightly database backup failed"
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+
+          if [ "$BACKUP_RESULT" = "success" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+                --comment "A backup succeeded again: $RUN_URL"
+            fi
+            exit 0
+          fi
+
+          body="The nightly backup finished as \`$BACKUP_RESULT\`: $RUN_URL
+
+          Neon's point-in-time restore is still the first line of recovery. See docs/BACKUP-RESTORE.md (a table the backup role cannot read was the cause last time)."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
