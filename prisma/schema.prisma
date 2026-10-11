@@ -156,9 +156,9 @@ enum AuditAction {
   DELETE
 }
 
-/// LedgerCommit never records DELETE — transactions are never deleted in
-/// this app (no deleteTransaction DAL function exists), only created or
-/// recategorized, so there are only ever two link types in the chain.
+/// The link types in a transaction's chain. A transaction is never really
+/// removed: DELETE and RESTORE record a soft delete and its undo (AGENTS.md
+/// §3ccc), so the history shows the removal instead of losing it.
 enum LedgerCommitAction {
   CREATE
   UPDATE

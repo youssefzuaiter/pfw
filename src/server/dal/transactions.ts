@@ -752,29 +752,120 @@ export async function restoreTransaction(
     });
     if (!row) return { ok: false, error: "not_found" };
 
-    const deleteCommit = await tx.ledgerCommit.findFirst({
-      where: { userId, transactionId: id, action: "DELETE" },
-      orderBy: { createdAt: "desc" },
-    });
-    const released = (deleteCommit?.patchData as { providerTransactionId?: string | null } | null)
-      ?.providerTransactionId;
-
-    const keyIsFree =
-      !released ||
-      (await tx.notableTransaction.count({ where: { userId, providerTransactionId: released } })) === 0;
-
-    await tx.notableTransaction.update({
-      where: { id },
-      data: { deletedAt: null, ...(keyIsFree && released ? { providerTransactionId: released } : {}) },
-    });
-
-    await appendLedgerCommit(tx, userId, {
-      transactionId: id,
-      action: "RESTORE",
-      state: buildLedgerState({ ...row, categoryName: row.category.name }),
-    });
-
+    await restoreRowInTransaction(tx, userId, row);
     return { ok: true, deletedCount: 1 };
+  });
+}
+
+type SoftDeletedRow = Prisma.NotableTransactionGetPayload<{ include: { category: true } }>;
+
+/**
+ * The restore itself, shared by the single-row and whole-import paths so
+ * the two cannot drift apart. Takes the caller's open transaction.
+ *
+ * In a batch the key-free check sees the rows restored just before it
+ * (same transaction), which is what makes "a live row took this key" the
+ * only way a key stays released.
+ */
+async function restoreRowInTransaction(tx: ScopedTransactionClient, userId: string, row: SoftDeletedRow) {
+  const deleteCommit = await tx.ledgerCommit.findFirst({
+    where: { userId, transactionId: row.id, action: "DELETE" },
+    orderBy: { createdAt: "desc" },
+  });
+  const released = (deleteCommit?.patchData as { providerTransactionId?: string | null } | null)
+    ?.providerTransactionId;
+
+  const keyIsFree =
+    !released ||
+    (await tx.notableTransaction.count({ where: { userId, providerTransactionId: released } })) === 0;
+
+  await tx.notableTransaction.update({
+    where: { id: row.id },
+    data: { deletedAt: null, ...(keyIsFree && released ? { providerTransactionId: released } : {}) },
+  });
+
+  await appendLedgerCommit(tx, userId, {
+    transactionId: row.id,
+    action: "RESTORE",
+    state: buildLedgerState({ ...row, categoryName: row.category.name }),
+  });
+}
+
+/**
+ * Restores every deleted row from one statement import — the counterpart
+ * of `softDeleteImportBatch`, and for the same reason: an import writes
+ * hundreds of rows, so undoing the undo one row at a time is not one.
+ * Rows from the import that are still live are left alone.
+ */
+export async function restoreImportBatch(
+  userId: string,
+  importBatchId: string,
+): Promise<DeleteTransactionResult> {
+  return withUserScope(
+    userId,
+    async (tx) => {
+      const rows = await tx.notableTransaction.findMany({
+        where: { userId, importBatchId, deletedAt: { not: null } },
+        include: { category: true },
+        orderBy: { occurredAt: "asc" },
+      });
+      if (rows.length === 0) return { ok: false, error: "not_found" as const };
+
+      for (const row of rows) await restoreRowInTransaction(tx, userId, row);
+      return { ok: true as const, deletedCount: rows.length };
+    },
+    // Same reasoning as softDeleteImportBatch's own raised timeout.
+    { timeoutMs: 120_000 },
+  );
+}
+
+/** More than this and the screen says so rather than quietly dropping the oldest. */
+export const DELETED_LIST_LIMIT = 500;
+
+/**
+ * Soft-deleted transactions, most recently deleted first, for the
+ * "Recently deleted" screen. Everything else in this module filters
+ * deleted rows OUT (`LIVE`); this is the one place that wants only them.
+ *
+ * `batches` counts deleted rows per import across ALL of them, not just
+ * the listed ones — a 211-row import deleted at once must read "211",
+ * not "the 500-row cap's worth of whichever came first".
+ *
+ * Only `nickname`/`institutionName` are taken from the account: `last4`
+ * is encrypted, and a nested relation read does not pass through the
+ * field-encryption extension (the same trap AGENTS.md §3jj documents for
+ * `include` on the admin client), so it would arrive as ciphertext.
+ */
+export async function listDeletedTransactions(userId: string) {
+  return withUserScope(userId, async (tx) => {
+    const where = { userId, deletedAt: { not: null } } as const;
+    const [rows, batches] = await Promise.all([
+      tx.notableTransaction.findMany({
+        where,
+        orderBy: [{ deletedAt: "desc" }, { occurredAt: "desc" }],
+        take: DELETED_LIST_LIMIT + 1,
+        include: {
+          category: { select: { name: true } },
+          bankAccount: { select: { nickname: true, institutionName: true } },
+        },
+      }),
+      tx.notableTransaction.groupBy({
+        by: ["importBatchId"],
+        where: { ...where, importBatchId: { not: null } },
+        _count: { _all: true },
+        _max: { deletedAt: true },
+      }),
+    ]);
+
+    return {
+      rows: rows.slice(0, DELETED_LIST_LIMIT),
+      truncated: rows.length > DELETED_LIST_LIMIT,
+      batches: batches.flatMap((batch) =>
+        batch.importBatchId
+          ? [{ importBatchId: batch.importBatchId, count: batch._count._all, deletedAt: batch._max.deletedAt }]
+          : [],
+      ),
+    };
   });
 }
 
