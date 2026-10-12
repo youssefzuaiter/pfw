@@ -30,6 +30,24 @@ test.describe("/trading/core", () => {
     expect(problems).toEqual([]);
   });
 
+  test("draws the account-value chart: a real line, at a real size, with its numbers stated beside it", async ({ page }) => {
+    await page.goto("/trading/core");
+    await page.getByRole("heading", { name: "Account value over time" }).waitFor({ state: "visible" });
+
+    // Recharts sizes itself with inline styles this app's CSP blocks; the stylesheet rules in
+    // globals.css are what keep it from collapsing to 0x0 (AGENTS.md §3x). A chart that renders
+    // nothing raises no error, so assert that something was drawn.
+    const chart = page.getByRole("img", { name: /Account value in US dollars/ });
+    await expect(chart).toBeVisible();
+    const box = await chart.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThan(200);
+    expect(box?.height ?? 0).toBeGreaterThan(100);
+    await expect(chart.locator("path.recharts-line-curve")).toHaveCount(1);
+
+    // The same change, in words, so the picture is never the only evidence.
+    await expect(page.getByText(/since \d{4}-\d{2}-\d{2}, \d+ days/)).toBeVisible();
+  });
+
   test("is read-only: nothing on it can approve, halt or trade", async ({ page }) => {
     await page.goto("/trading/core");
     await page.getByRole("heading", { level: 1, name: "Long-term core" }).waitFor({ state: "visible" });

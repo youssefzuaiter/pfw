@@ -13,9 +13,10 @@ import {
   type CorePlan,
   type EventTone,
 } from "../../lib/core-journal";
+import { summarizeEquity, type EquityPoint, type EquitySummary } from "../../lib/core-equity";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { nativeAmount } from "../../lib/currency";
-import { getCoreMirror, type CoreStatusView } from "../dal/core-mirror";
+import { getCoreMirror, listCoreEquitySeries, type CoreStatusView } from "../dal/core-mirror";
 import { getLatestRateTable } from "../dal/exchange-rates";
 
 /**
@@ -90,6 +91,8 @@ export type CoreAgentData =
       events: CoreEventView[];
       hiddenEventCount: number;
       account: CoreAccountView | null;
+      /** The account's value, one point per UTC day, oldest first (USD cents — the account's own currency). */
+      equity: { points: EquityPoint[]; summary: EquitySummary | null };
     };
 
 export const MAX_EVENTS_SHOWN = 40;
@@ -100,7 +103,7 @@ function toMoney(usdCents: number, usdIlsRate: number): CoreMoney {
 
 export const buildCoreAgentData = cache(async (userId: string): Promise<CoreAgentData> => {
   const now = new Date();
-  const mirror = await getCoreMirror(userId);
+  const [mirror, series] = await Promise.all([getCoreMirror(userId), listCoreEquitySeries(userId, now)]);
   if (!mirror.available) return { state: "unavailable" };
   if (!mirror.status && !mirror.snapshot && mirror.entries.length === 0) return { state: "empty" };
 
@@ -151,6 +154,11 @@ export const buildCoreAgentData = cache(async (userId: string): Promise<CoreAgen
     };
   }
 
+  const equityPoints: EquityPoint[] = series.map((point) => ({
+    day: point.takenAt.toISOString().slice(0, 10),
+    usdCents: point.equityUsdCents,
+  }));
+
   return {
     state: "ready",
     now,
@@ -164,5 +172,6 @@ export const buildCoreAgentData = cache(async (userId: string): Promise<CoreAgen
     events,
     hiddenEventCount: Math.max(0, parsed.length - events.length),
     account,
+    equity: { points: equityPoints, summary: summarizeEquity(equityPoints) },
   };
 });

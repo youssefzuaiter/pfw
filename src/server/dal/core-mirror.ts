@@ -370,3 +370,59 @@ export async function getCoreMirror(userId: string): Promise<CoreMirror> {
     throw error;
   }
 }
+
+// --- account value over time -----------------------------------------------------------------------------
+
+/** One snapshot per UTC day: the last the router took that day, in USD cents. */
+export type CoreEquityPoint = { takenAt: Date; equityUsdCents: number };
+
+/** How far back the chart reaches. A year is the horizon of a quarterly-rebalanced core; older days are dropped, not averaged. */
+export const CORE_EQUITY_WINDOW_DAYS = 400;
+
+/**
+ * The account's value over time, one point per UTC day, oldest first, for
+ * the long-term core's chart (AGENTS.md §3hhh).
+ *
+ * The router takes a snapshot about hourly, which would be thousands of
+ * rows a year for a chart that can show a few hundred points, so the
+ * database keeps the LAST snapshot of each UTC day (`DISTINCT ON`) rather
+ * than shipping them all to be thinned afterwards. The last, not an
+ * average: a closing value is a fact the router recorded, an average of
+ * several is a number that never existed.
+ *
+ * Raw SQL because Prisma has no `DISTINCT ON` over a computed expression.
+ * `takenAt` is a `timestamp` without a zone that Prisma always writes in
+ * UTC, so `date_trunc('day', ...)` on it is already a UTC calendar day; an
+ * `AT TIME ZONE` conversion first would make the cut depend on the
+ * database session's own time zone. Nothing it selects is an encrypted column, so bypassing the
+ * field-encryption extension costs nothing here, and it still runs inside
+ * `withUserScope`, so RLS and the explicit `userId` filter both apply.
+ *
+ * A missing table (the migration not applied yet) is an empty series: the
+ * page has already decided that case from `getCoreMirror`, and a chart
+ * with no points says so on its own.
+ */
+export async function listCoreEquitySeries(
+  userId: string,
+  now: Date = new Date(),
+  days: number = CORE_EQUITY_WINDOW_DAYS,
+): Promise<CoreEquityPoint[]> {
+  const since = new Date(now.getTime() - days * 86_400_000);
+  try {
+    return await withUserScope(userId, async (tx) => {
+      const rows = await tx.$queryRaw<{ takenAt: Date; equityUsdCents: bigint }[]>`
+        SELECT DISTINCT ON (date_trunc('day', "takenAt"))
+               "takenAt", "equityUsdCents"
+        FROM "CoreSnapshot"
+        WHERE "userId" = ${userId} AND "takenAt" >= ${since}
+        ORDER BY date_trunc('day', "takenAt"), "takenAt" DESC`;
+      return rows.map((row) => ({ takenAt: row.takenAt, equityUsdCents: Number(row.equityUsdCents) }));
+    });
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
+      logUnavailable("listCoreEquitySeries", error);
+      return [];
+    }
+    throw error;
+  }
+}
