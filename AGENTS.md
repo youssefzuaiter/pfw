@@ -8405,8 +8405,7 @@ router's host); and the requests are signed with the **existing
 - **Known limitations, left as such**: no approve/halt/raise-cash from the
   website (that needs the router reachable from Vercel and a deliberate decision
   about giving PFW a credential for it; the core is still not hosted anywhere);
-  no equity-over-time chart (the snapshots are stored hourly for it; with
-  weeks of data it is the obvious next view); the core is not on `/dashboard`
+  no equity-over-time chart (**built in §3hhh**); the core is not on `/dashboard`
   and never in net worth; one shared secret (a forged request could only mislead
   what one page shows — it cannot approve or move anything — but a dedicated
   secret is a cheap later hardening); a `chain_conflict` is resolved by a person
@@ -8456,6 +8455,64 @@ one row at a time, from nowhere.
 - **Not built**: restoring a category deleted with reassignment (rows keep
   moving to Uncategorized; that delete is real), and a purge-after-N-days
   (nothing is ever really erased, by design).
+
+## 3hhh. The core's account value over time (ad hoc)
+
+The view §3fff named as the obvious next one. The router already saved an
+account snapshot about hourly into `CoreSnapshot` (`takenAt`, `equityUsdCents`),
+so this needed no new data source and no market-data API: the line is the
+Alpaca paper account's own value, as the router recorded it.
+
+- **`/trading/core` gains "Account value over time"**: a line of the account's
+  value, one point per UTC day, with the change since the first snapshot stated
+  in dollars and percent beside it, and a text description of the same facts
+  for a screen reader. Until the router has reported on two different days it
+  says what it is waiting for instead of drawing one dot.
+- **`listCoreEquitySeries`** (`src/server/dal/core-mirror.ts`) keeps the LAST
+  snapshot of each UTC day with `DISTINCT ON`, over a 400-day window, so a year
+  is a few hundred rows rather than thousands. Last, not an average: a closing
+  value is a number the router recorded, an average is one that never existed.
+  `date_trunc('day', "takenAt")` directly, with NO `AT TIME ZONE` first: the
+  column is a zone-less timestamp Prisma writes in UTC, and converting it would
+  make the day cut depend on the database session's time zone. A missing table
+  is an empty series (the page has already decided that case).
+- **`summarizeEquity`** (`src/lib/core-equity.ts`, pure): first-to-last change in
+  cents and basis points, and the span in calendar days. "Change since the first
+  snapshot", NOT a return: the snapshots are account values, so a top-up or a
+  reset of the paper account would show as a jump. The router funds the account
+  once and does not top it up, so for this account the two agree; the page says
+  so rather than relying on it.
+- **In US dollars, not switched by the currency toggle**: converting every
+  historic point at today's shekel rate would fold a currency move into a line
+  meant to show the account. The headline figures above are the live
+  conversions. The y-axis does not start at zero (a percent or two would be a
+  flat line); the stated change is what stops the picture being the only evidence.
+- **Mounted only after hydration** (`src/lib/hooks/use-is-client.ts`, new). This
+  page's browser test asserts there are no CSP violations, and Recharts
+  server-renders its container with an inline `style` attribute, which the CSP
+  blocks and logs on every load (§3x documented this as tolerated noise). The
+  same element created on the client is styled through the CSSOM, which the CSP
+  does not govern, so the chart is simply not in the server HTML. This kept the
+  test strict rather than loosening it for one library, and the same hook is
+  available to any other chart that wants the noise gone.
+- **Two things only the real page showed**: the last date label ("10-11") was cut
+  off by a small right margin (a label centred on the last point overflows it;
+  `right: 20` fixes it), and the percent has to be formatted locally, because
+  `formatSignedBps` prints percentage POINTS (`pp`), a difference of two shares,
+  which is wrong for a return.
+- **Verified**: 7 unit tests for the summary (rounding half away from zero both
+  ways, a zero starting value, month/year/leap-day spans, no re-sorting), 7
+  component tests, 6 integration tests against real Postgres (last-of-day kept
+  and oldest first, midnight UTC as the cut, the window, an empty account, another
+  user's snapshots never returned, a 9-trillion-cent balance exact through the
+  bigint column), mutation-checked three ways (first instead of last, hour
+  instead of day, window ignored: each caught). Playwright on the production
+  build: the line is drawn (one curve path, over 200 by 100 px), the accessibility
+  scan passes, and the page still has no console or CSP errors. Looked at on
+  desktop and at 375 px wide: no horizontal overflow, labels not clipped.
+- **Not built**: a baseline or benchmark line (nothing real to compare against
+  yet), a range picker (a few weeks of data do not need one), and any chart of
+  the news agent's trades (a different account).
 
 ## 4. Design system (Phase 0)
 

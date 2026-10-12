@@ -5,6 +5,8 @@ import { setCurrencyDisplayMode } from "../../../lib/hooks/use-currency-display-
 import type { CoreAccountView, CoreAgentData, CoreEventView } from "../../../server/core/build-core-agent-data";
 import { CoreAllocationTable } from "./core-allocation-table";
 import { CoreEmptyState, CoreUnavailable } from "./core-empty-state";
+import { CoreEquityChart } from "./core-equity-chart";
+import { summarizeEquity, type EquityPoint } from "../../../lib/core-equity";
 import { CoreJournalFeed } from "./core-journal-feed";
 import { CoreOpenPlanCard } from "./core-plan-card";
 import { CorePlanHistory } from "./core-plan-history";
@@ -41,6 +43,7 @@ function ready(over: Partial<Ready> = {}): Ready {
     events: [],
     hiddenEventCount: 0,
     account: null,
+    equity: { points: [], summary: null },
     ...over,
   };
 }
@@ -335,5 +338,54 @@ describe("the pages with nothing to show", () => {
     expect(screen.getByText("Not set up on this deployment")).toBeInTheDocument();
     expect(screen.getByText("core_agent_mirror")).toBeInTheDocument();
     expect(screen.getByText(/nothing is lost/)).toBeInTheDocument();
+  });
+});
+
+describe("CoreEquityChart", () => {
+  const series = (...cents: number[]): EquityPoint[] =>
+    cents.map((usdCents, n) => ({ day: `2026-10-${String(5 + n).padStart(2, "0")}`, usdCents }));
+
+  function renderSeries(points: EquityPoint[]) {
+    return render(<CoreEquityChart points={points} summary={summarizeEquity(points)} />);
+  }
+
+  it("says what it is waiting for, instead of drawing a lone dot, with fewer than two days", () => {
+    renderSeries([]);
+    expect(screen.getByText(/appears once the router has reported on at least two different days/)).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("does the same for a single day", () => {
+    renderSeries(series(1_000_000));
+    expect(screen.getByText(/at least two different days/)).toBeInTheDocument();
+  });
+
+  it("states the change since the first snapshot in dollars and percent, so the picture is never the only evidence", () => {
+    renderSeries(series(1_000_000, 1_010_000, 1_025_000));
+    expect(screen.getByText(/\+\$250\.00 \(\+2\.50%\)/)).toBeInTheDocument();
+    expect(screen.getByText(/since 2026-10-05, 2 days/)).toBeInTheDocument();
+  });
+
+  it("shows a loss with a minus sign and in the negative colour", () => {
+    renderSeries(series(1_000_000, 985_000));
+    const change = screen.getByText(/−\$150\.00 \(−1\.50%\)/);
+    expect(change).toHaveClass("text-negative");
+  });
+
+  it("shows a flat account as zero, not as a gain or a loss", () => {
+    renderSeries(series(1_000_000, 1_000_000));
+    const change = screen.getByText(/\$0\.00 \(0\.00%\)/);
+    expect(change).not.toHaveClass("text-negative");
+    expect(change).not.toHaveClass("text-positive");
+  });
+
+  it("gives the chart a text description of the same facts for a screen reader", () => {
+    renderSeries(series(1_000_000, 1_025_000));
+    expect(screen.getByRole("img", { name: /from \$10,000\.00 to \$10,250\.00, up \$250\.00/ })).toBeInTheDocument();
+  });
+
+  it("says plainly that a top-up or a reset would show as a jump", () => {
+    renderSeries(series(1_000_000, 1_010_000));
+    expect(screen.getByText(/a top-up or a reset of the paper account would show as a jump/)).toBeInTheDocument();
   });
 });

@@ -4,6 +4,7 @@ import { buildCoreAgentData } from "../../../server/core/build-core-agent-data";
 import { CoreAccountCard } from "../_components/core-account-card";
 import { CoreAllocationTable } from "../_components/core-allocation-table";
 import { CoreEmptyState, CoreUnavailable } from "../_components/core-empty-state";
+import { CoreEquityChart } from "../_components/core-equity-chart";
 import { CoreJournalFeed } from "../_components/core-journal-feed";
 import { CoreOpenPlanCard } from "../_components/core-plan-card";
 import { CorePlanHistory } from "../_components/core-plan-history";
@@ -68,6 +69,13 @@ export default async function CoreAgentPage() {
               </section>
             </>
           )}
+
+          <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="core-equity-heading">
+            <h2 id="core-equity-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
+              Account value over time
+            </h2>
+            <CoreEquityChart points={data.equity.points} summary={data.equity.summary} />
+          </section>
 
           <CoreOpenPlanCard plan={data.openPlan} />
 
