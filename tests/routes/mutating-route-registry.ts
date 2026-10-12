@@ -73,7 +73,7 @@ export const EXCLUDED_ROUTES: Record<string, string> = {
   "POST /api/chat": "Calls the Anthropic API (via @ai-sdk/anthropic): costs money and needs the network.",
   "POST /api/auth/forgot-password": "Sends a real email through Resend.",
   "POST /api/auth/resend-verification": "Sends a real email through Resend.",
-  "POST /api/auth/register": "Creates accounts and can claim the demo account. Covered by tests/integration/auth-credentials.test.ts.",
+  "POST /api/auth/register": "Creates accounts and can claim the demo account; closed unless REGISTRATION_OPEN=true. Covered by tests/integration/auth-credentials.test.ts, its own route test and tests/e2e/registration-closed.spec.ts.",
   "POST /api/auth/reset-password": "Needs a single-use token from an emailed link. Covered by tests/integration/password-reset-email-verification.test.ts.",
   "POST /api/auth/verify-email": "Needs a single-use token from an emailed link. Covered by tests/integration/password-reset-email-verification.test.ts.",
   "POST /api/auth/webauthn/authenticate-options": "Issues a sign-in challenge without a session. Covered by tests/integration/webauthn-passkeys.test.ts.",

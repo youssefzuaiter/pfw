@@ -8514,6 +8514,39 @@ Alpaca paper account's own value, as the router recorded it.
   yet), a range picker (a few weeks of data do not need one), and any chart of
   the news agent's trades (a different account).
 
+## 3iii. Public sign-up closed by default (ad hoc)
+
+Found while listing what was still open on the live site: anyone who found
+`pfw-nu.vercel.app` could create an account. Nothing gated
+`POST /api/auth/register`, the only path in this app that creates a `User`
+(checked: nothing else calls `registerUser` or creates a user row). Their data
+would have stayed separate (RLS), but a personal app has no reason to accept
+strangers, and each account is a foothold for anything that goes wrong later.
+
+- **`isRegistrationOpen()`** (`src/server/env.ts`): open only when
+  `REGISTRATION_OPEN` is exactly `"true"`. Closed by default, so a deployment
+  that forgets the variable fails closed. Exact match on purpose: `"TRUE"`,
+  `"1"` or `"yes"` leave it closed. Not a secret; read per call.
+- **The route** refuses with 403 `Registration is closed.` right after the
+  Origin check and before the body is read — a closed site spends nothing on
+  an attempt (no parsing, no rate-limit write, no Argon2id hash). The Origin
+  check still comes first, so a forged origin keeps getting its own 403.
+- **The pages**: `/register` says sign-up is closed instead of rendering a
+  form the route would refuse, and `/login` hides its "Register" link. The
+  route is the gate; the pages only stop offering what cannot work.
+  `/register` stays a public path so the message can be seen signed out.
+- **Consequence to know**: a household invite (§3s) to someone with no
+  account cannot be accepted while sign-up is closed. Open it for that,
+  then close it again. On Vercel a change applies after a redeploy.
+- **Verified**: a route unit test (closed by default before any parsing,
+  rate limiting or account creation; a look-alike value stays closed; open
+  creates the account; a forged origin is still refused), the setting's own
+  unit tests, both mutation-checked (dropping the route's check and making
+  the setting case-insensitive were each caught), and two Playwright tests
+  on the production build, signed out (the closed page with an axe scan, the
+  login page without the link, and a well-formed same-origin request refused
+  with no user row created). Full e2e: 45 passed.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
