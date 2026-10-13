@@ -8580,6 +8580,57 @@ none at all for a real one, however long it was used.
   caught). Only the per-user function runs against the shared database: the
   all-users job would write into other parallel suites' fixtures.
 
+## 3kkk. AI category suggestions for uncategorized transactions (ad hoc)
+
+The first real statement left 160 of 211 lira transactions in Uncategorized,
+and the cascade's Tier 4 (an LLM categorizer, §3b) had never been called from
+anywhere. This asks Claude once, shows every suggestion, and changes nothing
+until the user applies what they accept. Claude was chosen over local Ollama by
+the user: the real data lives in production, which cannot reach a model on the
+owner's Mac.
+
+- **`suggestCategories`** (`src/server/categorization/claude-category-suggester.ts`):
+  one `client.beta.messages.parse` request, `claude-opus-5-5` at effort `low`
+  (classification; thinking cannot be disabled on this model and its default
+  effort is medium), refusal fallbacks on (`fallbacks: "default"`, beta
+  `server-side-fallback-2026-07-01`), structured output through
+  `betaZodOutputFormat` (forced tool use is a 400 on this model). At most 200
+  rows per request, each under an opaque ref (`t0`…), never a database id.
+- **Untrusted text**: merchant names and descriptions go as JSON data; the
+  system prompt says they are never instructions; and the answer is checked
+  twice, by the schema and in code, where any ref or slug not in the request is
+  dropped. A hostile description can at worst produce one wrong suggestion,
+  which the user reviews. Checked against the live API with an injection row:
+  it got no suggestion.
+- **`listUncategorizedForSuggestions`** (`src/server/dal/category-suggestions.ts`):
+  live, non-transfer rows still in Uncategorized (`REAL_MONEY`), newest first,
+  and the user's active categories other than Uncategorized.
+- **`POST /api/transactions/category-suggestions`**: behind the full mutation
+  guard with a tight limit (5 per 10 minutes) although it writes nothing,
+  because every call spends money and sends text off-site. 503 when
+  `ANTHROPIC_API_KEY` is unset, 502 when Claude declines, answers unparseably
+  or cannot be reached. Excluded from the route sweep (it calls the paid API).
+- **`POST /api/transactions/category-suggestions/apply`**: each accepted row
+  goes through `updateTransactionCategory`, so ownership of both the row and
+  the category is checked, `needsReview` is cleared (which is what lets Tier 1
+  place the next import from that merchant), and the ledger gets an UPDATE
+  commit. A row or category that is not the user's is skipped, not fatal. One
+  bulk audit entry.
+- **UI**: `CategorySuggestionsPanel` on `/transactions/rules`, beside "Apply
+  rules": says what is sent to Anthropic before the button, then a table with a
+  checkbox and a category picker per row; only ticked rows are applied.
+- **Production needs `ANTHROPIC_API_KEY` on Vercel.** Without it the panel
+  shows the 503's explanation.
+- **Verified**: 6 unit tests for the suggester (mapping, dropping unknown refs
+  and slugs and "none", refusal and unparseable answers, the request's model,
+  effort, fallbacks and JSON payload, the row cap), 6 route tests (guard, no
+  key, nothing to do, the mapping, 502s), 4 integration tests against real
+  Postgres (only live non-transfer uncategorized rows, the limit vs the count,
+  RLS, apply touching only the user's own rows and categories with a ledger
+  commit), 4 component tests; mutation-checked (accepting any slug, and
+  sending transfers and deleted rows, were each caught); and one real API call
+  with three made-up rows.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
