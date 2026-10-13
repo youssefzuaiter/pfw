@@ -45,6 +45,7 @@ export default async function SettingsPage() {
     monteCarloVolatilityMultiplier: settings.monteCarloVolatilityMultiplier,
     defaultManualAssetLiquidityTier: settings.defaultManualAssetLiquidityTier,
     preferredCurrencyDisplay: settings.preferredCurrencyDisplay,
+    monthlyReportEnabled: settings.monthlyReportEnabled,
   };
 
   return (

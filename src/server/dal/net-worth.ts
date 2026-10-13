@@ -174,3 +174,13 @@ export async function getNetWorthHistory(userId: string, days: number) {
     }),
   );
 }
+
+/** Snapshots dated within [from, to), oldest first — the monthly report reads a month's first and last (AGENTS.md §3lll). */
+export async function getNetWorthSnapshotsInRange(userId: string, from: Date, to: Date) {
+  return withUserScope(userId, (tx) =>
+    tx.netWorthSnapshot.findMany({
+      where: { userId, snapshotDate: { gte: from, lt: to } },
+      orderBy: { snapshotDate: "asc" },
+    }),
+  );
+}

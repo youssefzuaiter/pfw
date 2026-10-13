@@ -20,6 +20,7 @@ export type PreferencesFormData = {
   monteCarloVolatilityMultiplier: number;
   defaultManualAssetLiquidityTier: LiquidityTier | null;
   preferredCurrencyDisplay: "NATIVE" | "ILS";
+  monthlyReportEnabled: boolean;
 };
 
 /**
@@ -92,6 +93,9 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
   function handleCurrencyDisplayChange(event: ChangeEvent<HTMLSelectElement>) {
     updateField("preferredCurrencyDisplay", event.target.value as PreferencesFormData["preferredCurrencyDisplay"]);
   }
+  function handleMonthlyReportChange(event: ChangeEvent<HTMLInputElement>) {
+    updateField("monthlyReportEnabled", event.target.checked);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,6 +119,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
           monteCarloVolatilityMultiplier: form.monteCarloVolatilityMultiplier,
           defaultManualAssetLiquidityTier: form.defaultManualAssetLiquidityTier,
           preferredCurrencyDisplay: form.preferredCurrencyDisplay,
+          monthlyReportEnabled: form.monthlyReportEnabled,
         }),
       });
       if (!response.ok) {
@@ -150,6 +155,26 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
             <option value="NATIVE">Native currency</option>
           </select>
         </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-fg">Monthly report</h3>
+        <label className="mt-2 flex items-start gap-2 text-sm text-fg">
+          <input
+            type="checkbox"
+            checked={form.monthlyReportEnabled}
+            onChange={handleMonthlyReportChange}
+            className="mt-1 h-4 w-4 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <span>
+            Email me a summary of the previous month: income, spending by category, the change in net worth and the
+            long-term core.
+            <span className="block text-xs text-muted">
+              Sent to your sign-in address early on the 1st. The email contains your figures, so it is off unless you
+              turn it on.
+            </span>
+          </span>
+        </label>
       </div>
 
       <div>

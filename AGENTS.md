@@ -8580,6 +8580,48 @@ none at all for a real one, however long it was used.
   caught). Only the per-user function runs against the shared database: the
   all-users job would write into other parallel suites' fixtures.
 
+## 3lll. A monthly report email (ad hoc)
+
+An opt-in email on the 1st: the previous month's income, spending by
+category, net-worth change and the long-term core. Built on §3jjj's nightly
+snapshots for the net-worth line.
+
+- **Opt-in** (`UserSettings.monthlyReportEnabled`, off by default; migration
+  `20261013150000_monthly_report_opt_in`): the email carries financial figures,
+  so nobody receives one without turning it on in Settings → Preferences. Sent
+  to the sign-in address.
+- **Once per month, retried on failure**: `monthlyReportLastSentMonth` is the
+  claim. `claimMonthlyReport` sets it with a conditional update (only for an
+  opted-in user, only if that month is not already claimed), the send runs, and
+  `releaseMonthlyReport` puts the previous value back if the send failed. The
+  job runs every night rather than only on the 1st, so a Resend outage on the
+  1st is retried on the 2nd and a month is never sent twice.
+- **`gatherMonthlyReport(userId, monthKey)`** (`src/server/reports/monthly-report.ts`):
+  the same scoped DAL functions the dashboard uses: income and spending
+  (transfers excluded), the top five categories by spend, the month's first and
+  last net-worth snapshot (`getNetWorthSnapshotsInRange`, null below two), the
+  core's first and last daily value (null below two).
+- **`renderMonthlyReport`** (`src/server/reports/render-monthly-report.ts`): pure;
+  a plain-text body and a minimal HTML body with the same lines, every value
+  escaped (category names are the user's text), no colour codes. A missing
+  figure is said to be missing, never invented.
+- **`sendMonthlyReports`** (`src/server/reports/monthly-report-job.ts`): lists
+  opted-in users without this month's report through the admin client
+  (allowlisted: no session, a cross-user read), then claims, gathers, renders
+  and sends through the scoped DAL and `sendEmail`. Wired into `GET /api/cron`
+  as `monthly-reports`, after the net-worth snapshots; a failed send reaches
+  the operator alert and is retried the next night.
+- **Delivery caveat**: until a verified sender domain exists, Resend's shared
+  sender only delivers to the Resend account's own address; a report to any
+  other address fails, is released, and is retried nightly.
+- **Verified**: 5 renderer tests (amounts and signs, missing figures, the core
+  section and its percent, HTML escaping, a loss), 5 job tests (the previous
+  month across a year boundary, sending, a lost claim skipped, a failed send
+  released, an unreadable user list), a cron route case, 4 integration tests
+  against real Postgres (the month's figures with a transfer and the next month
+  left out, RLS, the claim's once-only and release semantics, another user's
+  row untouched); mutation-checked (an unconditional claim was caught).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

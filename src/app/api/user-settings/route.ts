@@ -43,6 +43,7 @@ const PatchBodySchema = z.object({
   monteCarloVolatilityMultiplier: z.number().min(0.25).max(3).optional(),
   defaultManualAssetLiquidityTier: z.enum(["LIQUID", "SEMI_LIQUID", "ILLIQUID"]).nullable().optional(),
   preferredCurrencyDisplay: z.enum(["NATIVE", "ILS"]).optional(),
+  monthlyReportEnabled: z.boolean().optional(),
 });
 
 function serialize(data: UserSettingsData) {
@@ -60,6 +61,7 @@ function serialize(data: UserSettingsData) {
     monteCarloVolatilityMultiplier: data.monteCarloVolatilityMultiplier,
     defaultManualAssetLiquidityTier: data.defaultManualAssetLiquidityTier,
     preferredCurrencyDisplay: data.preferredCurrencyDisplay,
+    monthlyReportEnabled: data.monthlyReportEnabled,
   };
 }
 
@@ -109,6 +111,7 @@ export async function PATCH(request: NextRequest) {
     patch.defaultManualAssetLiquidityTier = body.defaultManualAssetLiquidityTier;
   }
   if (body.preferredCurrencyDisplay !== undefined) patch.preferredCurrencyDisplay = body.preferredCurrencyDisplay;
+  if (body.monthlyReportEnabled !== undefined) patch.monthlyReportEnabled = body.monthlyReportEnabled;
 
   try {
     if (body.taxOtherOrdinaryIncome !== undefined) {

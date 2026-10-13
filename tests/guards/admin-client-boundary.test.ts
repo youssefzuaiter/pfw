@@ -91,6 +91,9 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // Nightly net-worth snapshot: lists every user's id (no session, no
       // single userId), then records each figure through the scoped DAL.
       path.resolve(SRC_ROOT, "server", "net-worth", "snapshot-job.ts"),
+      // Monthly report: lists who opted in and their address (no session, no
+      // single userId); the claim, figures and release go through the DAL.
+      path.resolve(SRC_ROOT, "server", "reports", "monthly-report-job.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

@@ -23,6 +23,8 @@ export type UserSettingsData = {
   monteCarloVolatilityMultiplier: number;
   defaultManualAssetLiquidityTier: "LIQUID" | "SEMI_LIQUID" | "ILLIQUID" | null;
   preferredCurrencyDisplay: "NATIVE" | "ILS";
+  monthlyReportEnabled: boolean;
+  monthlyReportLastSentMonth: string | null;
 };
 
 /**
@@ -52,6 +54,42 @@ export async function updateUserSettings(userId: string, input: UpdateUserSettin
       where: { userId },
       create: { userId, ...input },
       update: input,
+    }),
+  );
+}
+
+export type MonthlyReportClaim = { claimed: true; previous: string | null } | { claimed: false };
+
+/**
+ * Claims `monthKey`'s monthly report for sending (AGENTS.md §3lll): sets
+ * `monthlyReportLastSentMonth` to it, but only if the user has opted in and
+ * that month has not been claimed yet. A conditional update, so two runs
+ * racing on the same night cannot both send. Returns the previous value, for
+ * `releaseMonthlyReport` to put back if the send fails.
+ */
+export async function claimMonthlyReport(userId: string, monthKey: string): Promise<MonthlyReportClaim> {
+  return withUserScope(userId, async (tx) => {
+    const settings = await tx.userSettings.findUnique({ where: { userId } });
+    if (!settings?.monthlyReportEnabled || settings.monthlyReportLastSentMonth === monthKey) return { claimed: false };
+
+    const { count } = await tx.userSettings.updateMany({
+      where: {
+        userId,
+        monthlyReportEnabled: true,
+        OR: [{ monthlyReportLastSentMonth: null }, { monthlyReportLastSentMonth: { not: monthKey } }],
+      },
+      data: { monthlyReportLastSentMonth: monthKey },
+    });
+    return count === 1 ? { claimed: true, previous: settings.monthlyReportLastSentMonth } : { claimed: false };
+  });
+}
+
+/** Undoes a claim after a failed send, so the next night tries again. Only touches a row still holding this claim. */
+export async function releaseMonthlyReport(userId: string, monthKey: string, previous: string | null): Promise<void> {
+  await withUserScope(userId, (tx) =>
+    tx.userSettings.updateMany({
+      where: { userId, monthlyReportLastSentMonth: monthKey },
+      data: { monthlyReportLastSentMonth: previous },
     }),
   );
 }
