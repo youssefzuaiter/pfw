@@ -8547,6 +8547,39 @@ strangers, and each account is a foothold for anything that goes wrong later.
   login page without the link, and a well-formed same-origin request refused
   with no user row created). Full e2e: 45 passed.
 
+## 3jjj. A real net-worth history (ad hoc)
+
+Found while choosing what to build next: nothing in the app ever wrote a
+`NetWorthSnapshot`. Only the seed did, so the dashboard sparkline and the
+advisor's `get_net_worth_history` tool had history for the demo account and
+none at all for a real one, however long it was used.
+
+- **`recordNetWorthSnapshot(userId, now)`** (`src/server/dal/net-worth.ts`):
+  computes the same `computeLiveNetWorth` the dashboard shows, then upserts one
+  row per user per UTC day (`snapshotDayUtc`), so a second run the same day
+  replaces that day's figure rather than adding one. The figure is computed
+  before the write transaction opens, so a slow wallet RPC never holds a
+  transaction.
+- **`recordDailyNetWorthSnapshots`** (`src/server/net-worth/snapshot-job.ts`):
+  lists every user id with the admin client (allowlisted: a scheduled job has
+  no session and no single userId, the inactivity-check / quote-sync shape)
+  and records each through the scoped DAL. One user's failure is logged and
+  counted, never fatal.
+- **Nightly**, as the `net-worth-snapshots` job in `GET /api/cron`, after the
+  FX, crypto and equity-quote syncs so each figure uses that night's prices.
+  Any failed user makes the job a failure, which reaches the operator alert.
+- **No backfill**: past days cannot be reconstructed honestly (balances and
+  prices then are not stored), so a real account's history starts the first
+  night this runs. The sparkline already says "Not enough history yet" below
+  two points.
+- **Verified**: 4 integration tests against real Postgres (today's figures on
+  the UTC day, a same-day rerun replaces rather than duplicates, the next day
+  adds a row read oldest first, another user sees nothing), 4 unit tests for
+  the job's loop and failure handling, a cron route case for a partial
+  failure; mutation-checked (a local-time day and a plain create were each
+  caught). Only the per-user function runs against the shared database: the
+  all-users job would write into other parallel suites' fixtures.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
