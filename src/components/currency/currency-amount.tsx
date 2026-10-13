@@ -1,6 +1,7 @@
 "use client";
 
 import { useCurrencyDisplayMode } from "../../lib/hooks/use-currency-display-mode";
+import { useReportingMoney } from "./reporting-currency-provider";
 import { formatNativeAmount, type CurrencyCode, type NativeAmount } from "../../lib/currency";
 import { formatAgorot, type Agorot } from "../../lib/money";
 
@@ -15,10 +16,11 @@ import { formatAgorot, type Agorot } from "../../lib/money";
  * changes every one of them consistently rather than each screen having
  * its own independent (and possibly inconsistent) toggle state.
  *
- * `currency === "ILS"` renders just the one figure, no secondary line
- * and no toggle-reactivity at all — there is no native-vs-₪ distinction
- * to switch between for an already-₪ amount, and showing "₪125 / ₪125"
- * would be actively confusing rather than merely redundant.
+ * An amount already in the reporting currency (₪ by default, AGENTS.md
+ * §3nnn) renders just the one figure, no secondary line and no
+ * toggle-reactivity at all — there is nothing to switch between, and
+ * showing "₪125 / ₪125" would be actively confusing rather than merely
+ * redundant. Otherwise the converted figure is in the reporting currency.
  */
 export function CurrencyAmount({
   agorotValue,
@@ -39,15 +41,21 @@ export function CurrencyAmount({
   nativeOptions?: Parameters<typeof formatNativeAmount>[2];
 }) {
   const mode = useCurrencyDisplayMode();
+  const money = useReportingMoney();
 
-  const ilsText = formatAgorot(agorotValue, agorotOptions);
-
-  if (currency === "ILS") {
-    return <p className={primaryClassName}>{ilsText}</p>;
+  // An amount already in the reporting currency is shown once, exactly as
+  // recorded: converting it to shekels and back would only add rounding.
+  if (currency === money.context.currency) {
+    const text =
+      currency === "ILS" ? formatAgorot(agorotValue, agorotOptions) : formatNativeAmount(nativeValue, currency, nativeOptions);
+    return <p className={primaryClassName}>{text}</p>;
   }
 
+  // "ils" mode predates the reporting currency (AGENTS.md §3nnn); it means
+  // the converted figure, which is now in the reporting currency.
+  const convertedText = money.format(agorotValue, agorotOptions);
   const nativeText = formatNativeAmount(nativeValue, currency, nativeOptions);
-  const [primaryText, secondaryText] = mode === "native" ? [nativeText, ilsText] : [ilsText, nativeText];
+  const [primaryText, secondaryText] = mode === "native" ? [nativeText, convertedText] : [convertedText, nativeText];
 
   return (
     <>

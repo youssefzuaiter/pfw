@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { gatherMonthlyReport } from "../../src/server/reports/monthly-report";
 import { claimMonthlyReport, releaseMonthlyReport, updateUserSettings } from "../../src/server/dal/user-settings";
+import { ILS_REPORTING } from "../../src/lib/reporting-currency";
 
 /**
  * The monthly report's database halves against real Postgres with RLS
@@ -68,12 +69,21 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("mon
       ],
       netWorth: { startAgorot: 1_000_000n, endAgorot: 1_250_000n }, // October 1st's snapshot is the next month's
       core: null,
+      reporting: ILS_REPORTING, // no settings row: totals in shekels (AGENTS.md §3nnn)
     });
   });
 
   it("shows another user nothing of this user's month (RLS)", async () => {
     const data = await gatherMonthlyReport(userB.id, "2026-09");
-    expect(data).toEqual({ monthKey: "2026-09", incomeAgorot: 0n, expenseAgorot: 0n, topCategories: [], netWorth: null, core: null });
+    expect(data).toEqual({
+      monthKey: "2026-09",
+      incomeAgorot: 0n,
+      expenseAgorot: 0n,
+      topCategories: [],
+      netWorth: null,
+      core: null,
+      reporting: ILS_REPORTING,
+    });
   });
 
   it("claims a month only for an opted-in user, only once, and a release lets it be claimed again", async () => {

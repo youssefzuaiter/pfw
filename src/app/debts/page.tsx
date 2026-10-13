@@ -7,8 +7,10 @@ import {
   summarizePayoff,
   type DebtInput,
 } from "../../lib/debt-math";
-import { agorot, formatAgorot, parseShekelsToAgorot } from "../../lib/money";
+import { agorot, parseShekelsToAgorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { getReportingFormatter } from "../../server/reporting/reporting-context";
+import { ReportingRateNote } from "../../components/currency/reporting-currency-provider";
 import { listDebts } from "../../server/dal/debts";
 import { CreateDebtForm } from "./_components/create-debt-form";
 import { DeleteDebtButton } from "./_components/delete-debt-button";
@@ -38,6 +40,7 @@ export default async function DebtsPage({
   const extraBudgetInput = firstParam(params.extra);
 
   const user = await getCurrentUser();
+  const formatMoney = await getReportingFormatter(user.id);
   const debts = await listDebts(user.id);
 
   const debtInputs: DebtInput[] = debts.map((d) => ({
@@ -60,6 +63,7 @@ export default async function DebtsPage({
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-4 md:px-6">
       <h1 className="font-display text-xl font-semibold text-fg">Debts</h1>
+      <ReportingRateNote />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <CreateDebtForm />
@@ -89,7 +93,7 @@ export default async function DebtsPage({
                     )}
                   </p>
                   <p className="font-tabular-figures tracking-tight text-sm text-muted">
-                    {formatAgorot(balance)} at {formatBpsAsPercent(aprBps)} APR — min. payment {formatAgorot(minimumPayment)}
+                    {formatMoney(balance)} at {formatBpsAsPercent(aprBps)} APR — min. payment {formatMoney(minimumPayment)}
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
@@ -107,7 +111,7 @@ export default async function DebtsPage({
 
               <p className="mt-2 text-xs text-muted">
                 {summary.payoffAchieved
-                  ? `At the minimum payment, payoff in ~${summary.monthsSimulated} months, paying ${formatAgorot(summary.totalInterestPaid)} in interest.`
+                  ? `At the minimum payment, payoff in ~${summary.monthsSimulated} months, paying ${formatMoney(summary.totalInterestPaid)} in interest.`
                   : "At the minimum payment, this debt won't pay off within 50 years."}
               </p>
 
@@ -120,7 +124,7 @@ export default async function DebtsPage({
                     {debt.payments.map((payment) => (
                       <li key={payment.id} className="flex justify-between text-xs text-muted">
                         <span>{payment.paidAt.toISOString().slice(0, 10)}</span>
-                        <span className="font-tabular-figures tracking-tight">{formatAgorot(agorot(Number(payment.amount)))}</span>
+                        <span className="font-tabular-figures tracking-tight">{formatMoney(agorot(Number(payment.amount)))}</span>
                       </li>
                     ))}
                   </ul>
@@ -162,7 +166,7 @@ export default async function DebtsPage({
                 Order: {comparison.avalanche.order.map((id) => debtNameById.get(id)).join(" → ")}
               </p>
               <p className="mt-1 font-tabular-figures tracking-tight text-sm text-fg">
-                Payoff in {comparison.avalanche.monthsToPayoff} months, {formatAgorot(comparison.avalanche.totalInterestPaid)}{" "}
+                Payoff in {comparison.avalanche.monthsToPayoff} months, {formatMoney(comparison.avalanche.totalInterestPaid)}{" "}
                 interest
               </p>
             </div>
@@ -172,7 +176,7 @@ export default async function DebtsPage({
                 Order: {comparison.snowball.order.map((id) => debtNameById.get(id)).join(" → ")}
               </p>
               <p className="mt-1 font-tabular-figures tracking-tight text-sm text-fg">
-                Payoff in {comparison.snowball.monthsToPayoff} months, {formatAgorot(comparison.snowball.totalInterestPaid)}{" "}
+                Payoff in {comparison.snowball.monthsToPayoff} months, {formatMoney(comparison.snowball.totalInterestPaid)}{" "}
                 interest
               </p>
             </div>

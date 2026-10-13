@@ -1,4 +1,5 @@
 import { buildMonteCarloAnalytics, serializeMonteCarloAnalytics } from "../../../server/analytics/build-monte-carlo-data";
+import { ReportingRateNote } from "../../../components/currency/reporting-currency-provider";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { MonteCarloWidget } from "./_components/monte-carlo-widget";
 
@@ -24,6 +25,7 @@ export default async function AnalyticsPage() {
           A probabilistic FIRE / retirement Monte Carlo projection — {analytics.result.numSimulations.toLocaleString()}
           {" "}simulated market paths, run fresh against your current net worth and asset allocation.
         </p>
+        <ReportingRateNote className="mt-1 text-xs text-muted" />
       </div>
       <MonteCarloWidget initialCurrentAge={DEFAULT_CURRENT_AGE} initialData={serializeMonteCarloAnalytics(analytics)} />
     </div>

@@ -1,4 +1,5 @@
-import { formatAgorot, type Agorot } from "../../../../lib/money";
+import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
+import type { Agorot } from "../../../../lib/money";
 import { CategorySelect } from "./category-select";
 import { LedgerHistoryModal } from "./ledger-history-modal";
 import { TransactionRowActions } from "./transaction-row-actions";
@@ -21,7 +22,7 @@ type Category = { id: string; name: string };
 function AmountCell({ amount }: { amount: Agorot }) {
   return (
     <span className={`font-tabular-figures font-medium tracking-tight ${amount < 0 ? "text-fg" : "text-positive"}`}>
-      {formatAgorot(amount)}
+      <ReportingAmount value={amount} />
     </span>
   );
 }

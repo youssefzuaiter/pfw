@@ -3,9 +3,11 @@ import { CurrencyAmount } from "../../components/currency/currency-amount";
 import { deriveValuationFreshness, type ValuationFreshness } from "../../lib/valuation-freshness";
 import { nativeAmount } from "../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
-import { agorot, formatAgorot } from "../../lib/money";
+import { agorot } from "../../lib/money";
 import { buildWalletBalances } from "../../server/crypto/build-wallet-balances";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { getReportingFormatter } from "../../server/reporting/reporting-context";
+import { ReportingRateNote } from "../../components/currency/reporting-currency-provider";
 import { listBankAccounts } from "../../server/dal/bank-accounts";
 import { getLatestRateTable } from "../../server/dal/exchange-rates";
 import { listManualAssets } from "../../server/dal/manual-assets";
@@ -47,6 +49,7 @@ const FRESHNESS_VARIANT: Record<ValuationFreshness, BadgeVariant> = {
 
 export default async function AssetsPage() {
   const user = await getCurrentUser();
+  const formatMoney = await getReportingFormatter(user.id);
   const [assets, walletBalances, bankAccounts, rateTable] = await Promise.all([
     listManualAssets(user.id),
     buildWalletBalances(user.id),
@@ -75,6 +78,7 @@ export default async function AssetsPage() {
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-4 py-4 md:px-6">
       <h1 className="font-display text-xl font-semibold text-fg">Assets</h1>
+      <ReportingRateNote />
 
       <section aria-labelledby="bank-accounts-heading" className="flex flex-col gap-4">
         <div>
@@ -92,7 +96,7 @@ export default async function AssetsPage() {
 
         {bankAccountsWithIls.length > 0 && (
           <p className="font-tabular-figures tracking-tight text-sm text-muted">
-            Total tracked balance: <span className="text-fg">{formatAgorot(agorot(bankAssetsTotal))}</span>
+            Total tracked balance: <span className="text-fg">{formatMoney(agorot(bankAssetsTotal))}</span>
           </p>
         )}
 
@@ -141,7 +145,7 @@ export default async function AssetsPage() {
 
         {assets.length > 0 && (
           <p className="font-tabular-figures tracking-tight text-sm text-muted">
-            Total tracked value: <span className="text-fg">{formatAgorot(agorot(Number(totalValue)))}</span>
+            Total tracked value: <span className="text-fg">{formatMoney(agorot(Number(totalValue)))}</span>
           </p>
         )}
 
@@ -168,7 +172,7 @@ export default async function AssetsPage() {
                       )}
                     </p>
                     <p className="font-tabular-figures tracking-tight text-sm text-muted">
-                      {formatAgorot(agorot(Number(asset.currentValue)))}
+                      {formatMoney(agorot(Number(asset.currentValue)))}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-2">
@@ -203,7 +207,7 @@ export default async function AssetsPage() {
 
         {walletBalances.wallets.length > 0 && (
           <p className="font-tabular-figures tracking-tight text-sm text-muted">
-            Total tracked value: <span className="text-fg">{formatAgorot(walletBalances.totalValueAgorot)}</span>
+            Total tracked value: <span className="text-fg">{formatMoney(walletBalances.totalValueAgorot)}</span>
           </p>
         )}
 

@@ -4,6 +4,8 @@ import { listAllCategories } from "../dal/categories";
 import { listCoreEquitySeries } from "../dal/core-mirror";
 import { getNetWorthSnapshotsInRange } from "../dal/net-worth";
 import { getMonthlyIncomeExpenseHistory, getSpendByCategoryInRange } from "../dal/transactions";
+import { getReportingContext } from "../reporting/reporting-context";
+import type { ReportingContext } from "../../lib/reporting-currency";
 
 /** How many categories the report lists by spend. */
 export const TOP_CATEGORY_COUNT = 5;
@@ -18,6 +20,8 @@ export type MonthlyReportData = {
   netWorth: { startAgorot: bigint; endAgorot: bigint } | null;
   /** The long-term core's first and last daily value in the month, or null with fewer than two. */
   core: { startUsdCents: number; endUsdCents: number } | null;
+  /** The user's reporting currency at send time (AGENTS.md §3nnn); absent means ILS. */
+  reporting?: ReportingContext;
 };
 
 /**
@@ -30,13 +34,14 @@ export async function gatherMonthlyReport(userId: string, monthKey: string): Pro
   const from = monthKeyToStartDate(monthKey);
   const to = monthKeyToExclusiveEndDate(monthKey);
 
-  const [history, spend, categories, snapshots, coreSeries] = await Promise.all([
+  const [history, spend, categories, snapshots, coreSeries, reporting] = await Promise.all([
     getMonthlyIncomeExpenseHistory(userId, from, to),
     getSpendByCategoryInRange(userId, from, to),
     listAllCategories(userId),
     getNetWorthSnapshotsInRange(userId, from, to),
     // The window reaches back from the month's end; points after it are dropped below.
     listCoreEquitySeries(userId, to, 45),
+    getReportingContext(userId),
   ]);
 
   const month = history.find((bucket) => bucket.monthKey === monthKey);
@@ -51,6 +56,7 @@ export async function gatherMonthlyReport(userId: string, monthKey: string): Pro
 
   return {
     monthKey,
+    reporting,
     incomeAgorot: month?.incomeAgorot ?? 0n,
     expenseAgorot: month?.expenseAgorot ?? 0n,
     topCategories,

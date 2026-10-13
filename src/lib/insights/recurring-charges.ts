@@ -1,6 +1,6 @@
 import { formatAgorot } from "../money";
 import type { RecurringDetectionResult } from "../recurring-detection";
-import { computeRank, type Insight } from "./types";
+import { computeRank, type Insight, type MoneyFormatter } from "./types";
 
 /**
  * Surfaces merchants the periodicity engine flagged as recurring.
@@ -12,6 +12,7 @@ import { computeRank, type Insight } from "./types";
 export function generateRecurringChargeInsights(
   results: readonly RecurringDetectionResult[],
   merchantNameByKey: (merchantKey: string) => string,
+  formatMoney: MoneyFormatter = formatAgorot,
 ): Insight[] {
   return results
     .filter((r) => r.isRecurring)
@@ -22,7 +23,7 @@ export function generateRecurringChargeInsights(
         severity: "info" as const,
         rank: computeRank("info", 10),
         title: `Recurring charge detected: ${merchantNameByKey(r.merchantKey)}`,
-        description: `About ${formatAgorot(r.averageAmount)} approximately every ${intervalDays} days.`,
+        description: `About ${formatMoney(r.averageAmount)} approximately every ${intervalDays} days.`,
         relatedEntityId: r.merchantKey,
       };
     });

@@ -10,6 +10,7 @@ import { getEnvelopeBalances } from "../dal/envelopes";
 import { listCategories } from "../dal/categories";
 import { listGoals } from "../dal/goals";
 import { getLatestRateTable } from "../dal/exchange-rates";
+import { getReportingFormatter } from "../reporting/reporting-context";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
 import { listPortfolioHoldings, resolveHoldingPrices } from "../dal/portfolio";
 import {
@@ -189,6 +190,7 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     recurringResults,
     merchantNameByKey,
     needsReviewCount,
+    formatMoney: await getReportingFormatter(userId),
   });
 
   return {

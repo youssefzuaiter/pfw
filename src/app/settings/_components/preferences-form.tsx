@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { CURRENCY_SYMBOLS, SUPPORTED_CURRENCIES, isSupportedCurrency, type CurrencyCode } from "../../../lib/currency";
 import { setCurrencyDisplayMode } from "../../../lib/hooks/use-currency-display-mode";
 
 type LiquidityTier = "LIQUID" | "SEMI_LIQUID" | "ILLIQUID";
@@ -21,6 +22,15 @@ export type PreferencesFormData = {
   defaultManualAssetLiquidityTier: LiquidityTier | null;
   preferredCurrencyDisplay: "NATIVE" | "ILS";
   monthlyReportEnabled: boolean;
+  reportingCurrency: CurrencyCode;
+};
+
+const REPORTING_CURRENCY_NAMES: Record<CurrencyCode, string> = {
+  ILS: "Israeli shekel",
+  USD: "US dollar",
+  EUR: "Euro",
+  GBP: "British pound",
+  TRY: "Turkish lira",
 };
 
 /**
@@ -93,6 +103,9 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
   function handleCurrencyDisplayChange(event: ChangeEvent<HTMLSelectElement>) {
     updateField("preferredCurrencyDisplay", event.target.value as PreferencesFormData["preferredCurrencyDisplay"]);
   }
+  function handleReportingCurrencyChange(event: ChangeEvent<HTMLSelectElement>) {
+    if (isSupportedCurrency(event.target.value)) updateField("reportingCurrency", event.target.value);
+  }
   function handleMonthlyReportChange(event: ChangeEvent<HTMLInputElement>) {
     updateField("monthlyReportEnabled", event.target.checked);
   }
@@ -120,6 +133,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
           defaultManualAssetLiquidityTier: form.defaultManualAssetLiquidityTier,
           preferredCurrencyDisplay: form.preferredCurrencyDisplay,
           monthlyReportEnabled: form.monthlyReportEnabled,
+          reportingCurrency: form.reportingCurrency,
         }),
       });
       if (!response.ok) {
@@ -142,6 +156,28 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
       <div>
         <h3 className="text-sm font-semibold text-fg">Currency display</h3>
         <div className="mt-2 flex flex-col gap-1">
+          <label htmlFor="pref-reporting-currency" className="text-xs font-medium text-muted">
+            Show totals in
+          </label>
+          <select
+            id="pref-reporting-currency"
+            value={form.reportingCurrency}
+            onChange={handleReportingCurrencyChange}
+            className="w-56 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {SUPPORTED_CURRENCIES.map((currency) => (
+              <option key={currency} value={currency}>
+                {CURRENCY_SYMBOLS[currency]} {REPORTING_CURRENCY_NAMES[currency]}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted">
+            Totals across the dashboard, transactions, budgets, goals, debts, assets and analytics are converted at the
+            latest synced rate. Amounts are still recorded in shekels, and forms still take shekels. The trading desk
+            and tax simulator stay in shekels.
+          </p>
+        </div>
+        <div className="mt-3 flex flex-col gap-1">
           <label htmlFor="pref-currency-display" className="text-xs font-medium text-muted">
             Preferred primary figure for foreign-currency amounts
           </label>
@@ -151,7 +187,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
             onChange={handleCurrencyDisplayChange}
             className="w-56 rounded-md border border-border bg-elevated px-2 py-1 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <option value="ILS">₪ (base currency)</option>
+            <option value="ILS">The converted total</option>
             <option value="NATIVE">Native currency</option>
           </select>
         </div>

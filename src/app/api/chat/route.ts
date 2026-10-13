@@ -3,10 +3,10 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { convertToModelMessages, stepCountIs, streamText, tool, type UIMessage } from "ai";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { formatAgorot } from "../../../lib/money";
 import { executeAdvisorTool, RecentTransactionsSchema } from "../../../server/advisor/tools";
 import { buildAdvisorSystemPrompt } from "../../../server/advisor/system-prompt";
 import { buildLiquidityRunwayData } from "../../../server/analytics/build-liquidity-runway-data";
+import { getReportingFormatter } from "../../../server/reporting/reporting-context";
 import { guardMutation } from "../../../server/api/guard-mutation";
 import { jsonBadRequest } from "../../../server/api/responses";
 import { getAnthropicApiKey } from "../../../server/env";
@@ -94,9 +94,12 @@ export async function POST(request: NextRequest) {
         "The user's current monthly burn rate (committed spend), and which figure produced it — a trailing spending average or their known recurring bills, whichever is higher.",
       inputSchema: z.object({}),
       execute: async () => {
-        const { burnRate } = await buildLiquidityRunwayData(user.id);
+        const [{ burnRate }, formatMoney] = await Promise.all([
+          buildLiquidityRunwayData(user.id),
+          getReportingFormatter(user.id),
+        ]);
         return {
-          monthlyBurnRate: formatAgorot(burnRate.monthlyBurnRateAgorot),
+          monthlyBurnRate: formatMoney(burnRate.monthlyBurnRateAgorot),
           source: burnRate.source,
           monthsAveraged: burnRate.monthsAveraged,
         };

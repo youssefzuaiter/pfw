@@ -1,4 +1,5 @@
-import { agorot, formatAgorot, type Agorot } from "../../../../lib/money";
+import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
+import { agorot, type Agorot } from "../../../../lib/money";
 import { NetWorthSparkline } from "./net-worth-sparkline";
 
 type NetWorth = {
@@ -20,7 +21,7 @@ export function NetWorthHero({ netWorth, history }: { netWorth: NetWorth; histor
       </h2>
       <div className="mt-2 flex flex-wrap items-baseline gap-3">
         <p className="font-tabular-figures text-4xl font-semibold tracking-tight text-fg">
-          {formatAgorot(netWorth.netWorth)}
+          <ReportingAmount value={netWorth.netWorth} />
         </p>
         {changePercent !== null && (
           <span
@@ -38,11 +39,11 @@ export function NetWorthHero({ netWorth, history }: { netWorth: NetWorth; histor
       <dl className="mt-4 grid grid-cols-2 gap-4 text-sm">
         <div>
           <dt className="text-xs text-muted">Assets</dt>
-          <dd className="font-tabular-figures font-medium tracking-tight text-fg">{formatAgorot(netWorth.totalAssets)}</dd>
+          <dd className="font-tabular-figures font-medium tracking-tight text-fg"><ReportingAmount value={netWorth.totalAssets} /></dd>
         </div>
         <div>
           <dt className="text-xs text-muted">Liabilities</dt>
-          <dd className="font-tabular-figures font-medium tracking-tight text-fg">{formatAgorot(netWorth.totalLiabilities)}</dd>
+          <dd className="font-tabular-figures font-medium tracking-tight text-fg"><ReportingAmount value={netWorth.totalLiabilities} /></dd>
         </div>
       </dl>
     </section>

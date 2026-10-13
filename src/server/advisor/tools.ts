@@ -6,6 +6,7 @@ import { computeMonthProgress, computeProrationStatus } from "../../lib/budget-p
 import { monthKeyFor } from "../../lib/date-month";
 import { summarizeGoalProgress } from "../../lib/goal-progress";
 import { agorot, formatAgorot } from "../../lib/money";
+import { getReportingFormatter } from "../reporting/reporting-context";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { deriveValuationFreshness } from "../../lib/valuation-freshness";
@@ -31,9 +32,12 @@ import { getSpendByCategoryInRange, listTransactions } from "../dal/transactions
  * they get the same Zod treatment (Section 4) rather than being trusted
  * because they came from Claude rather than a browser.
  *
- * Money is always returned pre-formatted via `formatAgorot` — tools
- * return pre-computed, pre-formatted figures (Section 6), never raw
- * agorot integers for the model to reformat or do arithmetic on itself.
+ * Money is always returned pre-formatted — tools return pre-computed,
+ * pre-formatted figures (Section 6), never raw agorot integers for the
+ * model to reformat or do arithmetic on itself. The personal-finance tools
+ * format in the user's reporting currency (AGENTS.md §3nnn), the same
+ * currency the screens show; the two trading-desk tools stay in shekels,
+ * like /trading itself.
  */
 
 export type AdvisorToolDefinition = {
@@ -80,17 +84,18 @@ const getNetWorthSummary = defineTool({
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
+    const formatMoney = await getReportingFormatter(userId);
     const summary = await computeLiveNetWorth(userId);
     return {
-      netWorth: formatAgorot(summary.netWorth),
-      totalAssets: formatAgorot(summary.totalAssets),
-      totalLiabilities: formatAgorot(summary.totalLiabilities),
+      netWorth: formatMoney(summary.netWorth),
+      totalAssets: formatMoney(summary.totalAssets),
+      totalLiabilities: formatMoney(summary.totalLiabilities),
       breakdown: {
-        bankAccounts: formatAgorot(summary.breakdown.bankAccounts),
-        manualAssets: formatAgorot(summary.breakdown.manualAssets),
-        portfolio: formatAgorot(summary.breakdown.portfolio),
-        cryptoWallets: formatAgorot(summary.breakdown.cryptoWallets),
-        debts: formatAgorot(summary.breakdown.debts),
+        bankAccounts: formatMoney(summary.breakdown.bankAccounts),
+        manualAssets: formatMoney(summary.breakdown.manualAssets),
+        portfolio: formatMoney(summary.breakdown.portfolio),
+        cryptoWallets: formatMoney(summary.breakdown.cryptoWallets),
+        debts: formatMoney(summary.breakdown.debts),
       },
     };
   },
@@ -109,10 +114,11 @@ const getNetWorthHistoryTool = defineTool({
   },
   schema: NetWorthHistorySchema,
   run: async (userId, input) => {
+    const formatMoney = await getReportingFormatter(userId);
     const rows = await getNetWorthHistory(userId, input.days);
     return rows.map((row) => ({
       date: row.snapshotDate.toISOString().slice(0, 10),
-      netWorth: formatAgorot(agorot(Number(row.netWorthAgorot))),
+      netWorth: formatMoney(agorot(Number(row.netWorthAgorot))),
     }));
   },
 });
@@ -130,6 +136,7 @@ const getSpendingByCategory = defineTool({
   },
   schema: SpendingByCategorySchema,
   run: async (userId, input) => {
+    const formatMoney = await getReportingFormatter(userId);
     const to = new Date();
     const from = new Date(to.getTime() - input.daysBack * 24 * 60 * 60 * 1000);
     const [rows, categories] = await Promise.all([
@@ -139,7 +146,7 @@ const getSpendingByCategory = defineTool({
     const nameById = new Map(categories.map((c) => [c.id, c.name]));
     return [...rows]
       .sort((a, b) => (b.totalAgorot > a.totalAgorot ? 1 : b.totalAgorot < a.totalAgorot ? -1 : 0))
-      .map((row) => ({ categoryName: nameById.get(row.categoryId) ?? "Unknown", totalSpent: formatAgorot(agorot(Number(row.totalAgorot))) }));
+      .map((row) => ({ categoryName: nameById.get(row.categoryId) ?? "Unknown", totalSpent: formatMoney(agorot(Number(row.totalAgorot))) }));
   },
 });
 
@@ -163,6 +170,7 @@ const listRecentTransactions = defineTool({
   },
   schema: RecentTransactionsSchema,
   run: async (userId, input) => {
+    const formatMoney = await getReportingFormatter(userId);
     let categoryId: string | undefined;
     if (input.categoryName) {
       const categories = await listAllCategories(userId);
@@ -183,7 +191,7 @@ const listRecentTransactions = defineTool({
       merchantName: row.merchantName,
       description: row.description,
       category: row.category.name,
-      amount: formatAgorot(agorot(Number(row.amount))),
+      amount: formatMoney(agorot(Number(row.amount))),
     }));
   },
 });
@@ -195,6 +203,7 @@ const listBudgetsWithUtilization = defineTool({
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
+    const formatMoney = await getReportingFormatter(userId);
     const now = new Date();
     const monthProgress = computeMonthProgress(now);
 
@@ -212,9 +221,9 @@ const listBudgetsWithUtilization = defineTool({
           : undefined;
       return {
         category: envelope.categoryName,
-        rollingBalance: formatAgorot(envelope.balanceAgorot),
-        allocatedThisMonth: formatAgorot(envelope.allocatedThisMonthAgorot),
-        spentThisMonth: formatAgorot(envelope.spentThisMonthAgorot),
+        rollingBalance: formatMoney(envelope.balanceAgorot),
+        allocatedThisMonth: formatMoney(envelope.allocatedThisMonthAgorot),
+        spentThisMonth: formatMoney(envelope.spentThisMonthAgorot),
         paceStatus,
       };
     });
@@ -227,6 +236,7 @@ const listGoalsWithProgress = defineTool({
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
+    const formatMoney = await getReportingFormatter(userId);
     const goals = await listGoals(userId);
     const now = new Date();
     return goals.map((goal) => {
@@ -241,8 +251,8 @@ const listGoalsWithProgress = defineTool({
       });
       return {
         name: goal.name,
-        target: formatAgorot(targetAmount),
-        current: formatAgorot(currentAmount),
+        target: formatMoney(targetAmount),
+        current: formatMoney(currentAmount),
         progressPercent: Math.round(summary.progressPercent),
         status: summary.status,
         projectedCompletionDate: summary.projectedCompletionDate?.toISOString().slice(0, 10) ?? null,
@@ -258,6 +268,7 @@ const listDebtsWithPayoff = defineTool({
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
+    const formatMoney = await getReportingFormatter(userId);
     const debts = await listDebts(userId);
     return debts.map((debt) => {
       const balance = agorot(Number(debt.currentBalance));
@@ -269,12 +280,12 @@ const listDebtsWithPayoff = defineTool({
       return {
         name: debt.name,
         type: DEBT_TYPE_LABEL[debt.debtType] ?? debt.debtType,
-        balance: formatAgorot(balance),
+        balance: formatMoney(balance),
         apr: formatBpsAsPercent(aprBps),
-        minimumPayment: formatAgorot(minimumPayment),
+        minimumPayment: formatMoney(minimumPayment),
         negativeAmortization,
         payoffAtMinimumPayment: summary.payoffAchieved
-          ? { monthsToPayoff: summary.monthsSimulated, totalInterestPaid: formatAgorot(summary.totalInterestPaid) }
+          ? { monthsToPayoff: summary.monthsSimulated, totalInterestPaid: formatMoney(summary.totalInterestPaid) }
           : null,
       };
     });
@@ -287,12 +298,13 @@ const listManualAssetsTool = defineTool({
   input_schema: { type: "object", properties: {} },
   schema: EmptySchema,
   run: async (userId) => {
+    const formatMoney = await getReportingFormatter(userId);
     const assets = await listManualAssets(userId);
     const now = new Date();
     return assets.map((asset) => ({
       name: asset.name,
       type: ASSET_TYPE_LABEL[asset.assetType] ?? asset.assetType,
-      currentValue: formatAgorot(agorot(Number(asset.currentValue))),
+      currentValue: formatMoney(agorot(Number(asset.currentValue))),
       valuedAt: asset.valuedAt.toISOString().slice(0, 10),
       freshness: deriveValuationFreshness(asset.valuedAt, now),
       taxAdvantaged: asset.taxAdvantaged,

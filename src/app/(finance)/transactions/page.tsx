@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ReportingRateNote } from "../../../components/currency/reporting-currency-provider";
 import { agorot } from "../../../lib/money";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { listBankAccounts } from "../../../server/dal/bank-accounts";
@@ -99,6 +100,7 @@ export default async function TransactionsPage({
           </Link>
         </div>
       </div>
+      <ReportingRateNote />
       <div className="flex flex-wrap items-start gap-3">
         <ImportCsvForm bankAccounts={importAccountOptions} />
         <AddTransactionModal bankAccounts={accountOptions} />
