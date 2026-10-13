@@ -4,6 +4,8 @@ import { createAdminClient } from "../../src/server/db/admin-client";
 import { getCurrentUser } from "../../src/server/auth/current-user";
 import { listUncategorizedForSuggestions } from "../../src/server/dal/category-suggestions";
 import { POST as applyPost } from "../../src/app/api/transactions/category-suggestions/apply/route";
+import { applyRulesToExistingTransactions } from "../../src/server/dal/transactions";
+import { SUGGESTED_RULE_PRIORITY } from "../../src/server/dal/transaction-rules";
 
 /**
  * The AI category suggestions' two database halves against real Postgres
@@ -118,7 +120,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("AI 
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, updated: 1, skipped: 2 });
+    expect(await response.json()).toEqual({ ok: true, updated: 1, skipped: 2, rulesCreated: 0, rulesSkipped: 0 });
 
     const updated = await admin.notableTransaction.findUniqueOrThrow({ where: { id: newestA } });
     expect(updated.categoryId).toBe(groceriesA);
@@ -128,5 +130,53 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("AI 
 
     const untouched = await admin.notableTransaction.findUniqueOrThrow({ where: { id: txB } });
     expect(untouched.categoryId).not.toBe(groceriesA);
+  });
+
+  function applyWithRules(rules: unknown[]) {
+    vi.mocked(getCurrentUser).mockResolvedValue(userA as never);
+    return applyPost(
+      new NextRequest("http://localhost:3000/api/transactions/category-suggestions/apply", {
+        method: "POST",
+        headers: { host: "localhost:3000", origin: "http://localhost:3000", "content-type": "application/json" },
+        body: JSON.stringify({ choices: [{ transactionId: newestA, categoryId: groceriesA }], rules }),
+      }),
+    );
+  }
+
+  it("saves accepted suggestions as rules that sort matching transactions, skipping another user's category and repeats (AGENTS.md §3ooo)", async () => {
+    const response = await applyWithRules([
+      { field: "description", keyword: "market", categoryId: groceriesA },
+      { field: "description", keyword: "Market", categoryId: groceriesA }, // the same rule again, differently cased
+      { field: "merchantName", keyword: "COFFEE", categoryId: groceriesB }, // not A's category
+    ]);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ rulesCreated: 1, rulesSkipped: 2 });
+
+    const rules = await admin.transactionRule.findMany({ where: { userId: userA.id } });
+    expect(rules).toHaveLength(1);
+    expect(rules[0]).toMatchObject({
+      name: "market → Groceries",
+      priority: SUGGESTED_RULE_PRIORITY,
+      isActive: true,
+      conditions: [{ field: "description", operator: "contains", value: "market" }],
+      actions: [{ type: "categorize", categorySlug: "groceries" }],
+    });
+
+    // The saved rule really sorts the matching row (a dry run writes nothing).
+    const preview = await applyRulesToExistingTransactions(userA.id, { dryRun: true });
+    expect(preview.changes.map((change) => [change.label, change.categoryTo])).toEqual([["MIDDLE MARKET", "Groceries"]]);
+    expect(await admin.transactionRule.count({ where: { userId: userB.id } })).toBe(0);
+  });
+
+  it("never saves a second rule for a word that already has one", async () => {
+    const response = await applyWithRules([{ field: "description", keyword: "MARKET", categoryId: groceriesA }]);
+    expect(await response.json()).toMatchObject({ rulesCreated: 0, rulesSkipped: 1 });
+    expect(await admin.transactionRule.count({ where: { userId: userA.id } })).toBe(1);
+  });
+
+  it("refuses a malformed rule rather than saving it", async () => {
+    const response = await applyWithRules([{ field: "amount", keyword: "100", categoryId: groceriesA }]);
+    expect(response.status).toBe(400);
+    expect(await admin.transactionRule.count({ where: { userId: userA.id } })).toBe(1);
   });
 });
