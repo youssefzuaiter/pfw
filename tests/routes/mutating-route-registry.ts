@@ -61,6 +61,7 @@ export const SWEPT_ROUTES = [
   "POST /api/transactions",
   "POST /api/transactions/[id]/delete",
   "POST /api/transactions/[id]/transfer",
+  "POST /api/transactions/category-suggestions/apply",
   "POST /api/transactions/import",
   "POST /api/transactions/import-batch/[batchId]",
   "POST /api/transactions/import-batch/[batchId]/restore",
@@ -71,6 +72,7 @@ export const SWEPT_ROUTES = [
 export const EXCLUDED_ROUTES: Record<string, string> = {
   "POST /api/advisor": "Calls the Anthropic API: costs money and needs the network. Its tool-use loop is covered by tests/integration/copilot-tools.test.ts and the advisor's own unit tests.",
   "POST /api/chat": "Calls the Anthropic API (via @ai-sdk/anthropic): costs money and needs the network.",
+  "POST /api/transactions/category-suggestions": "Calls the Anthropic API: costs money and needs the network. Covered by its own route test and src/server/categorization/claude-category-suggester.test.ts.",
   "POST /api/auth/forgot-password": "Sends a real email through Resend.",
   "POST /api/auth/resend-verification": "Sends a real email through Resend.",
   "POST /api/auth/register": "Creates accounts and can claim the demo account; closed unless REGISTRATION_OPEN=true. Covered by tests/integration/auth-credentials.test.ts, its own route test and tests/e2e/registration-closed.spec.ts.",
