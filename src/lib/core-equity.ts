@@ -59,3 +59,80 @@ export function summarizeEquity(points: readonly EquityPoint[]): EquitySummary |
     spanDays: Math.round((dayToMs(last.day) - dayToMs(first.day)) / DAY_MS),
   };
 }
+
+/**
+ * What the core is compared against (AGENTS.md §3mmm): one broad, cheap
+ * whole-world index fund, the "do nothing clever" alternative to a mix.
+ */
+export const CORE_BENCHMARK = { symbol: "VT", name: "Vanguard Total World Stock ETF" } as const;
+
+/** A benchmark price, keyed by the UTC day of the trade it came from. Oldest first, one per day. */
+export type BenchmarkQuote = { day: string; priceUsd: number };
+
+export type BenchmarkPoint = EquityPoint & {
+  /** What the account's value on the first compared day would be worth in the benchmark; null where there is no price. */
+  benchmarkUsdCents: number | null;
+};
+
+export type BenchmarkSummary = {
+  sinceDay: string;
+  lastDay: string;
+  /** The benchmark's change over the compared days, as basis points of the starting amount. */
+  benchmarkChangeBps: number | null;
+  /** The account's change over the SAME days — not `EquitySummary.changeBps`, which can start earlier. */
+  accountChangeBps: number | null;
+};
+
+/** A price older than this is not carried forward: a long outage of the quote sync shows as a gap, not a flat line. */
+export const MAX_BENCHMARK_QUOTE_AGE_DAYS = 5;
+
+/** One price per UTC day of the trade, keeping the latest observation of a day. Expects the rows oldest first. */
+export function toDailyBenchmarkQuotes(rows: readonly { observedAt: Date; priceUsd: number }[]): BenchmarkQuote[] {
+  const byDay = new Map<string, number>();
+  for (const row of rows) byDay.set(row.observedAt.toISOString().slice(0, 10), row.priceUsd);
+  return [...byDay.entries()].map(([day, priceUsd]) => ({ day, priceUsd }));
+}
+
+/**
+ * The account next to the same starting amount in the benchmark. The start
+ * is the first account day with a benchmark price on or before it; from
+ * there each day's benchmark value is the starting amount scaled by the
+ * benchmark's price change. Days before the start, and days whose latest
+ * price is more than `MAX_BENCHMARK_QUOTE_AGE_DAYS` old, have none.
+ *
+ * Both lines start at the same amount on the same day, so the gap between
+ * them is the difference in what the money did, not in how much there was.
+ */
+export function compareWithBenchmark(
+  points: readonly EquityPoint[],
+  quotes: readonly BenchmarkQuote[],
+): { points: BenchmarkPoint[]; summary: BenchmarkSummary | null } {
+  let quoteIndex = -1;
+  let base: { day: string; usdCents: number; priceUsd: number } | null = null;
+
+  const compared = points.map((point): BenchmarkPoint => {
+    while (quoteIndex + 1 < quotes.length && quotes[quoteIndex + 1].day <= point.day) quoteIndex += 1;
+    const quote = quoteIndex >= 0 ? quotes[quoteIndex] : null;
+    const fresh =
+      quote !== null &&
+      quote.priceUsd > 0 &&
+      (dayToMs(point.day) - dayToMs(quote.day)) / DAY_MS <= MAX_BENCHMARK_QUOTE_AGE_DAYS;
+    if (!fresh) return { ...point, benchmarkUsdCents: null };
+    if (!base) base = { day: point.day, usdCents: point.usdCents, priceUsd: quote.priceUsd };
+    return { ...point, benchmarkUsdCents: Math.round((base.usdCents * quote.priceUsd) / base.priceUsd) };
+  });
+
+  const withBenchmark = compared.filter((point) => point.benchmarkUsdCents !== null);
+  if (!base || withBenchmark.length < 2) return { points: compared, summary: null };
+  const start: { day: string; usdCents: number } = base;
+  const last = withBenchmark[withBenchmark.length - 1];
+  return {
+    points: compared,
+    summary: {
+      sinceDay: start.day,
+      lastDay: last.day,
+      benchmarkChangeBps: shareInBps((last.benchmarkUsdCents as number) - start.usdCents, start.usdCents),
+      accountChangeBps: shareInBps(last.usdCents - start.usdCents, start.usdCents),
+    },
+  };
+}

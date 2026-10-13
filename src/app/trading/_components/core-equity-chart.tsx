@@ -3,7 +3,7 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { nativeAmount, formatNativeAmount } from "../../../lib/currency";
 import { useIsClient } from "../../../lib/hooks/use-is-client";
-import type { EquityPoint, EquitySummary } from "../../../lib/core-equity";
+import { CORE_BENCHMARK, type BenchmarkPoint, type BenchmarkSummary, type EquitySummary } from "../../../lib/core-equity";
 
 const usd = (cents: number) => formatNativeAmount(nativeAmount(cents), "USD");
 
@@ -18,15 +18,28 @@ function signedPercent(bps: number): string {
   return `${bps > 0 ? "+" : "−"}${(Math.abs(bps) / 100).toFixed(2)}%`;
 }
 
-function EquityTooltip({ active, payload }: { active?: boolean; payload?: { payload?: EquityPoint }[] }) {
+function EquityTooltip({ active, payload }: { active?: boolean; payload?: { payload?: BenchmarkPoint }[] }) {
   const point = payload?.[0]?.payload;
   if (!active || !point) return null;
   return (
     <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
       <p className="text-muted">{point.day}</p>
-      <p className="font-tabular-figures font-medium tracking-tight text-fg">{usd(point.usdCents)}</p>
+      <p className="font-tabular-figures font-medium tracking-tight text-fg">Account {usd(point.usdCents)}</p>
+      {point.benchmarkUsdCents !== null && (
+        <p className="font-tabular-figures tracking-tight text-muted">
+          In {CORE_BENCHMARK.symbol} {usd(point.benchmarkUsdCents)}
+        </p>
+      )}
     </div>
   );
+}
+
+/** One sentence comparing the account with the benchmark over the same days. */
+function benchmarkSentence(benchmark: BenchmarkSummary): string | null {
+  if (benchmark.accountChangeBps === null || benchmark.benchmarkChangeBps === null) return null;
+  return `Since ${benchmark.sinceDay}: the account ${signedPercent(benchmark.accountChangeBps)}, the same amount in ${
+    CORE_BENCHMARK.symbol
+  } ${signedPercent(benchmark.benchmarkChangeBps)}.`;
 }
 
 /**
@@ -48,9 +61,11 @@ function EquityTooltip({ active, payload }: { active?: boolean; payload?: { payl
 export function CoreEquityChart({
   points,
   summary,
+  benchmark,
 }: {
-  points: readonly EquityPoint[];
+  points: readonly BenchmarkPoint[];
   summary: EquitySummary | null;
+  benchmark: BenchmarkSummary | null;
 }) {
   const isClient = useIsClient();
 
@@ -67,6 +82,7 @@ export function CoreEquityChart({
   const description = `Account value in US dollars, ${summary.firstDay} to ${summary.lastDay}: from ${usd(
     summary.firstUsdCents,
   )} to ${usd(summary.lastUsdCents)}, ${direction} ${usd(Math.abs(summary.changeUsdCents))}.`;
+  const comparison = benchmark ? benchmarkSentence(benchmark) : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -84,7 +100,9 @@ export function CoreEquityChart({
         </span>
       </p>
 
-      <div role="img" aria-label={description} className="h-56 w-full">
+      {comparison && <p className="text-sm text-muted">{comparison}</p>}
+
+      <div role="img" aria-label={comparison ? `${description} ${comparison}` : description} className="h-56 w-full">
         {/* Mounted after hydration only: see useIsClient for why server-rendered Recharts logs a CSP violation. */}
         {isClient && (
           <ResponsiveContainer width="100%" height="100%">
@@ -114,6 +132,18 @@ export function CoreEquityChart({
                 dot={false}
                 isAnimationActive={false}
               />
+              {benchmark && (
+                <Line
+                  type="monotone"
+                  dataKey="benchmarkUsdCents"
+                  stroke="var(--pfw-muted)"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 4"
+                  dot={false}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -122,6 +152,11 @@ export function CoreEquityChart({
       <p className="text-xs text-muted">
         One point per day: the last account snapshot the router took that day. This is the account&rsquo;s value, so a
         top-up or a reset of the paper account would show as a jump, not as performance. Paper money.
+      </p>
+      <p className="text-xs text-muted">
+        {benchmark
+          ? `Dashed: the same starting amount put into ${CORE_BENCHMARK.symbol} (${CORE_BENCHMARK.name}) on ${benchmark.sinceDay}, at its daily price.`
+          : `A comparison with ${CORE_BENCHMARK.symbol} (${CORE_BENCHMARK.name}) appears once its price has been recorded on two of these days.`}
       </p>
     </div>
   );
