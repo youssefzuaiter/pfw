@@ -4,6 +4,7 @@ import { getCronSecret } from "../../../server/env";
 import { syncExchangeRates } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
+import { recordDailyNetWorthSnapshots } from "../../../server/net-worth/snapshot-job";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
@@ -121,6 +122,16 @@ export async function GET(request: NextRequest) {
       if (result.ok) console.log(`cron: equity-quote-sync ok — synced=${result.synced.join(",") || "-"} skipped=${result.skipped.join(",") || "-"}`);
       return result;
     });
+    // After the three price syncs, so each figure uses tonight's prices.
+    // A user whose figure could not be computed is a failure worth an
+    // alert, even though everyone else's snapshot was recorded.
+    const netWorthSnapshots = await runJob("net-worth-snapshots", async () => {
+      const result = await recordDailyNetWorthSnapshots();
+      if (!result.ok) return result;
+      console.log(`cron: net-worth-snapshots ok — recorded=${result.recorded} failed=${result.failed}`);
+      if (result.failed > 0) return { ok: false, error: `${result.failed} user(s) could not be snapshotted (${result.recorded} recorded)` };
+      return { ok: true };
+    });
 
     let deadMansSwitchCheck: JobResult;
     try {
@@ -184,6 +195,7 @@ export async function GET(request: NextRequest) {
       fxRateSync,
       cryptoPriceSync,
       equityQuoteSync,
+      netWorthSnapshots,
       deadMansSwitchCheck,
       rateLimitCleanup,
       encryptionKeyRotation,

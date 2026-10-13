@@ -131,6 +131,39 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
   };
 }
 
+/** The UTC calendar day `at` falls on, as the midnight-UTC Date a `@db.Date` column stores. */
+export function snapshotDayUtc(at: Date): Date {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+}
+
+/**
+ * Records today's net worth as a historical `NetWorthSnapshot`, computed by
+ * the same `computeLiveNetWorth` the dashboard shows. Until this existed only
+ * the seed wrote snapshots, so a real account's history chart stayed empty
+ * no matter how long it was used.
+ *
+ * One row per user per UTC day, upserted: a second run on the same day
+ * replaces that day's figure with the later one rather than adding a
+ * duplicate. The figure is computed first and written in its own short
+ * transaction, so a slow wallet RPC never holds a database transaction open.
+ */
+export async function recordNetWorthSnapshot(userId: string, now: Date = new Date()) {
+  const live = await computeLiveNetWorth(userId, now);
+  const snapshotDate = snapshotDayUtc(now);
+  const values = {
+    totalAssetsAgorot: BigInt(live.totalAssets),
+    totalLiabilitiesAgorot: BigInt(live.totalLiabilities),
+    netWorthAgorot: BigInt(live.netWorth),
+  };
+  return withUserScope(userId, (tx) =>
+    tx.netWorthSnapshot.upsert({
+      where: { userId_snapshotDate: { userId, snapshotDate } },
+      create: { userId, snapshotDate, ...values },
+      update: values,
+    }),
+  );
+}
+
 /** Historical daily snapshots for the dashboard's net-worth sparkline — never "today" (see above). */
 export async function getNetWorthHistory(userId: string, days: number) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
