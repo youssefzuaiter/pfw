@@ -393,6 +393,23 @@ export function getAppUrl(): string {
 }
 
 /**
+ * Whether anyone may create an account (`POST /api/auth/register`, the
+ * only path in this app that creates a `User`). CLOSED unless
+ * `REGISTRATION_OPEN` is exactly `"true"`: this is a personal app on a
+ * public URL, so a deployment that forgets the variable has to fail
+ * closed, not open. Open it on purpose for as long as someone needs to
+ * sign up, then remove it again.
+ *
+ * Exact match on purpose — `"1"`, `"yes"` or `"TRUE"` leave it closed, so
+ * the only way to open sign-up is to write the one value checked here.
+ * Not a secret, and read on every call rather than cached, so a changed
+ * value applies to the next request (on Vercel, after a redeploy).
+ */
+export function isRegistrationOpen(): boolean {
+  return process.env.REGISTRATION_OPEN === "true";
+}
+
+/**
  * Which build is actually running, straight from Vercel's own build-time
  * variables (all three are unset locally, which is itself the honest
  * answer — "this is a local dev server, not a deployment"). Deliberately

@@ -8,6 +8,7 @@ import {
   getEncryptionKey,
   getEncryptionKeyNext,
   getSentryDsn,
+  isRegistrationOpen,
   SECRET_ENV_VAR_NAMES,
 } from "./env";
 
@@ -203,6 +204,31 @@ describe("server env accessors", () => {
     it("returns the trimmed value when set", () => {
       process.env.SENTRY_DSN = "  https://example@o0.ingest.sentry.io/0  ";
       expect(getSentryDsn()).toBe("https://example@o0.ingest.sentry.io/0");
+    });
+  });
+
+  describe("isRegistrationOpen", () => {
+    const original = process.env.REGISTRATION_OPEN;
+    afterEach(() => {
+      if (original === undefined) delete process.env.REGISTRATION_OPEN;
+      else process.env.REGISTRATION_OPEN = original;
+    });
+
+    it("is closed when unset, so a deployment that forgets it fails closed", () => {
+      delete process.env.REGISTRATION_OPEN;
+      expect(isRegistrationOpen()).toBe(false);
+    });
+
+    it("is open only for exactly 'true'", () => {
+      process.env.REGISTRATION_OPEN = "true";
+      expect(isRegistrationOpen()).toBe(true);
+    });
+
+    it("stays closed for anything else, including look-alikes", () => {
+      for (const value of ["", "false", "TRUE", "True", "1", "yes", " true", "true "]) {
+        process.env.REGISTRATION_OPEN = value;
+        expect(isRegistrationOpen(), JSON.stringify(value)).toBe(false);
+      }
     });
   });
 });

@@ -5,6 +5,7 @@ import { sendEmailVerification } from "../../../../server/auth/email-verificatio
 import { checkRateLimit } from "../../../../server/api/rate-limit";
 import { isTrustedOrigin } from "../../../../server/api/verify-origin";
 import { jsonBadRequest, jsonForbidden, jsonTooManyRequests } from "../../../../server/api/responses";
+import { isRegistrationOpen } from "../../../../server/env";
 
 /**
  * Registration (AGENTS.md §3ff) — deliberately does NOT go through
@@ -18,6 +19,12 @@ import { jsonBadRequest, jsonForbidden, jsonTooManyRequests } from "../../../../
  * bounds automated registration-flooding against one target address; a
  * coarser fixed-key limit bounds flooding across many different emails
  * from the same abusive client.
+ *
+ * Closed unless `REGISTRATION_OPEN=true` (`isRegistrationOpen`, env.ts):
+ * this is a personal app on a public URL, and until this check anyone who
+ * found it could create an account. The refusal comes before the body is
+ * read, so a closed site spends nothing on an attempt — no parsing, no
+ * rate-limit write, no Argon2id hash.
  */
 const PER_EMAIL_RATE_LIMIT = { windowMs: 60_000, maxRequests: 5 };
 const GLOBAL_RATE_LIMIT = { windowMs: 60_000, maxRequests: 30 };
@@ -31,6 +38,10 @@ const BodySchema = z.object({
 export async function POST(request: NextRequest) {
   if (!isTrustedOrigin(request)) {
     return jsonForbidden("Origin mismatch");
+  }
+
+  if (!isRegistrationOpen()) {
+    return jsonForbidden("Registration is closed.");
   }
 
   let rawBody: unknown;

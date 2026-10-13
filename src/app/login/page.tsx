@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isRegistrationOpen } from "../../server/env";
 import { LoginForm } from "./_components/login-form";
 
 export const instant = false;
@@ -21,15 +22,18 @@ export default async function LoginPage({
         <h1 className="font-display text-xl font-semibold text-fg">Sign in</h1>
         <p className="mt-1 text-sm text-muted">PFW — personal finance</p>
         <LoginForm redirectTo={from} />
-        <p className="mt-4 text-center text-sm text-muted">
-          No account?{" "}
-          <Link
-            href="/register"
-            className="text-accent-ink underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Register
-          </Link>
-        </p>
+        {/* Only while sign-up is open (REGISTRATION_OPEN, env.ts): otherwise the link leads to a closed page. */}
+        {isRegistrationOpen() && (
+          <p className="mt-4 text-center text-sm text-muted">
+            No account?{" "}
+            <Link
+              href="/register"
+              className="text-accent-ink underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Register
+            </Link>
+          </p>
+        )}
       </div>
     </div>
   );
