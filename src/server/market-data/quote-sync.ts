@@ -1,5 +1,6 @@
 import "server-only";
 import { isKnownMockSymbol } from "../../lib/mock-market-data";
+import { CORE_BENCHMARK } from "../../lib/core-equity";
 import { createAdminClient } from "../db/admin-client";
 import { upsertEquityQuote } from "../dal/equity-quotes";
 import { fetchPaperTraderQuotes } from "../paper-trader/quotes-client";
@@ -7,7 +8,8 @@ import { fetchPaperTraderQuotes } from "../paper-trader/quotes-client";
 /**
  * Daily equity-quote sync for every symbol anyone holds that the mock
  * feed can't price (AGENTS.md §3xx) — the tickers the paper trader books
- * from real Alpaca fills. Same shape as `price-sync.ts`/`rate-sync.ts`:
+ * from real Alpaca fills — plus the core chart's benchmark (§3mmm), quoted
+ * every night whether or not anyone holds it. Same shape as `price-sync.ts`/`rate-sync.ts`:
  * fetch/parse separated from persist, never throws from the top-level
  * function, an outage is a logged `{ ok: false }` and every consumer
  * keeps degrading on its own (`src/lib/holding-price.ts` falls back to
@@ -66,8 +68,9 @@ export async function syncEquityQuotes(fetchImpl: typeof fetch = fetch): Promise
   const source = EQUITY_QUOTE_SOURCE;
   let wanted: string[] = [];
   try {
-    wanted = await listHeldSymbolsOutsideMockUniverse();
-    if (wanted.length === 0) return { ok: true, source, synced: [], skipped: [] };
+    // The core chart's benchmark (AGENTS.md §3mmm) is quoted every night too,
+    // held or not: its line is built from these daily rows.
+    wanted = [...new Set([...(await listHeldSymbolsOutsideMockUniverse()), CORE_BENCHMARK.symbol])];
 
     const result = await fetchPaperTraderQuotes(wanted, fetchImpl);
     const asOfDate = todayUtcMidnight();

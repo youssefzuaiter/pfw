@@ -74,7 +74,7 @@ export default async function CoreAgentPage() {
             <h2 id="core-equity-heading" className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
               Account value over time
             </h2>
-            <CoreEquityChart points={data.equity.points} summary={data.equity.summary} />
+            <CoreEquityChart points={data.equity.points} summary={data.equity.summary} benchmark={data.equity.benchmark} />
           </section>
 
           <CoreOpenPlanCard plan={data.openPlan} />

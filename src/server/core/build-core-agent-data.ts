@@ -13,10 +13,21 @@ import {
   type CorePlan,
   type EventTone,
 } from "../../lib/core-journal";
-import { summarizeEquity, type EquityPoint, type EquitySummary } from "../../lib/core-equity";
+import {
+  CORE_BENCHMARK,
+  MAX_BENCHMARK_QUOTE_AGE_DAYS,
+  compareWithBenchmark,
+  summarizeEquity,
+  toDailyBenchmarkQuotes,
+  type BenchmarkPoint,
+  type BenchmarkSummary,
+  type EquityPoint,
+  type EquitySummary,
+} from "../../lib/core-equity";
 import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { nativeAmount } from "../../lib/currency";
-import { getCoreMirror, listCoreEquitySeries, type CoreStatusView } from "../dal/core-mirror";
+import { CORE_EQUITY_WINDOW_DAYS, getCoreMirror, listCoreEquitySeries, type CoreStatusView } from "../dal/core-mirror";
+import { listEquityQuoteHistory } from "../dal/equity-quotes";
 import { getLatestRateTable } from "../dal/exchange-rates";
 
 /**
@@ -92,7 +103,12 @@ export type CoreAgentData =
       hiddenEventCount: number;
       account: CoreAccountView | null;
       /** The account's value, one point per UTC day, oldest first (USD cents — the account's own currency). */
-      equity: { points: EquityPoint[]; summary: EquitySummary | null };
+      equity: {
+        /** Each day also carries the benchmark's value for the same starting amount, where there is a price (AGENTS.md §3mmm). */
+        points: BenchmarkPoint[];
+        summary: EquitySummary | null;
+        benchmark: BenchmarkSummary | null;
+      };
     };
 
 export const MAX_EVENTS_SHOWN = 40;
@@ -103,7 +119,14 @@ function toMoney(usdCents: number, usdIlsRate: number): CoreMoney {
 
 export const buildCoreAgentData = cache(async (userId: string): Promise<CoreAgentData> => {
   const now = new Date();
-  const [mirror, series] = await Promise.all([getCoreMirror(userId), listCoreEquitySeries(userId, now)]);
+  // Benchmark prices reach a few days further back than the account's
+  // window, so the first account day can use a price from just before it.
+  const benchmarkSince = new Date(now.getTime() - (CORE_EQUITY_WINDOW_DAYS + MAX_BENCHMARK_QUOTE_AGE_DAYS) * 86_400_000);
+  const [mirror, series, benchmarkRows] = await Promise.all([
+    getCoreMirror(userId),
+    listCoreEquitySeries(userId, now),
+    listEquityQuoteHistory(CORE_BENCHMARK.symbol, benchmarkSince),
+  ]);
   if (!mirror.available) return { state: "unavailable" };
   if (!mirror.status && !mirror.snapshot && mirror.entries.length === 0) return { state: "empty" };
 
@@ -158,6 +181,7 @@ export const buildCoreAgentData = cache(async (userId: string): Promise<CoreAgen
     day: point.takenAt.toISOString().slice(0, 10),
     usdCents: point.equityUsdCents,
   }));
+  const comparison = compareWithBenchmark(equityPoints, toDailyBenchmarkQuotes(benchmarkRows));
 
   return {
     state: "ready",
@@ -172,6 +196,6 @@ export const buildCoreAgentData = cache(async (userId: string): Promise<CoreAgen
     events,
     hiddenEventCount: Math.max(0, parsed.length - events.length),
     account,
-    equity: { points: equityPoints, summary: summarizeEquity(equityPoints) },
+    equity: { points: comparison.points, summary: summarizeEquity(equityPoints), benchmark: comparison.summary },
   };
 });

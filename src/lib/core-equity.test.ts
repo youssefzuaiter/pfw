@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeEquity, type EquityPoint } from "./core-equity";
+import { summarizeEquity, type EquityPoint, compareWithBenchmark, toDailyBenchmarkQuotes, MAX_BENCHMARK_QUOTE_AGE_DAYS } from "./core-equity";
 
 const point = (day: string, usdCents: number): EquityPoint => ({
   day,
@@ -63,5 +63,72 @@ describe("summarizeEquity", () => {
     const summary = summarizeEquity([point("2026-10-09", 1_100_000), point("2026-10-05", 1_000_000)]);
     expect(summary?.firstDay).toBe("2026-10-09");
     expect(summary?.changeUsdCents).toBe(-100_000);
+  });
+});
+
+describe("compareWithBenchmark", () => {
+  const day = (n: number) => `2026-10-${String(n).padStart(2, "0")}`;
+  const points = (...cents: number[]): EquityPoint[] => cents.map((usdCents, i) => ({ day: day(5 + i), usdCents }));
+
+  it("starts both lines at the same amount on the first day with a price, and scales by the price change", () => {
+    const result = compareWithBenchmark(points(1_000_000, 1_010_000, 990_000), [
+      { day: day(5), priceUsd: 100 },
+      { day: day(6), priceUsd: 102 },
+      { day: day(7), priceUsd: 99.5 },
+    ]);
+    expect(result.points.map((p) => p.benchmarkUsdCents)).toEqual([1_000_000, 1_020_000, 995_000]);
+    expect(result.summary).toEqual({ sinceDay: day(5), lastDay: day(7), benchmarkChangeBps: -50, accountChangeBps: -100 });
+  });
+
+  it("leaves days before the first price empty, and compares from that day, not from the account's first day", () => {
+    const result = compareWithBenchmark(points(1_000_000, 1_100_000, 1_210_000), [
+      { day: day(6), priceUsd: 50 },
+      { day: day(7), priceUsd: 55 },
+    ]);
+    expect(result.points.map((p) => p.benchmarkUsdCents)).toEqual([null, 1_100_000, 1_210_000]);
+    expect(result.summary).toEqual({ sinceDay: day(6), lastDay: day(7), benchmarkChangeBps: 1000, accountChangeBps: 1000 });
+  });
+
+  it("carries a price forward over a weekend, but not past the age limit", () => {
+    const quotes = [{ day: day(5), priceUsd: 100 }];
+    const within = compareWithBenchmark(
+      [
+        { day: day(5), usdCents: 1_000_000 },
+        { day: day(5 + MAX_BENCHMARK_QUOTE_AGE_DAYS), usdCents: 1_000_000 },
+      ],
+      quotes,
+    );
+    expect(within.points.map((p) => p.benchmarkUsdCents)).toEqual([1_000_000, 1_000_000]);
+
+    const beyond = compareWithBenchmark(
+      [
+        { day: day(5), usdCents: 1_000_000 },
+        { day: day(6 + MAX_BENCHMARK_QUOTE_AGE_DAYS), usdCents: 1_000_000 },
+      ],
+      quotes,
+    );
+    expect(beyond.points.map((p) => p.benchmarkUsdCents)).toEqual([1_000_000, null]);
+    expect(beyond.summary).toBeNull();
+  });
+
+  it("has no summary with fewer than two compared days, and ignores a non-positive price", () => {
+    expect(compareWithBenchmark(points(1_000_000, 1_010_000), []).summary).toBeNull();
+    expect(compareWithBenchmark(points(1_000_000, 1_010_000), [{ day: day(5), priceUsd: 0 }]).summary).toBeNull();
+  });
+});
+
+describe("toDailyBenchmarkQuotes", () => {
+  it("keys each price by the UTC day of its trade and keeps the latest observation of a day", () => {
+    expect(
+      toDailyBenchmarkQuotes([
+        { observedAt: new Date("2026-10-09T19:59:59Z"), priceUsd: 120 },
+        { observedAt: new Date("2026-10-09T19:59:59Z"), priceUsd: 120 }, // the same Friday close, synced again on Saturday
+        { observedAt: new Date("2026-10-12T15:00:00Z"), priceUsd: 121 },
+        { observedAt: new Date("2026-10-12T19:59:00Z"), priceUsd: 122 },
+      ]),
+    ).toEqual([
+      { day: "2026-10-09", priceUsd: 120 },
+      { day: "2026-10-12", priceUsd: 122 },
+    ]);
   });
 });
