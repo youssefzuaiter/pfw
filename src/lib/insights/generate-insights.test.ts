@@ -60,4 +60,39 @@ describe("generateInsights() orchestrator", () => {
     });
     expect(insights).toHaveLength(0);
   });
+
+  it("writes every amount with the formatter it is given (the reporting currency), and with formatAgorot otherwise", () => {
+    const input = {
+      envelopes: [
+        { categoryId: "cat-dining", categoryName: "Dining", balanceAgorot: agorot(-50_000), spentThisMonthAgorot: agorot(150_000) },
+      ],
+      spendHistories: [],
+      cashFlowForecast: emptyForecast(),
+      goals: [],
+      holdings: [],
+      recurringResults: [
+        {
+          merchantKey: "netflix",
+          isRecurring: true,
+          distinctMonths: 3,
+          coefficientOfVariation: 0,
+          averageAmount: agorot(4990),
+          averageIntervalDays: 30,
+        },
+      ],
+      merchantNameByKey: (key: string) => key,
+      needsReviewCount: 0,
+    };
+
+    const inShekels = generateInsights(input).map((insight) => insight.description).join(" ");
+    expect(inShekels).toContain("-₪500.00");
+    expect(inShekels).toContain("₪49.90");
+
+    const inDollars = generateInsights({ ...input, formatMoney: (value) => `USD<${value}>` })
+      .map((insight) => insight.description)
+      .join(" ");
+    expect(inDollars).toContain("USD<-50000>");
+    expect(inDollars).toContain("USD<4990>");
+    expect(inDollars).not.toContain("₪");
+  });
 });

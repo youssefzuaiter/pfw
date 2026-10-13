@@ -1,3 +1,4 @@
+import { ReportingRateNote } from "../../../components/currency/reporting-currency-provider";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { buildLiquidityRunwayData } from "../../../server/analytics/build-liquidity-runway-data";
 import { buildOpenBankingSyncData } from "../../../server/analytics/build-open-banking-sync-data";
@@ -58,6 +59,7 @@ export default async function DashboardPage() {
         <h1 className="font-display text-xl font-semibold text-fg">Dashboard</h1>
         <BackendStatusBadge />
       </div>
+      <ReportingRateNote />
 
       <QuickLinksGrid />
 

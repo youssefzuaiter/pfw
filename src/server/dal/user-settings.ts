@@ -1,4 +1,5 @@
 import "server-only";
+import type { CurrencyCode } from "../../lib/currency";
 import { withUserScope } from "../db/with-user-scope";
 
 /**
@@ -23,7 +24,23 @@ export type UserSettingsData = {
   monteCarloVolatilityMultiplier: number;
   defaultManualAssetLiquidityTier: "LIQUID" | "SEMI_LIQUID" | "ILLIQUID" | null;
   preferredCurrencyDisplay: "NATIVE" | "ILS";
+  monthlyReportEnabled: boolean;
+  monthlyReportLastSentMonth: string | null;
+  /** Display only — see the schema column (AGENTS.md §3nnn). */
+  reportingCurrency: CurrencyCode;
 };
+
+/**
+ * Just the reporting currency, as a plain read: the root layout asks on
+ * every page, and `getOrCreateUserSettings` would make that a write. No
+ * row yet means the default, ILS.
+ */
+export async function getReportingCurrency(userId: string): Promise<CurrencyCode> {
+  const row = await withUserScope(userId, (tx) =>
+    tx.userSettings.findUnique({ where: { userId }, select: { reportingCurrency: true } }),
+  );
+  return row?.reportingCurrency ?? "ILS";
+}
 
 /**
  * Upsert-on-read: the schema's own column defaults ARE the "no row yet"
@@ -52,6 +69,42 @@ export async function updateUserSettings(userId: string, input: UpdateUserSettin
       where: { userId },
       create: { userId, ...input },
       update: input,
+    }),
+  );
+}
+
+export type MonthlyReportClaim = { claimed: true; previous: string | null } | { claimed: false };
+
+/**
+ * Claims `monthKey`'s monthly report for sending (AGENTS.md §3lll): sets
+ * `monthlyReportLastSentMonth` to it, but only if the user has opted in and
+ * that month has not been claimed yet. A conditional update, so two runs
+ * racing on the same night cannot both send. Returns the previous value, for
+ * `releaseMonthlyReport` to put back if the send fails.
+ */
+export async function claimMonthlyReport(userId: string, monthKey: string): Promise<MonthlyReportClaim> {
+  return withUserScope(userId, async (tx) => {
+    const settings = await tx.userSettings.findUnique({ where: { userId } });
+    if (!settings?.monthlyReportEnabled || settings.monthlyReportLastSentMonth === monthKey) return { claimed: false };
+
+    const { count } = await tx.userSettings.updateMany({
+      where: {
+        userId,
+        monthlyReportEnabled: true,
+        OR: [{ monthlyReportLastSentMonth: null }, { monthlyReportLastSentMonth: { not: monthKey } }],
+      },
+      data: { monthlyReportLastSentMonth: monthKey },
+    });
+    return count === 1 ? { claimed: true, previous: settings.monthlyReportLastSentMonth } : { claimed: false };
+  });
+}
+
+/** Undoes a claim after a failed send, so the next night tries again. Only touches a row still holding this claim. */
+export async function releaseMonthlyReport(userId: string, monthKey: string, previous: string | null): Promise<void> {
+  await withUserScope(userId, (tx) =>
+    tx.userSettings.updateMany({
+      where: { userId, monthlyReportLastSentMonth: monthKey },
+      data: { monthlyReportLastSentMonth: previous },
     }),
   );
 }

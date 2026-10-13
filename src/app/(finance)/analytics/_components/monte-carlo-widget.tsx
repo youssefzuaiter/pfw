@@ -5,7 +5,8 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { Badge, type BadgeVariant } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
 import { Tickbar, type TickbarStatus } from "../../../../components/tickbar/tickbar";
-import { agorot, formatAgorot } from "../../../../lib/money";
+import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
+import { agorot } from "../../../../lib/money";
 import type { MonteCarloAnalyticsResponse } from "../../../../server/analytics/build-monte-carlo-data";
 
 type MonteCarloApiResponse = MonteCarloAnalyticsResponse;
@@ -27,19 +28,20 @@ function ChartTooltip({
   payload?: { dataKey?: string; value?: number }[];
   label?: number;
 }) {
+  const money = useReportingMoney();
   if (!active || !payload?.length) return null;
   const byKey = Object.fromEntries(payload.map((p) => [p.dataKey, p.value]));
   return (
     <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
       <p className="text-muted">Age {label}</p>
       {byKey.p90 !== undefined && (
-        <p className="font-tabular-figures tracking-tight text-fg">Top 10%: {formatAgorot(agorot(Math.round(byKey.p90)))}</p>
+        <p className="font-tabular-figures tracking-tight text-fg">Top 10%: {money.formatMinor(byKey.p90)}</p>
       )}
       {byKey.p50 !== undefined && (
-        <p className="font-tabular-figures font-medium tracking-tight text-fg">Median: {formatAgorot(agorot(Math.round(byKey.p50)))}</p>
+        <p className="font-tabular-figures font-medium tracking-tight text-fg">Median: {money.formatMinor(byKey.p50)}</p>
       )}
       {byKey.p10 !== undefined && (
-        <p className="font-tabular-figures tracking-tight text-fg">Bottom 10%: {formatAgorot(agorot(Math.round(byKey.p10)))}</p>
+        <p className="font-tabular-figures tracking-tight text-fg">Bottom 10%: {money.formatMinor(byKey.p10)}</p>
       )}
     </div>
   );
@@ -57,6 +59,7 @@ export function MonteCarloWidget({
   const [annualSpendAgorot, setAnnualSpendAgorot] = useState(initialData.input.annualSpend.agorot);
   const [volatilityMultiplier, setVolatilityMultiplier] = useState(1);
   const [data, setData] = useState(initialData);
+  const money = useReportingMoney();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,11 +114,13 @@ export function MonteCarloWidget({
     };
   }, [currentAge, retirementAge, annualSpendAgorot, volatilityMultiplier]);
 
+  // Plotted in the reporting currency (AGENTS.md §3nnn) so the axis ticks
+  // fall on round figures of the currency the page shows.
   const chartData = data.yearlyPercentiles.map((point) => ({
     age: point.age,
-    p10: point.p10.agorot,
-    p50: point.p50.agorot,
-    p90: point.p90.agorot,
+    p10: money.toMinor(agorot(point.p10.agorot)),
+    p50: money.toMinor(agorot(point.p50.agorot)),
+    p90: money.toMinor(agorot(point.p90.agorot)),
   }));
 
   const status = probabilityStatus(data.probabilityOfSuccess);
@@ -168,7 +173,7 @@ export function MonteCarloWidget({
           <label className="flex flex-col gap-1">
             <span className="flex justify-between text-xs font-medium text-muted">
               <span>Target annual spend</span>
-              <span className="font-tabular-figures tracking-tight text-fg">{formatAgorot(agorot(annualSpendAgorot))}</span>
+              <span className="font-tabular-figures tracking-tight text-fg">{money.format(agorot(annualSpendAgorot))}</span>
             </span>
             <input
               type="range"
@@ -212,9 +217,9 @@ export function MonteCarloWidget({
           />
         </label>
         <p className="mt-3 text-xs text-muted">
-          Starting net worth {data.derived.startingNetWorth.formatted} and{" "}
+          Starting net worth {money.format(agorot(data.derived.startingNetWorth.agorot))} and{" "}
           {(data.derived.growthAllocationShare * 100).toFixed(0)}% growth allocation come from your real accounts.
-          Annual savings default ({data.derived.historicalAnnualSavings.formatted}) is your recent average monthly
+          Annual savings default ({money.format(agorot(data.derived.historicalAnnualSavings.agorot))}) is your recent average monthly
           cash flow, annualized. This app has no stored date of birth, so age is entered here each time, never saved.
         </p>
       </section>
@@ -247,7 +252,7 @@ export function MonteCarloWidget({
                 // own values ever need, which is why that chart's 90px
                 // was never wide enough here.
                 width={130}
-                tickFormatter={(value: number) => formatAgorot(agorot(Math.round(value)))}
+                tickFormatter={(value: number) => money.formatMinor(value)}
               />
               <Tooltip content={<ChartTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -287,8 +292,8 @@ export function MonteCarloWidget({
           </ResponsiveContainer>
         </div>
         <p className="mt-2 text-xs text-muted">
-          Median final balance at age {data.input.endAge}: {data.medianFinalBalance.formatted}. In the worst 10% of
-          simulated paths: {data.worstDecileFinalBalance.formatted}.
+          Median final balance at age {data.input.endAge}: {money.format(agorot(data.medianFinalBalance.agorot))}. In the worst 10% of
+          simulated paths: {money.format(agorot(data.worstDecileFinalBalance.agorot))}.
         </p>
       </section>
     </div>

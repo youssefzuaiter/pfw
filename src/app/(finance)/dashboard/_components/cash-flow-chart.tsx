@@ -1,24 +1,27 @@
 "use client";
 
 import { Area, AreaChart, CartesianGrid, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { agorot, formatAgorot } from "../../../../lib/money";
+import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
+import { agorot } from "../../../../lib/money";
 
 type ForecastPoint = { date: Date; balance: number };
 type Minimum = { date: Date; balance: number };
 
 function ForecastTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) {
+  const money = useReportingMoney();
   if (!active || !payload?.length || payload[0].value === undefined) return null;
   return (
     <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
       <p className="text-muted">{label}</p>
       <p className="font-tabular-figures font-medium tracking-tight text-fg">
-        {formatAgorot(agorot(Math.round(payload[0].value)))}
+        {money.format(agorot(Math.round(payload[0].value)))}
       </p>
     </div>
   );
 }
 
 export function CashFlowChart({ days, minimum }: { days: readonly ForecastPoint[]; minimum: Minimum }) {
+  const money = useReportingMoney();
   const data = days.map((d) => ({ dateLabel: d.date.toISOString().slice(5, 10), dateKey: d.date.getTime(), balance: d.balance }));
   const minimumPoint = data.find((d) => d.dateKey === minimum.date.getTime());
 
@@ -53,7 +56,7 @@ export function CashFlowChart({ days, minimum }: { days: readonly ForecastPoint[
       <p className="mt-2 text-xs text-muted">
         Lowest projected balance:{" "}
         <span className="font-tabular-figures font-medium tracking-tight text-negative">
-          {formatAgorot(agorot(minimum.balance))}
+          {money.format(agorot(minimum.balance))}
         </span>{" "}
         on {minimum.date.toISOString().slice(0, 10)}
       </p>

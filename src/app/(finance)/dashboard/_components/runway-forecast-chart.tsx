@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
-import { agorot, formatAgorot, type Agorot } from "../../../../lib/money";
+import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
+import { agorot, type Agorot } from "../../../../lib/money";
 import type { ForecastDayResult } from "../../../../workers/forecaster-worker-handlers";
 import { runForecast } from "../../../../workers/forecaster-client";
 
@@ -19,14 +20,20 @@ type ChartPoint = {
   mean: number;
 };
 
-function toChartData(days: readonly ForecastDayResult[]): ChartPoint[] {
+/**
+ * Plotted in the reporting currency's minor units (AGENTS.md §3nnn), not
+ * agorot, so the axis ticks Recharts picks fall on round figures of the
+ * currency the page shows.
+ */
+function toChartData(days: readonly ForecastDayResult[], toMinor: (value: Agorot) => number): ChartPoint[] {
+  const convert = (value: number) => toMinor(agorot(Math.round(value)));
   return days.map((d) => ({
     day: d.dayIndex,
     date: d.date,
-    p5: d.p5Agorot,
-    band: Math.max(0, d.p95Agorot - d.p5Agorot),
-    p50: d.p50Agorot,
-    mean: d.meanAgorot,
+    p5: convert(d.p5Agorot),
+    band: Math.max(0, convert(d.p95Agorot) - convert(d.p5Agorot)),
+    p50: convert(d.p50Agorot),
+    mean: convert(d.meanAgorot),
   }));
 }
 
@@ -39,6 +46,7 @@ function ChartTooltip({
   payload?: { payload?: ChartPoint }[];
   label?: number;
 }) {
+  const money = useReportingMoney();
   if (!active || !payload?.length?.valueOf()) return null;
   const point = payload[0]?.payload;
   if (!point) return null;
@@ -47,9 +55,9 @@ function ChartTooltip({
       <p className="text-muted">
         Day {label} · {point.date}
       </p>
-      <p className="font-tabular-figures tracking-tight text-fg">95th pct: {formatAgorot(agorot(point.p5 + point.band))}</p>
-      <p className="font-tabular-figures font-medium tracking-tight text-fg">Median: {formatAgorot(agorot(point.p50))}</p>
-      <p className="font-tabular-figures tracking-tight text-fg">5th pct: {formatAgorot(agorot(point.p5))}</p>
+      <p className="font-tabular-figures tracking-tight text-fg">95th pct: {money.formatMinor(point.p5 + point.band)}</p>
+      <p className="font-tabular-figures font-medium tracking-tight text-fg">Median: {money.formatMinor(point.p50)}</p>
+      <p className="font-tabular-figures tracking-tight text-fg">5th pct: {money.formatMinor(point.p5)}</p>
     </div>
   );
 }
@@ -77,6 +85,7 @@ export function RunwayForecastChart({
   startingLiquidAgorot: Agorot;
   dailyHistory: readonly { dateKey: string; netAgorot: number }[];
 }) {
+  const money = useReportingMoney();
   const [status, setStatus] = useState<Status>("loading");
   const [chartData, setChartData] = useState<ChartPoint[] | null>(null);
   const requestedRef = useRef(false);
@@ -101,7 +110,7 @@ export function RunwayForecastChart({
           dailyHistoryAgorot: dailyHistory.map((d) => d.netAgorot),
           dates: dailyHistory.map((d) => d.dateKey),
         });
-        setChartData(toChartData(response.days));
+        setChartData(toChartData(response.days, money.toMinor));
         setStatus("ready");
       } catch {
         setStatus("error");
@@ -151,7 +160,7 @@ export function RunwayForecastChart({
                 <YAxis
                   tick={{ fontSize: 11 }}
                   stroke="var(--pfw-muted)"
-                  tickFormatter={(value: number) => formatAgorot(agorot(value))}
+                  tickFormatter={(value: number) => money.formatMinor(value)}
                   width={90}
                 />
                 <Tooltip content={<ChartTooltip />} />

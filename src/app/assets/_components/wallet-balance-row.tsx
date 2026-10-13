@@ -6,7 +6,7 @@ import { Badge } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
 import { shortenEvmAddress } from "../../../lib/crypto/evm-address";
 import { weiToEtherString } from "../../../lib/crypto/token-units";
-import { agorot, formatAgorot } from "../../../lib/money";
+import { ReportingAmount } from "../../../components/currency/reporting-currency-provider";
 
 export type WalletBalanceRowProps = {
   id: string;
@@ -90,7 +90,7 @@ export function WalletBalanceRow({
       ) : (
         <div className="mt-2 flex flex-wrap items-baseline gap-2 font-tabular-figures tracking-tight">
           <span className="text-lg font-semibold text-fg">{weiToEtherString(BigInt(balanceWei ?? "0"))} ETH</span>
-          <span className="text-sm text-muted">≈ {formatAgorot(agorot(Math.round(valueAgorot)))}</span>
+          <span className="text-sm text-muted">≈ <ReportingAmount value={Math.round(valueAgorot)} /></span>
         </div>
       )}
 

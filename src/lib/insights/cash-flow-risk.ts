@@ -1,6 +1,6 @@
 import type { CashFlowForecast } from "../cash-flow-forecast";
 import { agorot, formatAgorot, type Agorot } from "../money";
-import { computeRank, type Insight } from "./types";
+import { computeRank, type Insight, type MoneyFormatter } from "./types";
 
 export type CashFlowRiskThresholds = {
   /** Projected minimum at or below this is a critical risk (default: going negative at all). */
@@ -23,6 +23,7 @@ const DEFAULT_THRESHOLDS: CashFlowRiskThresholds = {
 export function generateCashFlowRiskInsights(
   forecast: CashFlowForecast,
   thresholds: CashFlowRiskThresholds = DEFAULT_THRESHOLDS,
+  formatMoney: MoneyFormatter = formatAgorot,
 ): Insight[] {
   const { minimum } = forecast;
   const dateLabel = minimum.date.toISOString().slice(0, 10);
@@ -35,7 +36,7 @@ export function generateCashFlowRiskInsights(
         severity: "critical",
         rank: computeRank("critical", (Math.abs(minimum.balance) / scale) * 50),
         title: "Cash flow risk: balance projected to go negative",
-        description: `Projected balance drops to ${formatAgorot(minimum.balance)} on ${dateLabel}.`,
+        description: `Projected balance drops to ${formatMoney(minimum.balance)} on ${dateLabel}.`,
       },
     ];
   }
@@ -49,7 +50,7 @@ export function generateCashFlowRiskInsights(
         severity: "warning",
         rank: computeRank("warning", proximityToCritical),
         title: "Cash flow running low",
-        description: `Projected balance dips to ${formatAgorot(minimum.balance)} on ${dateLabel} — a thin cushion.`,
+        description: `Projected balance dips to ${formatMoney(minimum.balance)} on ${dateLabel} — a thin cushion.`,
       },
     ];
   }

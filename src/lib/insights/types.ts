@@ -1,3 +1,5 @@
+import type { Agorot } from "../money";
+
 export type InsightSeverity = "critical" | "warning" | "info";
 
 export type InsightType =
@@ -40,3 +42,10 @@ export function computeRank(severity: InsightSeverity, impactScore: number): num
 export function rankInsights(insights: readonly Insight[]): Insight[] {
   return [...insights].sort((a, b) => b.rank - a.rank);
 }
+
+/**
+ * How a generator turns an amount into text. Defaults to `formatAgorot`;
+ * the dashboard passes the user's reporting-currency formatter (AGENTS.md
+ * §3nnn), so the feed reads in the same currency as the figures beside it.
+ */
+export type MoneyFormatter = (value: Agorot) => string;

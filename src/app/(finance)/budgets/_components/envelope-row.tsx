@@ -91,8 +91,11 @@ export function EnvelopeRow({
         <div className="flex flex-col items-end gap-2">
           <form onSubmit={handleSubmit} className="flex items-center gap-2">
             <label className="sr-only" htmlFor={`allocate-${envelope.categoryId}`}>
-              Allocate for {month}
+              Allocate for {month}, in shekels
             </label>
+            <span aria-hidden="true" className="text-sm text-muted">
+              ₪
+            </span>
             <input
               id={`allocate-${envelope.categoryId}`}
               value={amount}

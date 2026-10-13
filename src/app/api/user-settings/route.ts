@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { isSupportedCurrency, type CurrencyCode } from "../../../lib/currency";
 import { parseShekelsToAgorot } from "../../../lib/money";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { guardMutation } from "../../../server/api/guard-mutation";
@@ -43,6 +44,10 @@ const PatchBodySchema = z.object({
   monteCarloVolatilityMultiplier: z.number().min(0.25).max(3).optional(),
   defaultManualAssetLiquidityTier: z.enum(["LIQUID", "SEMI_LIQUID", "ILLIQUID"]).nullable().optional(),
   preferredCurrencyDisplay: z.enum(["NATIVE", "ILS"]).optional(),
+  monthlyReportEnabled: z.boolean().optional(),
+  reportingCurrency: z
+    .custom<CurrencyCode>((value) => typeof value === "string" && isSupportedCurrency(value), "Unsupported currency")
+    .optional(),
 });
 
 function serialize(data: UserSettingsData) {
@@ -60,6 +65,8 @@ function serialize(data: UserSettingsData) {
     monteCarloVolatilityMultiplier: data.monteCarloVolatilityMultiplier,
     defaultManualAssetLiquidityTier: data.defaultManualAssetLiquidityTier,
     preferredCurrencyDisplay: data.preferredCurrencyDisplay,
+    monthlyReportEnabled: data.monthlyReportEnabled,
+    reportingCurrency: data.reportingCurrency,
   };
 }
 
@@ -109,6 +116,8 @@ export async function PATCH(request: NextRequest) {
     patch.defaultManualAssetLiquidityTier = body.defaultManualAssetLiquidityTier;
   }
   if (body.preferredCurrencyDisplay !== undefined) patch.preferredCurrencyDisplay = body.preferredCurrencyDisplay;
+  if (body.monthlyReportEnabled !== undefined) patch.monthlyReportEnabled = body.monthlyReportEnabled;
+  if (body.reportingCurrency !== undefined) patch.reportingCurrency = body.reportingCurrency;
 
   try {
     if (body.taxOtherOrdinaryIncome !== undefined) {
