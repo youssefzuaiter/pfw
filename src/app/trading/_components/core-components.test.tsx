@@ -6,7 +6,7 @@ import type { CoreAccountView, CoreAgentData, CoreEventView } from "../../../ser
 import { CoreAllocationTable } from "./core-allocation-table";
 import { CoreEmptyState, CoreUnavailable } from "./core-empty-state";
 import { CoreEquityChart } from "./core-equity-chart";
-import { summarizeEquity, type EquityPoint } from "../../../lib/core-equity";
+import { compareWithBenchmark, summarizeEquity, type BenchmarkQuote, type EquityPoint } from "../../../lib/core-equity";
 import { CoreJournalFeed } from "./core-journal-feed";
 import { CoreOpenPlanCard } from "./core-plan-card";
 import { CorePlanHistory } from "./core-plan-history";
@@ -43,7 +43,7 @@ function ready(over: Partial<Ready> = {}): Ready {
     events: [],
     hiddenEventCount: 0,
     account: null,
-    equity: { points: [], summary: null },
+    equity: { points: [], summary: null, benchmark: null },
     ...over,
   };
 }
@@ -345,8 +345,9 @@ describe("CoreEquityChart", () => {
   const series = (...cents: number[]): EquityPoint[] =>
     cents.map((usdCents, n) => ({ day: `2026-10-${String(5 + n).padStart(2, "0")}`, usdCents }));
 
-  function renderSeries(points: EquityPoint[]) {
-    return render(<CoreEquityChart points={points} summary={summarizeEquity(points)} />);
+  function renderSeries(points: EquityPoint[], quotes: BenchmarkQuote[] = []) {
+    const compared = compareWithBenchmark(points, quotes);
+    return render(<CoreEquityChart points={compared.points} summary={summarizeEquity(points)} benchmark={compared.summary} />);
   }
 
   it("says what it is waiting for, instead of drawing a lone dot, with fewer than two days", () => {
@@ -387,5 +388,22 @@ describe("CoreEquityChart", () => {
   it("says plainly that a top-up or a reset would show as a jump", () => {
     renderSeries(series(1_000_000, 1_010_000));
     expect(screen.getByText(/a top-up or a reset of the paper account would show as a jump/)).toBeInTheDocument();
+  });
+
+  it("says when the VT comparison will appear, rather than drawing half of it", () => {
+    renderSeries(series(1_000_000, 1_010_000), [{ day: "2026-10-06", priceUsd: 120 }]);
+    expect(screen.getByText(/A comparison with VT .* appears once its price has been recorded on two of these days/)).toBeInTheDocument();
+    expect(screen.queryByText(/the same amount in VT/)).not.toBeInTheDocument();
+  });
+
+  it("compares the account with the same amount in VT over the same days, in words and for a screen reader", () => {
+    renderSeries(series(1_000_000, 1_010_000, 1_020_000), [
+      { day: "2026-10-05", priceUsd: 100 },
+      { day: "2026-10-07", priceUsd: 103 },
+    ]);
+    const sentence = "Since 2026-10-05: the account +2.00%, the same amount in VT +3.00%.";
+    expect(screen.getByText(sentence)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: new RegExp(sentence.replace(/[.+$()]/g, "\\$&")) })).toBeInTheDocument();
+    expect(screen.getByText(/Dashed: the same starting amount put into VT \(Vanguard Total World Stock ETF\) on 2026-10-05/)).toBeInTheDocument();
   });
 });

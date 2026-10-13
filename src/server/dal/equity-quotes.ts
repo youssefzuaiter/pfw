@@ -52,6 +52,29 @@ export async function getLatestEquityQuotes(symbols: readonly string[]): Promise
   }
 }
 
+/**
+ * Every stored price for `symbol` observed since `since`, oldest first — the
+ * core chart's benchmark line (AGENTS.md §3mmm). Public market data, no user
+ * scope. Like `getLatestEquityQuotes`, never throws: no history is an
+ * empty line, not a broken page.
+ */
+export async function listEquityQuoteHistory(
+  symbol: string,
+  since: Date,
+): Promise<{ observedAt: Date; priceUsd: number }[]> {
+  try {
+    const rows = await prisma.equityQuote.findMany({
+      where: { symbol: symbol.toUpperCase(), observedAt: { gte: since } },
+      orderBy: { observedAt: "asc" },
+      select: { observedAt: true, priceUsd: true },
+    });
+    return rows.map((row) => ({ observedAt: row.observedAt, priceUsd: Number(row.priceUsd) }));
+  } catch (error) {
+    console.error("listEquityQuoteHistory: read failed — drawing no benchmark", error);
+    return [];
+  }
+}
+
 /** `fetchedAt` of the newest stored row for `symbol`, or `null` if nothing was ever synced — see `crypto-prices.ts`'s `getLatestCryptoRateFetchedAt` for why `fetchedAt`, not `asOfDate`. */
 export async function getLatestEquityQuoteFetchedAt(symbol: string): Promise<Date | null> {
   const row = await prisma.equityQuote.findFirst({
