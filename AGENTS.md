@@ -8631,6 +8631,55 @@ owner's Mac.
   sending transfers and deleted rows, were each caught); and one real API call
   with three made-up rows.
 
+## 3mmm. A benchmark line on the core chart (ad hoc)
+
+§3hhh's chart showed what the core's account did, but not whether that was
+good. A fall of 2% means little if the market fell 5%. The chart now also
+draws what the same money would have done in one broad index fund.
+
+- **The benchmark is VT** (Vanguard Total World Stock ETF,
+  `CORE_BENCHMARK` in `src/lib/core-equity.ts`): one cheap fund holding the
+  whole world's shares, the "do nothing clever" choice the core's own mix
+  has to beat. One fund, named on the page, not a blend made up to match
+  the core's targets.
+- **Prices come from the existing quote sync** (§3xx): `syncEquityQuotes`
+  now always asks for VT on top of whatever is held outside the mock
+  universe, so it is quoted every night whether anyone holds it or not.
+  `listEquityQuoteHistory` (`src/server/dal/equity-quotes.ts`) reads the
+  stored rows oldest first and, like `getLatestEquityQuotes`, never throws:
+  no history is no line, not a broken page.
+- **`compareWithBenchmark`** (pure): both lines start at the same amount on
+  the same day (the first account day with a VT price on or before it), and
+  each later day's VT value is that amount scaled by VT's price change. So
+  the gap between the lines is what the money did, not how much there was.
+  A price is carried forward over weekends and holidays, but at most
+  `MAX_BENCHMARK_QUOTE_AGE_DAYS` (5): a longer gap in the quote sync shows
+  as a gap in the line, never as a flat stretch that looks like data. The
+  sentence above the chart compares both over the SAME days ("the account
+  −2.04%, the same amount in VT +1.12%") and only appears with two compared
+  days.
+- **Prices are keyed by the day of the trade** (`observedAt`), not the day
+  the sync ran: the 00:00 UTC cron stores the previous session's close.
+- **The ops page changed with it**: "no equity quote yet" used to be the
+  normal state for an account holding nothing outside the mock universe, so
+  `/settings/ops` showed it as "none held" (§3bbb). With VT quoted every
+  night that state no longer exists, and "never" now means the sync has
+  never worked, so the special tier is gone.
+- **No backfill**: the line starts the first night the sync quotes VT,
+  which may be a day or two after the core's first snapshot. The trader's
+  quotes endpoint only returns the latest trade.
+- **Verified**: unit tests for the comparison (same start, scaling, the
+  5-day carry-forward and the gap after it, no summary below two days,
+  a day before any price) and the day keying; component tests for the
+  dashed line, the sentence and the caption with and without a benchmark;
+  an integration test reading history from real Postgres (a synthetic
+  ticker, `VTZQ`, so a real VT quote cannot leak in); the quote-sync test
+  asserts VT is requested. Mutation-checked: carrying a stale price forward
+  and restarting the base each day were both caught. In the browser, with
+  temporary weekday VT prices on the local demo account: both lines drawn,
+  flat across weekends, the tooltip showing both values, no horizontal
+  overflow at 375px. The temporary prices were deleted afterwards.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
