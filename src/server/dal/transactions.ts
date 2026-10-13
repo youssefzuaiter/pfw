@@ -516,6 +516,31 @@ export type MonthlyIncomeExpense = {
 };
 
 /** Buckets every transaction in [from, to) by calendar month, summing income (positive) and expense (negative, reported as a positive magnitude) separately. */
+/**
+ * The month's largest real expenses (AGENTS.md §3ppp), biggest first: live,
+ * not a transfer between the user's own accounts, and negative. Read
+ * through the field-encryption extension, so `description` is plaintext.
+ */
+export async function listLargestExpensesInRange(userId: string, from: Date, to: Date, limit: number) {
+  return withUserScope(userId, (tx) =>
+    tx.notableTransaction.findMany({
+      where: { userId, ...REAL_MONEY, amount: { lt: 0n }, occurredAt: { gte: from, lt: to } },
+      orderBy: [{ amount: "asc" }, { occurredAt: "desc" }],
+      take: limit,
+      select: {
+        id: true,
+        occurredAt: true,
+        merchantName: true,
+        description: true,
+        amount: true,
+        nativeAmount: true,
+        currency: true,
+        category: { select: { name: true } },
+      },
+    }),
+  );
+}
+
 export async function getMonthlyIncomeExpenseHistory(
   userId: string,
   from: Date,
