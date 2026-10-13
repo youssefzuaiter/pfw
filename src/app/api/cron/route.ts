@@ -5,6 +5,7 @@ import { syncExchangeRates } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { recordDailyNetWorthSnapshots } from "../../../server/net-worth/snapshot-job";
+import { sendMonthlyReports } from "../../../server/reports/monthly-report-job";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
@@ -132,6 +133,16 @@ export async function GET(request: NextRequest) {
       if (result.failed > 0) return { ok: false, error: `${result.failed} user(s) could not be snapshotted (${result.recorded} recorded)` };
       return { ok: true };
     });
+    // After the snapshots, so a report sent on the 1st already has the
+    // month's last net-worth figure. A no-op for users who have not opted
+    // in, and for anyone already sent this month's report.
+    const monthlyReports = await runJob("monthly-reports", async () => {
+      const result = await sendMonthlyReports();
+      if (!result.ok) return result;
+      console.log(`cron: monthly-reports ok — month=${result.monthKey} sent=${result.sent} failed=${result.failed}`);
+      if (result.failed > 0) return { ok: false, error: `${result.failed} monthly report(s) for ${result.monthKey} failed to send; retried tomorrow` };
+      return { ok: true };
+    });
 
     let deadMansSwitchCheck: JobResult;
     try {
@@ -196,6 +207,7 @@ export async function GET(request: NextRequest) {
       cryptoPriceSync,
       equityQuoteSync,
       netWorthSnapshots,
+      monthlyReports,
       deadMansSwitchCheck,
       rateLimitCleanup,
       encryptionKeyRotation,

@@ -42,6 +42,9 @@ These apply to every line of code in this repo, in every phase:
    historically (see decision #3 below); a *live* balance (a foreign-
    currency bank account's current balance) converts at the latest synced
    rate instead, since a live figure going stale would violate law #5.
+   Since §3nnn a user may choose a *reporting* currency in which totals are
+   SHOWN; that is display only — everything is still stored and summed in
+   ILS agorot, and converted on its way to text.
 4. **Hebrew regex boundary safety.** `\b` fails beside Hebrew characters —
    verified for real: `/\bקפה\b/` cannot match "קפה" *anywhere*, even as a
    clean whole word, because Hebrew letters aren't `\w` so neither edge of
@@ -8631,6 +8634,48 @@ owner's Mac.
   sending transfers and deleted rows, were each caught); and one real API call
   with three made-up rows.
 
+## 3lll. A monthly report email (ad hoc)
+
+An opt-in email on the 1st: the previous month's income, spending by
+category, net-worth change and the long-term core. Built on §3jjj's nightly
+snapshots for the net-worth line.
+
+- **Opt-in** (`UserSettings.monthlyReportEnabled`, off by default; migration
+  `20261013150000_monthly_report_opt_in`): the email carries financial figures,
+  so nobody receives one without turning it on in Settings → Preferences. Sent
+  to the sign-in address.
+- **Once per month, retried on failure**: `monthlyReportLastSentMonth` is the
+  claim. `claimMonthlyReport` sets it with a conditional update (only for an
+  opted-in user, only if that month is not already claimed), the send runs, and
+  `releaseMonthlyReport` puts the previous value back if the send failed. The
+  job runs every night rather than only on the 1st, so a Resend outage on the
+  1st is retried on the 2nd and a month is never sent twice.
+- **`gatherMonthlyReport(userId, monthKey)`** (`src/server/reports/monthly-report.ts`):
+  the same scoped DAL functions the dashboard uses: income and spending
+  (transfers excluded), the top five categories by spend, the month's first and
+  last net-worth snapshot (`getNetWorthSnapshotsInRange`, null below two), the
+  core's first and last daily value (null below two).
+- **`renderMonthlyReport`** (`src/server/reports/render-monthly-report.ts`): pure;
+  a plain-text body and a minimal HTML body with the same lines, every value
+  escaped (category names are the user's text), no colour codes. A missing
+  figure is said to be missing, never invented.
+- **`sendMonthlyReports`** (`src/server/reports/monthly-report-job.ts`): lists
+  opted-in users without this month's report through the admin client
+  (allowlisted: no session, a cross-user read), then claims, gathers, renders
+  and sends through the scoped DAL and `sendEmail`. Wired into `GET /api/cron`
+  as `monthly-reports`, after the net-worth snapshots; a failed send reaches
+  the operator alert and is retried the next night.
+- **Delivery caveat**: until a verified sender domain exists, Resend's shared
+  sender only delivers to the Resend account's own address; a report to any
+  other address fails, is released, and is retried nightly.
+- **Verified**: 5 renderer tests (amounts and signs, missing figures, the core
+  section and its percent, HTML escaping, a loss), 5 job tests (the previous
+  month across a year boundary, sending, a lost claim skipped, a failed send
+  released, an unreadable user list), a cron route case, 4 integration tests
+  against real Postgres (the month's figures with a transfer and the next month
+  left out, RLS, the claim's once-only and release semantics, another user's
+  row untouched); mutation-checked (an unconditional claim was caught).
+
 ## 3mmm. A benchmark line on the core chart (ad hoc)
 
 §3hhh's chart showed what the core's account did, but not whether that was
@@ -8679,6 +8724,88 @@ draws what the same money would have done in one broad index fund.
   temporary weekday VT prices on the local demo account: both lines drawn,
   flat across weekends, the tooltip showing both values, no horizontal
   overflow at 375px. The temporary prices were deleted afterwards.
+
+## 3nnn. A reporting currency: totals in dollars (ad hoc)
+
+The user's money is in lira and dollars; every total in the app was in
+shekels. They chose US dollars as the currency to see totals in. This is a
+**display** setting, not a second base currency: storage, sums, budgets and
+every frozen historical figure stay in ILS agorot exactly as before (law #3,
+amended in one sentence to say so). Moving the base itself would have meant
+re-denominating every stored amount, which was never on the table.
+
+- **The setting**: `UserSettings.reportingCurrency` (`Currency`, default ILS;
+  migration `20261013180000_reporting_currency`), any of the five supported
+  currencies, chosen in Settings → Preferences ("Show totals in") and accepted
+  by `PATCH /api/user-settings` (validated with `isSupportedCurrency`, never a
+  hand-copied list — §3bbb's rule). `getReportingCurrency` is a plain read
+  (`getOrCreateUserSettings` would make every page view a write).
+- **One conversion, in one place**: `src/lib/reporting-currency.ts` (pure).
+  A `ReportingContext` is `{ currency, ilsPerUnit, rateDay }`;
+  `formatReportingAmount` is exactly `formatAgorot` for ILS and otherwise
+  converts with the existing `convertAgorotToNativeAmount` (half away from
+  zero) and formats with `formatNativeAmount`. Charts plot
+  `toReportingMinorUnits` values so their axis ticks fall on round figures of
+  the shown currency, and format ticks with `formatReportingMinorUnits`.
+- **The rate**: `getReportingContext(userId)` (`src/server/reporting/`,
+  `cache()`-wrapped per request) uses the newest stored rate
+  (`getLatestRate`, new in `dal/exchange-rates.ts`) and says its day; with
+  none synced it uses the fallback and says the rate is approximate. One rate
+  for every figure, historical ones included, so a month-old total is today's
+  rate times that month's shekels — stated on every converted page.
+- **How it reaches the screens**: the root layout resolves the context once
+  (signed-in requests only; a failure falls back to shekels, correctly
+  labelled, rather than breaking every page) and hands it to a client
+  `ReportingCurrencyProvider`. Client components use `useReportingMoney()`;
+  server components that render a figure as a JSX child use the small client
+  `<ReportingAmount>`; server code that builds text uses
+  `getReportingFormatter(userId)`. The provider's default is ILS, so every
+  component outside it, and every existing component test, is unchanged.
+- **Converted**: the dashboard (net worth, runway, both forecasts, the donut,
+  income/expense, and the insight feed — each generator takes an optional
+  `formatMoney`), transactions and recently deleted, budgets (and the
+  household view), goals, debts, assets, analytics, the subscription radar's
+  totals, the advisor's eight personal-finance tools and its prompt, the
+  copilot's injected transactions, the chat route's burn rate, and the monthly
+  report email (with a line naming the rate). `<ReportingRateNote>` sits under
+  each converted page's heading.
+- **Deliberately not converted**: the trading desk, portfolio, tax simulator
+  and core page — `src/app/trading/layout.tsx` wraps them in an inner ILS
+  provider, because the desk is a shekel simulation and the tax rules are
+  written in shekels, and half-converting one page would mix currencies; the
+  advisor's two trading tools stay in shekels for the same reason. Each
+  subscription's own price and each account's native balance stay in the
+  currency they are charged or held in. The ledger history modal shows the
+  frozen shekel amount of each commit, because that is the record.
+- **Forms still take shekels**: every amount input says ₪ (labels, and now
+  placeholders on the three inputs whose label is screen-reader only; the
+  envelope allocation input gained a visible ₪). Converting input would make
+  a typed $135.14 store as ₪499.99 and drift on every edit.
+- **The native/converted pair** (`CurrencyAmount`, §3gg): an amount already
+  in the reporting currency is shown once, exactly as recorded, not converted
+  to shekels and back; otherwise the converted side is in the reporting
+  currency, and the toggle names it ("Showing: $ (USD)").
+- **Verified**: unit tests for the conversion (ILS identical to
+  `formatAgorot` across values and signs, half-away-from-zero both ways,
+  minor-unit formatting, the rate note with and without a synced rate),
+  component tests (no provider is shekels, conversion, the rate note, the
+  single-figure case, native-first pairs, an inner ILS provider pinning a
+  subtree, the toggle's label), the report email in dollars with its rate
+  line, the insight feed using the formatter it is given, and 3 integration
+  tests against real Postgres (the default without creating a row, the chosen
+  currency at the newest stored rate, one user's choice invisible to another
+  under RLS); mutation-checked (ignoring the stored rate and ignoring the
+  setting were each caught). In the browser on the demo account, switched to
+  dollars through the real Settings form: net worth −₪563,149.70 became
+  −$185,388.89 (÷ 3.037667, the stored rate), the feed, runway, budgets,
+  goals, debts, assets and analytics read in dollars with the rate note, the
+  trading desk stayed in shekels, an unsupported currency was refused with a
+  400, and the account was set back to shekels afterwards.
+- **Known limitations**: one rate for all of history (a per-day historical
+  conversion is possible from the stored rate history but was not built);
+  forms take shekels; the Monte Carlo API's unused `formatted` strings are
+  still shekels; with no synced rate for the chosen currency the figures are
+  approximate (and say so).
 
 ## 4. Design system (Phase 0)
 

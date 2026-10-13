@@ -1,6 +1,8 @@
 "use client";
 
+import { CURRENCY_SYMBOLS } from "../../lib/currency";
 import { toggleCurrencyDisplayMode, useCurrencyDisplayMode } from "../../lib/hooks/use-currency-display-mode";
+import { useReportingMoney } from "./reporting-currency-provider";
 
 /**
  * The Currency UI Toggle's control (Punch List Phase 3, item 2). A named
@@ -18,6 +20,8 @@ import { toggleCurrencyDisplayMode, useCurrencyDisplayMode } from "../../lib/hoo
  */
 export function CurrencyToggle() {
   const mode = useCurrencyDisplayMode();
+  // The converted figure is in the reporting currency (AGENTS.md §3nnn), ₪ by default.
+  const { context } = useReportingMoney();
 
   return (
     <button
@@ -26,7 +30,7 @@ export function CurrencyToggle() {
       aria-pressed={mode === "native"}
       className="uv-btn-press rounded-md border border-border px-2 py-1 text-xs font-medium text-fg hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      Showing: {mode === "native" ? "Native currency" : "₪ (ILS)"}
+      Showing: {mode === "native" ? "Native currency" : `${CURRENCY_SYMBOLS[context.currency]} (${context.currency})`}
     </button>
   );
 }

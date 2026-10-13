@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ReportingRateNote } from "../../../../components/currency/reporting-currency-provider";
 import { Badge, type BadgeVariant } from "../../../../components/badge/badge";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { buildSubscriptionRadarData } from "../../../../server/subscriptions/build-subscription-radar-data";
@@ -34,6 +35,7 @@ export default async function SubscriptionsPage() {
           ← Transactions
         </Link>
       </div>
+      <ReportingRateNote />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Recurring cash drag</h2>

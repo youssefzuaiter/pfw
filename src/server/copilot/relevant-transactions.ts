@@ -1,5 +1,6 @@
 import "server-only";
-import { agorot, formatAgorot } from "../../lib/money";
+import { agorot } from "../../lib/money";
+import { getReportingFormatter } from "../reporting/reporting-context";
 import { listTransactionsByIds } from "../dal/transactions";
 import type { OllamaMessage } from "./ollama-client";
 
@@ -19,8 +20,9 @@ const MAX_RELEVANT_TRANSACTIONS = 10;
  * that same, already-battle-tested defense rather than inventing a
  * second one.
  *
- * Every monetary figure is pre-formatted via `formatAgorot`, same rule
- * every advisor tool result already follows (AGENTS.md §3d) — the model
+ * Every monetary figure is pre-formatted, in the reporting currency
+ * (AGENTS.md §3nnn), the same rule every advisor tool result already
+ * follows (AGENTS.md §3d) — the model
  * is never handed a raw agorot integer to reformat or do arithmetic on
  * itself.
  *
@@ -37,12 +39,13 @@ export async function buildRelevantTransactionsMessage(
   const rows = await listTransactionsByIds(userId, transactionIds.slice(0, MAX_RELEVANT_TRANSACTIONS));
   if (rows.length === 0) return null;
 
+  const formatMoney = await getReportingFormatter(userId);
   const transactions = rows.map((row) => ({
     date: row.occurredAt.toISOString().slice(0, 10),
     merchantName: row.merchantName,
     description: row.description,
     category: row.category.name,
-    amount: formatAgorot(agorot(Number(row.amount))),
+    amount: formatMoney(agorot(Number(row.amount))),
   }));
 
   return {

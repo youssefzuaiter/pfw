@@ -3,6 +3,10 @@ import { Rubik, IBM_Plex_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { CommandPalette } from "../components/CommandPalette";
 import { CopilotSidebar } from "../components/copilot/copilot-sidebar";
+import { ReportingCurrencyProvider } from "../components/currency/reporting-currency-provider";
+import { ILS_REPORTING, type ReportingContext } from "../lib/reporting-currency";
+import { getCurrentUser } from "../server/auth/current-user";
+import { getReportingContext } from "../server/reporting/reporting-context";
 import { MobileNav } from "../components/nav/mobile-nav";
 import { Sidebar } from "../components/nav/sidebar";
 import { OfflineBanner } from "../components/pwa/offline-banner";
@@ -70,18 +74,38 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // (Sidebar/MobileNav/CopilotSidebar, which includes a "Sign out" link
   // and full app navigation) must not render for those requests.
   const isAuthenticated = requestHeaders.get("x-authenticated") === "1";
+  const reporting = isAuthenticated ? await resolveReportingContext() : ILS_REPORTING;
 
   return (
     <html lang="en" className={`${rubik.variable} ${ibmPlexMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col bg-bg text-fg md:flex-row">
-        <OfflineBanner />
-        {isAuthenticated && <Sidebar />}
-        <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
-        {isAuthenticated && <MobileNav />}
-        {isAuthenticated && <CopilotSidebar />}
-        {isAuthenticated && <CommandPalette nonce={nonce} />}
-        <ServiceWorkerRegistration />
+        <ReportingCurrencyProvider value={reporting}>
+          <OfflineBanner />
+          {isAuthenticated && <Sidebar />}
+          <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
+          {isAuthenticated && <MobileNav />}
+          {isAuthenticated && <CopilotSidebar />}
+          {isAuthenticated && <CommandPalette nonce={nonce} />}
+          <ServiceWorkerRegistration />
+        </ReportingCurrencyProvider>
       </body>
     </html>
   );
+}
+
+/**
+ * The signed-in user's reporting currency (AGENTS.md §3nnn). A failure
+ * here falls back to ILS rather than breaking every page: the figures are
+ * then shown in shekels, correctly labelled, just not in the chosen
+ * currency. A page that needs the context itself will surface the same
+ * failure through its own error boundary.
+ */
+async function resolveReportingContext(): Promise<ReportingContext> {
+  try {
+    const user = await getCurrentUser();
+    return await getReportingContext(user.id);
+  } catch (error) {
+    console.error("root layout: could not resolve the reporting currency — showing shekels", error);
+    return ILS_REPORTING;
+  }
 }

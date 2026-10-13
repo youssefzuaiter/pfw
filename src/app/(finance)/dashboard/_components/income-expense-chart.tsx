@@ -1,7 +1,8 @@
 "use client";
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { agorot, formatAgorot } from "../../../../lib/money";
+import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
+import { agorot } from "../../../../lib/money";
 
 type MonthPoint = { monthKey: string; income: number; expense: number };
 
@@ -14,6 +15,7 @@ function IncomeExpenseTooltip({
   payload?: Array<{ name?: string; value?: number; dataKey?: string }>;
   label?: string;
 }) {
+  const money = useReportingMoney();
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
@@ -21,7 +23,7 @@ function IncomeExpenseTooltip({
       {payload.map((entry) =>
         entry.value === undefined ? null : (
           <p key={entry.dataKey} className="font-tabular-figures font-medium tracking-tight text-fg">
-            {entry.name}: {formatAgorot(agorot(Math.round(entry.value)))}
+            {entry.name}: {money.format(agorot(Math.round(entry.value)))}
           </p>
         ),
       )}

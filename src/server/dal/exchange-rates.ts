@@ -83,6 +83,24 @@ export async function getLatestRateFetchedAt(currency: CurrencyCode): Promise<Da
   return row?.fetchedAt ?? null;
 }
 
+/**
+ * The newest stored rate for one currency on or before `asOf`, with its
+ * day, or `null` if none was ever synced (the caller decides whether a
+ * fallback is acceptable — the reporting currency says so on the page).
+ */
+export async function getLatestRate(
+  currency: CurrencyCode,
+  asOf: Date = new Date(),
+): Promise<{ rate: number; asOfDate: Date } | null> {
+  if (currency === BASE_CURRENCY) return null;
+  const row = await prisma.exchangeRate.findFirst({
+    where: { currency, asOfDate: { lte: asOf } },
+    orderBy: { asOfDate: "desc" },
+    select: { rate: true, asOfDate: true },
+  });
+  return row ? { rate: Number(row.rate), asOfDate: row.asOfDate } : null;
+}
+
 /** The stored rate history for one currency, oldest first — backs a rate-trend view. */
 export async function listRateHistory(currency: CurrencyCode, days: number) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);

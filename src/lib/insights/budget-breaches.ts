@@ -1,5 +1,5 @@
 import { formatAgorot, type Agorot } from "../money";
-import { computeRank, type Insight } from "./types";
+import { computeRank, type Insight, type MoneyFormatter } from "./types";
 
 /**
  * Zero-Sum Envelope Budgeting migration: this generator now reads the
@@ -30,7 +30,10 @@ export type EnvelopeStatus = {
   spentThisMonthAgorot: Agorot;
 };
 
-export function generateBudgetBreachInsights(envelopes: readonly EnvelopeStatus[]): Insight[] {
+export function generateBudgetBreachInsights(
+  envelopes: readonly EnvelopeStatus[],
+  formatMoney: MoneyFormatter = formatAgorot,
+): Insight[] {
   const insights: Insight[] = [];
 
   for (const envelope of envelopes) {
@@ -41,7 +44,7 @@ export function generateBudgetBreachInsights(envelopes: readonly EnvelopeStatus[
         severity: "critical",
         rank: computeRank("critical", deficitMagnitude / 100),
         title: `${envelope.categoryName} envelope is overdrawn`,
-        description: `This envelope is ${formatAgorot(envelope.balanceAgorot)} — spent more, in total, than has ever been allocated to it.`,
+        description: `This envelope is ${formatMoney(envelope.balanceAgorot)} — spent more, in total, than has ever been allocated to it.`,
         relatedEntityId: envelope.categoryId,
       });
     } else if (envelope.spentThisMonthAgorot > 0 && envelope.balanceAgorot <= envelope.spentThisMonthAgorot) {
@@ -51,7 +54,7 @@ export function generateBudgetBreachInsights(envelopes: readonly EnvelopeStatus[
         severity: "warning",
         rank: computeRank("warning", impact),
         title: `${envelope.categoryName} envelope is running low`,
-        description: `Only ${formatAgorot(envelope.balanceAgorot)} left after spending ${formatAgorot(envelope.spentThisMonthAgorot)} this month.`,
+        description: `Only ${formatMoney(envelope.balanceAgorot)} left after spending ${formatMoney(envelope.spentThisMonthAgorot)} this month.`,
         relatedEntityId: envelope.categoryId,
       });
     }
