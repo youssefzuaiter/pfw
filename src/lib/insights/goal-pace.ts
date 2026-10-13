@@ -1,6 +1,6 @@
 import { projectCompletionDate } from "../goal-progress";
 import { formatAgorot, multiplyAgorot, type Agorot } from "../money";
-import { computeRank, type Insight } from "./types";
+import { computeRank, type Insight, type MoneyFormatter } from "./types";
 
 /** Below 90% of the expected linear pace counts as "off pace"; below 50% escalates to critical. */
 const WARNING_PACE_RATIO = 0.9;
@@ -22,7 +22,10 @@ function daysBetween(a: Date, b: Date): number {
   return (b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000);
 }
 
-export function generateGoalPaceInsights(goals: readonly GoalPaceInput[]): Insight[] {
+export function generateGoalPaceInsights(
+  goals: readonly GoalPaceInput[],
+  formatMoney: MoneyFormatter = formatAgorot,
+): Insight[] {
   const insights: Insight[] = [];
 
   for (const goal of goals) {
@@ -36,7 +39,7 @@ export function generateGoalPaceInsights(goals: readonly GoalPaceInput[]): Insig
         severity: "critical",
         rank: computeRank("critical", 90),
         title: `${goal.goalName} is past its target date`,
-        description: `Reached ${formatAgorot(goal.currentAmount)} of ${formatAgorot(goal.targetAmount)} by the target date.`,
+        description: `Reached ${formatMoney(goal.currentAmount)} of ${formatMoney(goal.targetAmount)} by the target date.`,
         relatedEntityId: goal.goalId,
       });
       continue;
@@ -73,7 +76,7 @@ export function generateGoalPaceInsights(goals: readonly GoalPaceInput[]): Insig
       severity,
       rank: computeRank(severity, shortfallPercent),
       title: `${goal.goalName} is falling behind pace`,
-      description: `Reached ${formatAgorot(goal.currentAmount)} of ${formatAgorot(goal.targetAmount)} — about ${Math.round(shortfallPercent)}% short of the pace needed to hit the target date.${projectionNote}`,
+      description: `Reached ${formatMoney(goal.currentAmount)} of ${formatMoney(goal.targetAmount)} — about ${Math.round(shortfallPercent)}% short of the pace needed to hit the target date.${projectionNote}`,
       relatedEntityId: goal.goalId,
     });
   }

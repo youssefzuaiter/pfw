@@ -1,4 +1,5 @@
-import { agorot, formatAgorot } from "../../lib/money";
+import { agorot } from "../../lib/money";
+import { ILS_REPORTING, describeReportingRate, formatReportingAmount, type ReportingContext } from "../../lib/reporting-currency";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { monthKeyToStartDate } from "../../lib/date-month";
 import type { MonthlyReportData } from "./monthly-report";
@@ -18,8 +19,9 @@ function monthLabel(monthKey: string): string {
   return monthKeyToStartDate(monthKey).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-function shekels(value: bigint, signed = false): string {
-  return formatAgorot(agorot(Number(value)), { showPositiveSign: signed });
+/** An ILS agorot figure in the user's reporting currency (AGENTS.md §3nnn); ILS when none is given. */
+function money(value: bigint, reporting: ReportingContext, signed = false): string {
+  return formatReportingAmount(agorot(Number(value)), reporting, { showPositiveSign: signed });
 }
 
 function dollars(cents: number, signed = false): string {
@@ -34,14 +36,16 @@ function escapeHtml(value: string): string {
 type Line = [label: string | null, value: string];
 
 function sections(data: MonthlyReportData): { title: string; lines: Line[] }[] {
+  const reporting = data.reporting ?? ILS_REPORTING;
+  const amount = (value: bigint, signed = false) => money(value, reporting, signed);
   const net = data.incomeAgorot - data.expenseAgorot;
   const result = [
     {
       title: "Money in and out",
       lines: [
-        ["Income", shekels(data.incomeAgorot)],
-        ["Spending", shekels(data.expenseAgorot)],
-        ["Net", shekels(net, true)],
+        ["Income", amount(data.incomeAgorot)],
+        ["Spending", amount(data.expenseAgorot)],
+        ["Net", amount(net, true)],
       ] as Line[],
     },
     {
@@ -49,15 +53,15 @@ function sections(data: MonthlyReportData): { title: string; lines: Line[] }[] {
       lines:
         data.topCategories.length === 0
           ? ([[null, "No spending recorded this month."]] as Line[])
-          : data.topCategories.map((category): Line => [category.name, shekels(category.spentAgorot)]),
+          : data.topCategories.map((category): Line => [category.name, amount(category.spentAgorot)]),
     },
     {
       title: "Net worth",
       lines: data.netWorth
         ? ([
-            ["Start of month", shekels(data.netWorth.startAgorot)],
-            ["End of month", shekels(data.netWorth.endAgorot)],
-            ["Change", shekels(data.netWorth.endAgorot - data.netWorth.startAgorot, true)],
+            ["Start of month", amount(data.netWorth.startAgorot)],
+            ["End of month", amount(data.netWorth.endAgorot)],
+            ["Change", amount(data.netWorth.endAgorot - data.netWorth.startAgorot, true)],
           ] as Line[])
         : ([[null, "Not enough history yet: net worth is recorded nightly, so the next report will show the change."]] as Line[]),
     },
@@ -84,6 +88,8 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
   const subject = `Your PFW summary for ${label}`;
   const blocks = sections(data);
   const dashboardUrl = `${appUrl.replace(/\/$/, "")}/dashboard`;
+  const rate = describeReportingRate(data.reporting ?? ILS_REPORTING);
+  const rateNote = rate ? `Totals converted at ${rate}. Amounts are recorded in shekels.` : null;
 
   const text = [
     subject,
@@ -93,6 +99,7 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
       ...block.lines.map(([name, value]) => (name === null ? `  ${value}` : `  ${name}: ${value}`)),
       "",
     ]),
+    ...(rateNote ? [rateNote, ""] : []),
     `Open the dashboard: ${dashboardUrl}`,
     "You receive this because the monthly report is turned on in Settings.",
   ].join("\n");
@@ -112,6 +119,7 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
 
   const html = `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px">
 <h1 style="font-size:18px;margin:0 0 4px">${escapeHtml(subject)}</h1>${htmlBlocks}
+${rateNote ? `<p style="margin-top:16px;font-size:12px;color:dimgray">${escapeHtml(rateNote)}</p>` : ""}
 <p style="margin-top:24px;font-size:14px"><a href="${escapeHtml(dashboardUrl)}">Open the dashboard</a></p>
 <p style="font-size:12px;color:dimgray">You receive this because the monthly report is turned on in Settings.</p>
 </div>`;

@@ -1,3 +1,5 @@
+import { ReportingCurrencyProvider } from "../../components/currency/reporting-currency-provider";
+import { ILS_REPORTING } from "../../lib/reporting-currency";
 import { TradingSidebar } from "./_components/trading-sidebar";
 
 /**
@@ -18,17 +20,24 @@ import { TradingSidebar } from "./_components/trading-sidebar";
  * font every monetary table cell in this app already uses) is applied
  * to the whole subtree, not just figures, per the "strict monospace
  * font stack for dense tabular data" ask.
+ *
+ * Pinned to shekels whatever the user's reporting currency (AGENTS.md
+ * §3nnn): the desk is a shekel-denominated simulation and the tax rules
+ * are written in shekels, so converting part of these screens would mix
+ * two currencies on one page.
  */
 export default function TradingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen bg-bg font-tabular text-fg">
-      <TradingSidebar />
-      {/* Not a second `<main>` — the root layout (src/app/layout.tsx)
-          already renders the page's one `<main>` landmark around this
-          whole subtree; a nested `<main>` here produced a real, verified
-          axe `page-no-duplicate-main`/`landmark-unique` violation on
-          every /trading/** route. */}
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    <ReportingCurrencyProvider value={ILS_REPORTING}>
+      <div className="flex min-h-screen bg-bg font-tabular text-fg">
+        <TradingSidebar />
+        {/* Not a second `<main>` — the root layout (src/app/layout.tsx)
+            already renders the page's one `<main>` landmark around this
+            whole subtree; a nested `<main>` here produced a real, verified
+            axe `page-no-duplicate-main`/`landmark-unique` violation on
+            every /trading/** route. */}
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
+    </ReportingCurrencyProvider>
   );
 }

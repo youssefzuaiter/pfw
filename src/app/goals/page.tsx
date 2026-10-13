@@ -1,8 +1,10 @@
 import { Badge, type BadgeVariant } from "../../components/badge/badge";
 import { Tickbar, type TickbarStatus } from "../../components/tickbar/tickbar";
 import { summarizeGoalProgress, type GoalProgressStatus } from "../../lib/goal-progress";
-import { agorot, formatAgorot } from "../../lib/money";
+import { agorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
+import { getReportingFormatter } from "../../server/reporting/reporting-context";
+import { ReportingRateNote } from "../../components/currency/reporting-currency-provider";
 import { listGoals } from "../../server/dal/goals";
 import { getZkVaultStatus } from "../../server/dal/zk-vault";
 import { AddContributionForm } from "./_components/add-contribution-form";
@@ -42,6 +44,7 @@ const STATUS_BADGE: Record<GoalProgressStatus, BadgeVariant> = {
 
 export default async function GoalsPage() {
   const user = await getCurrentUser();
+  const formatMoney = await getReportingFormatter(user.id);
   const [goals, zkVaultStatus] = await Promise.all([listGoals(user.id), getZkVaultStatus(user.id)]);
   const now = new Date();
 
@@ -56,6 +59,7 @@ export default async function GoalsPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-4 md:px-6">
       <h1 className="font-display text-xl font-semibold text-fg">Goals</h1>
+      <ReportingRateNote />
 
       <SecureNotesPanel
         isSetUp={zkVaultStatus.isSetUp}
@@ -94,7 +98,7 @@ export default async function GoalsPage() {
                     </Badge>
                   </p>
                   <p className="font-tabular-figures tracking-tight text-sm text-muted">
-                    {formatAgorot(currentAmount)} of {formatAgorot(targetAmount)}
+                    {formatMoney(currentAmount)} of {formatMoney(targetAmount)}
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
@@ -126,7 +130,7 @@ export default async function GoalsPage() {
                         <li key={contribution.id} className="flex flex-wrap justify-between gap-x-3 text-xs text-muted">
                           <span>{contribution.contributedAt.toISOString().slice(0, 10)}</span>
                           <ContributionNote ciphertext={contribution.note} />
-                          <span className="font-tabular-figures tracking-tight">{formatAgorot(agorot(Number(contribution.amount)))}</span>
+                          <span className="font-tabular-figures tracking-tight">{formatMoney(agorot(Number(contribution.amount)))}</span>
                         </li>
                       ))}
                   </ul>

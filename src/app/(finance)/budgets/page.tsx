@@ -5,8 +5,9 @@ import { HouseholdNav } from "../../../components/household/household-nav";
 import { currentMonthKey } from "../../../lib/date-month";
 import { nativeAmount } from "../../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../../lib/exchange-rate";
-import { formatAgorot } from "../../../lib/money";
 import { getCurrentUser } from "../../../server/auth/current-user";
+import { getReportingContext, getReportingFormatter } from "../../../server/reporting/reporting-context";
+import { ReportingRateNote } from "../../../components/currency/reporting-currency-provider";
 import { getAvailableToBudget, getEnvelopeBalances } from "../../../server/dal/envelopes";
 import { getLatestRateTable } from "../../../server/dal/exchange-rates";
 import {
@@ -42,13 +43,14 @@ export default async function BudgetsPage({
       : undefined;
 
   if (activeMembership) {
-    const [sharedData, members, invites, rateTable] = await Promise.all([
+    const [sharedData, members, invites, rateTable, reporting] = await Promise.all([
       getSharedGroupData(user.id, activeMembership.group.id),
       listGroupMembers(user.id, activeMembership.group.id),
       activeMembership.membership.role === "OWNER"
         ? listGroupInvites(user.id, activeMembership.group.id)
         : Promise.resolve([]),
       getLatestRateTable(),
+      getReportingContext(user.id),
     ]);
 
     // The Currency UI Toggle (Punch List Phase 3, item 2) needs BOTH
@@ -74,12 +76,14 @@ export default async function BudgetsPage({
           <h1 className="font-display text-xl font-semibold text-fg">{activeMembership.group.name}</h1>
           <HouseholdNav basePath="/budgets" groups={groupOptions} activeGroupId={activeMembership.group.id} />
         </div>
+        <ReportingRateNote />
 
         <HouseholdSharedView
           myUserId={user.id}
           envelopeAllocations={sharedData.envelopeAllocations}
           bankAccounts={bankAccountsWithIls}
           categories={sharedData.categories}
+          reportingCurrency={reporting.currency}
         />
 
         <HouseholdAdminPanel
@@ -106,9 +110,10 @@ export default async function BudgetsPage({
   }
 
   const month = currentMonthKey();
-  const [availableAgorot, envelopeBalances] = await Promise.all([
+  const [availableAgorot, envelopeBalances, formatMoney] = await Promise.all([
     getAvailableToBudget(user.id, month),
     getEnvelopeBalances(user.id, month),
+    getReportingFormatter(user.id),
   ]);
 
   const envelopeRows: EnvelopeRowData[] = envelopeBalances
@@ -120,10 +125,10 @@ export default async function BudgetsPage({
       return {
         categoryId: envelope.categoryId,
         categoryName: envelope.categoryName,
-        balanceFormatted: formatAgorot(envelope.balanceAgorot, { showPositiveSign: true }),
+        balanceFormatted: formatMoney(envelope.balanceAgorot, { showPositiveSign: true }),
         balanceIsNegative: envelope.balanceAgorot < 0,
         allocatedThisMonthValue: (envelope.allocatedThisMonthAgorot / 100).toFixed(2),
-        spentThisMonthFormatted: formatAgorot(envelope.spentThisMonthAgorot),
+        spentThisMonthFormatted: formatMoney(envelope.spentThisMonthAgorot),
         utilization,
         sharedGroupId: envelope.sharedGroupId,
       };
@@ -135,17 +140,18 @@ export default async function BudgetsPage({
         <h1 className="font-display text-xl font-semibold text-fg">Budgets</h1>
         <HouseholdNav basePath="/budgets" groups={groupOptions} activeGroupId={null} />
       </div>
+      <ReportingRateNote />
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Available to budget</h2>
         <p
           className={`mt-1 font-tabular-figures text-3xl font-semibold tracking-tight ${availableAgorot < 0 ? "text-negative" : "text-positive"}`}
         >
-          {formatAgorot(availableAgorot)}
+          {formatMoney(availableAgorot)}
         </p>
         <p className="mt-1 text-xs text-muted">
-          Real income received through {month}, minus everything allocated so far — every ₪ should eventually be
-          assigned somewhere.
+          Real income received through {month}, minus everything allocated so far — every shekel should eventually be
+          assigned somewhere. Allocations are entered in shekels.
         </p>
       </section>
 

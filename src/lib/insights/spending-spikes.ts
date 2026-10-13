@@ -1,6 +1,6 @@
 import { agorot, formatAgorot, type Agorot } from "../money";
 import { mean, standardDeviation } from "../stats";
-import { computeRank, type Insight } from "./types";
+import { computeRank, type Insight, type MoneyFormatter } from "./types";
 
 /** Need at least this many prior months to have a meaningful baseline — otherwise "spike vs. what?" is unanswerable. */
 const MIN_HISTORY_MONTHS = 2;
@@ -23,7 +23,10 @@ export type CategorySpendHistory = {
  * variation would explain (mean + 1.5 standard deviations) — a
  * statistical outlier, not a category that's simply always a bit noisy.
  */
-export function generateSpendingSpikeInsights(histories: readonly CategorySpendHistory[]): Insight[] {
+export function generateSpendingSpikeInsights(
+  histories: readonly CategorySpendHistory[],
+  formatMoney: MoneyFormatter = formatAgorot,
+): Insight[] {
   const insights: Insight[] = [];
 
   for (const history of histories) {
@@ -42,7 +45,7 @@ export function generateSpendingSpikeInsights(histories: readonly CategorySpendH
       severity,
       rank: computeRank(severity, percentAboveAverage),
       title: `Unusual spending spike in ${history.categoryName}`,
-      description: `Spent ${formatAgorot(history.currentMonthSpend)} this month, ${Math.round(percentAboveAverage)}% above the recent average of ${formatAgorot(agorot(Math.round(average)))}.`,
+      description: `Spent ${formatMoney(history.currentMonthSpend)} this month, ${Math.round(percentAboveAverage)}% above the recent average of ${formatMoney(agorot(Math.round(average)))}.`,
       relatedEntityId: history.categoryId,
     });
   }

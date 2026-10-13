@@ -501,6 +501,11 @@ model UserSettings {
   /// once and a failure is retried the next night.
   monthlyReportLastSentMonth String?
 
+  /// The currency totals are SHOWN in (AGENTS.md §3nnn). Display only:
+  /// every amount is still stored and summed in ILS agorot (law #3), and
+  /// is converted at the latest synced rate when it becomes text.
+  reportingCurrency Currency @default(ILS)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

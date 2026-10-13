@@ -1,4 +1,5 @@
 import "server-only";
+import type { CurrencyCode } from "../../lib/currency";
 import { withUserScope } from "../db/with-user-scope";
 
 /**
@@ -25,7 +26,21 @@ export type UserSettingsData = {
   preferredCurrencyDisplay: "NATIVE" | "ILS";
   monthlyReportEnabled: boolean;
   monthlyReportLastSentMonth: string | null;
+  /** Display only — see the schema column (AGENTS.md §3nnn). */
+  reportingCurrency: CurrencyCode;
 };
+
+/**
+ * Just the reporting currency, as a plain read: the root layout asks on
+ * every page, and `getOrCreateUserSettings` would make that a write. No
+ * row yet means the default, ILS.
+ */
+export async function getReportingCurrency(userId: string): Promise<CurrencyCode> {
+  const row = await withUserScope(userId, (tx) =>
+    tx.userSettings.findUnique({ where: { userId }, select: { reportingCurrency: true } }),
+  );
+  return row?.reportingCurrency ?? "ILS";
+}
 
 /**
  * Upsert-on-read: the schema's own column defaults ARE the "no row yet"

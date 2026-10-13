@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
-import { formatAgorot, type Agorot } from "../../lib/money";
+import type { Agorot } from "../../lib/money";
+import { getReportingFormatter } from "../reporting/reporting-context";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import {
   calculateCashDrag,
@@ -62,6 +63,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
   userId: string,
   asOf: Date = new Date(),
 ): Promise<SubscriptionRadarData> {
+  const formatMoney = await getReportingFormatter(userId);
   const since = new Date(asOf.getTime() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
   const [occurrenceRows, statuses, rateTable] = await Promise.all([
@@ -108,7 +110,9 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
       return 0;
     }),
     possibleFreeTrials: radarResult.possibleFreeTrials.map(buildFreeTrialRow),
-    cashDrag: { monthly: formatAgorot(cashDrag.monthlyAgorot), annual: formatAgorot(cashDrag.annualAgorot) },
+    // The totals are in the reporting currency (AGENTS.md §3nnn); each
+    // subscription's own price above stays in the currency it is charged in.
+    cashDrag: { monthly: formatMoney(cashDrag.monthlyAgorot), annual: formatMoney(cashDrag.annualAgorot) },
     cashDragMonthlyAgorot: cashDrag.monthlyAgorot,
   };
 });

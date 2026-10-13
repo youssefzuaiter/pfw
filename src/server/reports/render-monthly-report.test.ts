@@ -62,4 +62,22 @@ describe("renderMonthlyReport", () => {
     expect(text).toContain("Net: -₪12,500.00");
     expect(text).toContain("Change: -₪1,000.00");
   });
+
+  it("shows every figure in the reporting currency and says which rate it used", () => {
+    const { text, html } = renderMonthlyReport(
+      { ...BASE, reporting: { currency: "USD", ilsPerUnit: 3.7, rateDay: "2026-09-30" } },
+      "https://pfw.example",
+    );
+    // ₪16,727.83 / 3.7 = $4,521.035…, rounded up; ₪12,500.00 / 3.7 = $3,378.378…
+    expect(text).toContain("Income: $4,521.04");
+    expect(text).toContain("Spending: $3,378.38");
+    expect(text).toContain("Groceries: $1,621.62");
+    expect(text).not.toContain("₪16,727.83");
+    expect(text).toContain("Totals converted at ₪3.7000 per $1, rate of 2026-09-30. Amounts are recorded in shekels.");
+    expect(html).toContain("Totals converted at ₪3.7000 per $1, rate of 2026-09-30.");
+  });
+
+  it("adds no rate note in shekels", () => {
+    expect(renderMonthlyReport(BASE, "https://pfw.example").text).not.toContain("Totals converted");
+  });
 });

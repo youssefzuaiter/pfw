@@ -1,4 +1,5 @@
-import { formatAgorot, agorot } from "../../../../lib/money";
+import { agorot } from "../../../../lib/money";
+import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
 import { nativeAmount, type CurrencyCode } from "../../../../lib/currency";
 import { Badge } from "../../../../components/badge/badge";
 import { CurrencyAmount } from "../../../../components/currency/currency-amount";
@@ -43,11 +44,14 @@ export function HouseholdSharedView({
   envelopeAllocations,
   bankAccounts,
   categories,
+  reportingCurrency,
 }: {
   myUserId: string;
   envelopeAllocations: SharedEnvelopeAllocationRow[];
   bankAccounts: SharedBankAccountRow[];
   categories: SharedCategoryRow[];
+  /** An account in this currency shows one figure, so only the others have anything to toggle (AGENTS.md §3nnn). */
+  reportingCurrency: CurrencyCode;
 }) {
   function ownerLabel(user: { id: string; displayName: string }): string {
     return user.id === myUserId ? "You" : user.displayName;
@@ -68,7 +72,7 @@ export function HouseholdSharedView({
                   <p className="text-xs text-muted">Shared by {ownerLabel(allocation.user)}</p>
                 </div>
                 <p className="font-tabular-figures text-sm tracking-tight text-fg">
-                  {formatAgorot(agorot(Number(allocation.amountAgorot)))} allocated ({allocation.month})
+                  <ReportingAmount value={Number(allocation.amountAgorot)} /> allocated ({allocation.month})
                 </p>
               </li>
             ))}
@@ -79,7 +83,7 @@ export function HouseholdSharedView({
       <section className="rounded-lg border border-border bg-surface p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Shared accounts</h2>
-          {bankAccounts.some((a) => a.currency !== "ILS") && <CurrencyToggle />}
+          {bankAccounts.some((a) => a.currency !== reportingCurrency) && <CurrencyToggle />}
         </div>
         {bankAccounts.length === 0 ? (
           <p className="text-sm text-muted">No accounts shared into this household yet.</p>

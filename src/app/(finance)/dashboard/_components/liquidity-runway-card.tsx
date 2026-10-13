@@ -1,6 +1,7 @@
 import { Badge, type BadgeVariant } from "../../../../components/badge/badge";
 import { Tickbar, type TickbarStatus } from "../../../../components/tickbar/tickbar";
-import { formatAgorot, type Agorot } from "../../../../lib/money";
+import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
+import type { Agorot } from "../../../../lib/money";
 
 /** Emergency-fund convention this card's health tiers are built around: under a month is critical, under a quarter is a warning, 3+ months (≈90 days) reads as healthy — the same 3-6-month range most personal-finance guidance treats as an adequate cash buffer. */
 const CRITICAL_THRESHOLD_DAYS = 30;
@@ -77,19 +78,19 @@ export function LiquidityRunwayCard({
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
         <div>
           <dt className="text-xs text-muted">Available (liquid + semi-liquid)</dt>
-          <dd className="font-tabular-figures font-medium tracking-tight text-fg">{formatAgorot(availableAgorot)}</dd>
+          <dd className="font-tabular-figures font-medium tracking-tight text-fg"><ReportingAmount value={availableAgorot} /></dd>
         </div>
         <div>
           <dt className="text-xs text-muted">Monthly burn rate</dt>
-          <dd className="font-tabular-figures font-medium tracking-tight text-fg">{formatAgorot(monthlyBurnRateAgorot)}</dd>
+          <dd className="font-tabular-figures font-medium tracking-tight text-fg"><ReportingAmount value={monthlyBurnRateAgorot} /></dd>
         </div>
         <div>
           <dt className="text-xs text-muted">— of which liquid (cash)</dt>
-          <dd className="font-tabular-figures tracking-tight text-muted">{formatAgorot(liquidAgorot)}</dd>
+          <dd className="font-tabular-figures tracking-tight text-muted"><ReportingAmount value={liquidAgorot} /></dd>
         </div>
         <div>
           <dt className="text-xs text-muted">— of which semi-liquid (equities)</dt>
-          <dd className="font-tabular-figures tracking-tight text-muted">{formatAgorot(semiLiquidAgorot)}</dd>
+          <dd className="font-tabular-figures tracking-tight text-muted"><ReportingAmount value={semiLiquidAgorot} /></dd>
         </div>
       </dl>
 
