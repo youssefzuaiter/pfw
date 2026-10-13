@@ -123,8 +123,9 @@ export default async function OpsStatusPage() {
         <p className="mt-3 text-xs text-muted">
           The nightly cron runs at 00:00 UTC; these timestamps are its outcome, not its schedule. Exchange rates are
           listed per currency on purpose — one currency the provider skipped would otherwise hide behind a fresh one.
-          Equity quotes only sync for tickers held outside the mock universe, so &ldquo;none held&rdquo; is a normal
-          state, not a failure.
+          Equity quotes cover tickers held outside the mock universe plus VT, the core chart&apos;s benchmark, which is
+          quoted every night — so &ldquo;never&rdquo; there means the sync has not worked yet. The quotes come from the
+          paper trader, so an asleep trader shows up here.
         </p>
       </section>
 
@@ -166,11 +167,9 @@ const TIER_VARIANT = {
   warning: "warning",
   critical: "critical",
   never: "critical",
-  not_applicable: "neutral",
 } as const;
 
 function describeAge(status: SyncStatus): string {
-  if (status.tier === "not_applicable") return "none held";
   if (status.ageHours === null) return "never synced";
   if (status.ageHours < 1) return "under an hour ago";
   if (status.ageHours < 48) return `${Math.round(status.ageHours)}h ago`;
@@ -184,7 +183,7 @@ function SyncRow({ status, prefix }: { status: SyncStatus; prefix?: string }) {
       <span className="flex items-center gap-2">
         <span className="font-tabular-figures text-xs text-muted">{describeAge(status)}</span>
         <Badge variant={TIER_VARIANT[status.tier]} pulse={status.tier === "critical"}>
-          {status.tier === "not_applicable" ? "n/a" : status.tier === "never" ? "never" : status.tier}
+          {status.tier}
         </Badge>
       </span>
     </div>

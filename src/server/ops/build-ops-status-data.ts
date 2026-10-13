@@ -25,7 +25,7 @@ import { getDeploymentInfo, getOperatorAlertEmail } from "../env";
  */
 
 /** Hours since a sync's last successful contact with its provider, bucketed. */
-export type FreshnessTier = "fresh" | "warning" | "critical" | "never" | "not_applicable";
+export type FreshnessTier = "fresh" | "warning" | "critical" | "never";
 
 /** Under 36h means the nightly 00:00 UTC cron ran at least once since the last one was due (24h + a 12h grace for a late or slow run). */
 const FRESH_MAX_HOURS = 36;
@@ -98,11 +98,11 @@ export const buildOpsStatusData = cache(async (): Promise<OpsStatusData> => {
       toSyncStatus(currency, rateFetchedAts[index], now),
     ),
     cryptoPrices: toSyncStatus("Crypto prices", cryptoFetchedAt, now),
-    // No quote ever synced is the normal state for an account with no
-    // trader-booked tickers outside the mock universe — reporting that as
-    // "never synced" alongside two genuinely-stale rows would train the
-    // reader to ignore the whole panel.
-    equityQuotes: equity.tier === "never" ? { ...equity, tier: "not_applicable" } : equity,
+    // The sync quotes the core chart's benchmark every night whether or not
+    // anyone holds a ticker (AGENTS.md §3mmm), so "never" here means the sync
+    // has never worked — no longer the "nothing to sync" it once had to be
+    // told apart from.
+    equityQuotes: equity,
     operatorAlertConfigured: getOperatorAlertEmail() !== null,
     generatedAt: now,
   };

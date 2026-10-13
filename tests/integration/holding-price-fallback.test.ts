@@ -209,6 +209,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("hol
       // Every seeded symbol must have been filtered out before the request.
       expect(body.symbols).not.toContain("MSFT");
       expect(body.symbols).toEqual(expect.arrayContaining(["TSLX", "NFLX"]));
+      // The core chart's benchmark is quoted every night, held or not (AGENTS.md §3mmm).
+      expect(body.symbols).toContain("VT");
       return new Response(
         JSON.stringify({ quotes: { NFLX: { price: "701.10", timestamp: asOf.toISOString() } }, missing: ["TSLX"], feed: "iex" }),
         { status: 200, headers: { "Content-Type": "application/json" } },
