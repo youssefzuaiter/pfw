@@ -18,6 +18,7 @@ vi.mock("../../../server/env", () => ({
 vi.mock("../../../server/currency/rate-sync", () => ({ syncExchangeRates: vi.fn() }));
 vi.mock("../../../server/crypto/price-sync", () => ({ syncCryptoPrices: vi.fn() }));
 vi.mock("../../../server/market-data/quote-sync", () => ({ syncEquityQuotes: vi.fn() }));
+vi.mock("../../../server/net-worth/snapshot-job", () => ({ recordDailyNetWorthSnapshots: vi.fn() }));
 vi.mock("../../../server/dead-mans-switch/inactivity-check", () => ({ runInactivityCheck: vi.fn() }));
 vi.mock("../../../server/dal/rate-limit-buckets", () => ({ deleteExpiredRateLimitBuckets: vi.fn() }));
 vi.mock("../../../server/crypto/key-rotation", () => ({ runEncryptionKeyRotationSweep: vi.fn() }));
@@ -28,6 +29,7 @@ import { GET } from "./route";
 import { syncExchangeRates } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
+import { recordDailyNetWorthSnapshots } from "../../../server/net-worth/snapshot-job";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
@@ -48,6 +50,7 @@ function allHealthy() {
   vi.mocked(syncExchangeRates).mockResolvedValue({ ok: true, synced: 3 } as never);
   vi.mocked(syncCryptoPrices).mockResolvedValue({ ok: true, synced: 2 } as never);
   vi.mocked(syncEquityQuotes).mockResolvedValue({ ok: true, synced: ["TSLA"], skipped: [] } as never);
+  vi.mocked(recordDailyNetWorthSnapshots).mockResolvedValue({ ok: true, recorded: 2, failed: 0 });
   vi.mocked(runInactivityCheck).mockResolvedValue({ movedToGracePeriod: [], triggered: [] } as never);
   vi.mocked(deleteExpiredRateLimitBuckets).mockResolvedValue(0 as never);
   vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({ ok: true, inProgress: false } as never);
@@ -69,7 +72,7 @@ describe("GET /api/cron operator alert", () => {
     allHealthy();
     const res = await GET(request());
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ fxRateSync: ok, equityQuoteSync: ok, rateLimitCleanup: ok, operatorAlert: "not_needed" });
+    expect(await res.json()).toMatchObject({ fxRateSync: ok, equityQuoteSync: ok, netWorthSnapshots: ok, rateLimitCleanup: ok, operatorAlert: "not_needed" });
     expect(sendOperatorAlert).not.toHaveBeenCalled();
   });
 
@@ -90,6 +93,17 @@ describe("GET /api/cron operator alert", () => {
     expect(alert.lines).toEqual([
       "cryptoPriceSync: [stale data] CoinGecko unreachable and stored rate is 3 days old",
       "equityQuoteSync: paper trader HTTP 404",
+    ]);
+  });
+
+  it("alerts when some users' net-worth snapshots failed, even though the rest were recorded", async () => {
+    allHealthy();
+    vi.mocked(recordDailyNetWorthSnapshots).mockResolvedValue({ ok: true, recorded: 1, failed: 1 });
+
+    const body = await (await GET(request())).json();
+    expect(body.netWorthSnapshots).toEqual({ ok: false, error: "1 user(s) could not be snapshotted (1 recorded)", staleData: false });
+    expect(vi.mocked(sendOperatorAlert).mock.calls[0][0].lines).toEqual([
+      "netWorthSnapshots: 1 user(s) could not be snapshotted (1 recorded)",
     ]);
   });
 

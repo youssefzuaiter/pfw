@@ -88,6 +88,9 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // genuine no-op (zero database access) whenever no rotation is in
       // progress (ENCRYPTION_KEY_NEXT unset).
       path.resolve(SRC_ROOT, "server", "crypto", "key-rotation.ts"),
+      // Nightly net-worth snapshot: lists every user's id (no session, no
+      // single userId), then records each figure through the scoped DAL.
+      path.resolve(SRC_ROOT, "server", "net-worth", "snapshot-job.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));
