@@ -27,6 +27,7 @@
     "sync:crypto-prices": "tsx --conditions=react-server scripts/sync-crypto-prices.ts",
     "sync:quotes": "tsx --conditions=react-server scripts/sync-equity-quotes.ts",
     "rotate:encryption-key": "tsx --conditions=react-server scripts/rotate-encryption-key.ts",
+    "account:reapply-deletions": "tsx --conditions=react-server scripts/reapply-account-deletions.ts",
     "backfill:embeddings": "tsx --conditions=react-server scripts/backfill-embeddings.ts",
     "reset:paper-trades": "tsx --conditions=react-server scripts/reset-paper-trades.ts",
     "audit:paper-trades": "tsx --conditions=react-server scripts/reconcile-ledger.ts"
