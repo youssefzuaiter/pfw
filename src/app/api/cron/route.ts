@@ -9,6 +9,7 @@ import { sendMonthlyReports } from "../../../server/reports/monthly-report-job";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
+import { encryptLegacyPlaintextBankTokens } from "../../../server/crypto/legacy-plaintext-sweep";
 import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
@@ -214,6 +215,19 @@ export async function GET(request: NextRequest) {
     });
     const encryptionKeyRotation = { ...rotationJob, ...rotation.detail };
 
+    // Encrypts any bank-connection token still stored as plaintext from
+    // before the extension covered that model (AGENTS.md §3rrr). One cheap
+    // SELECT on every night after the first that cleared them.
+    const legacyPlaintextEncryption = await runJob("legacy-plaintext-encryption", async () => {
+      const result = await encryptLegacyPlaintextBankTokens();
+      if (!result.ok) return result;
+      if (result.encrypted > 0 || result.failed > 0) {
+        console.log(`cron: legacy-plaintext-encryption ok — encrypted=${result.encrypted} failed=${result.failed} remaining=${result.remaining}`);
+      }
+      if (result.failed > 0) return { ok: false, error: `${result.failed} bank token(s) could not be encrypted (${result.remaining} still plaintext)` };
+      return { ok: true };
+    });
+
     const results = {
       fxRateSync,
       cryptoPriceSync,
@@ -224,6 +238,7 @@ export async function GET(request: NextRequest) {
       phoneAlerts,
       rateLimitCleanup,
       encryptionKeyRotation,
+      legacyPlaintextEncryption,
     };
 
     // The one place a nightly failure reaches a human (AGENTS.md §3yy).

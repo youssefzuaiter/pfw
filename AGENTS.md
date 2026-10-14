@@ -5594,6 +5594,8 @@ Arduino/migration-gate request, §3bb's fabricated-scope search request,
   mock OAuth-style token this app's own simulated institution "issues" is
   exactly as sensitive as a real one would be, so it gets the identical
   AES-256-GCM treatment as `BankAccount.last4`/`NotableTransaction.description`).
+  **That was not true when this shipped**: the model was never registered
+  in `withEncryptedFields`, so tokens were stored as plaintext until §3rrr.
 - **`src/lib/banking/psd2-client.ts`** (new, pure/mocked, no DB access —
   `src/lib/` convention per §3b): 5 fictional EU institutions
   (`MOCK_INSTITUTIONS`), `connectToInstitution`/`fetchTransactions` with
@@ -8956,6 +8958,58 @@ the same channel. Turned on per user in Settings → Notifications.
   shared, so a send can fail with 429 and is retried the next night; no
   self-hosted ntfy server; the threshold is entered in shekels like every
   other form.
+
+## 3rrr. Bank connection tokens were never encrypted (ad hoc)
+
+Found while building §3qqq: `BankConnection.accessToken` was listed in
+`ENCRYPTED_FIELDS` and described as AES-256-GCM at rest (§3oo), but
+`withEncryptedFields` only registers a query handler per MODEL, and
+`bankConnection` had none. The list entry did nothing, so every token ever
+written was stored as written. The key-rotation sweep hid it too: it counted
+those rows as re-keyed every night while rewriting them as plaintext, so
+`remaining` could never reach 0 during a rotation.
+
+Only the mock PSD2 simulation (§3oo) issues these tokens, so nothing real was
+exposed, but the model exists to hold a real bearer credential the day a real
+bank is connected, and the docs said it was already protected.
+
+- **The fix is three parts, because the first alone breaks existing rows.**
+  Registering the handler encrypts every write from now on. But
+  `listBankConnections` and the sync read whole rows, and `decryptField`
+  throws on any value without a `v1:`/`v2:` prefix, so a plaintext token
+  already in the database would have made the connections page and every sync
+  fail. So reads tolerate a missing prefix for this one field
+  (`LEGACY_PLAINTEXT_FIELDS` in `encrypted-fields.ts`), and a sweep encrypts
+  what is stored.
+- **The tolerance is per field, not per extension.** For every other column a
+  value with no prefix is corruption, and failing loudly is the point; making
+  `decryptField` accept plaintext anywhere would have removed that.
+- **`encryptLegacyPlaintextBankTokens`** (`src/server/crypto/legacy-plaintext-sweep.ts`,
+  an allowlisted admin-client file) finds rows by what they lack, rewrites each
+  through the extension (the tolerant read returns the plaintext, the write
+  encrypts it), never throws, and is a one-SELECT no-op once nothing is left.
+  Wired into `GET /api/cron` as `legacyPlaintextEncryption`, after the rotation
+  sweep; a token it cannot encrypt reaches the operator alert. Unlike the
+  rotation sweep it IS run for real in the integration suite: it only touches
+  a value with no prefix, which nothing but a deliberately raw insert produces,
+  so it cannot reach another test file's rows.
+- **Nothing to run by hand.** The first nightly cron after deploy encrypts
+  whatever production holds; the cron's JSON shows `legacyPlaintextEncryption`.
+  The local database had no connection rows. Once the response has shown
+  `ok: true` for a while the tolerance can be removed.
+- **Verified**: 3 integration tests against real Postgres reading the stored
+  value with raw SQL (a new connection is ciphertext and reads back as the
+  token; a plaintext row from before the fix still reads; the sweep encrypts
+  every plaintext token, leaves encrypted ones byte-for-byte untouched, and a
+  second run finds nothing), the existing PSD2 sync suite, and a cron test.
+  Mutation-checked: un-registering the model (the original bug), dropping the
+  tolerance, and a sweep that rewrites every row were each caught.
+- **The guard that would have caught it on day one**:
+  `tests/guards/encrypted-fields-registered.test.ts` reads
+  `encrypted-fields.ts` and fails when a model in `ENCRYPTED_FIELDS` has no
+  handler registered in `withEncryptedFields`, or the reverse. The two are
+  separate lists that must agree and nothing enforced it. Checked against the
+  original bug: it fails with the `bankConnection` registration removed.
 
 ## 4. Design system (Phase 0)
 
