@@ -65,7 +65,12 @@ export function evaluatePhoneAlerts(state: PhoneAlertState, facts: PhoneAlertFac
   }
 
   for (const expense of facts.largeExpenses) {
-    lines.push({ kind: "large_expense", text: `Large expense: ${expense.label} ${expense.amount} on ${expense.day}` });
+    // Amount BEFORE the merchant, never after it. With a right-to-left name
+    // (Hebrew, Arabic) in front of "-₪1,250.00", the phone reorders the minus
+    // sign to the far side of the number and shows "₪1,250.00-". Seen on a
+    // real phone; with the amount first, only the name is right-to-left and
+    // the " at … on" around it keeps it from touching the figure.
+    lines.push({ kind: "large_expense", text: `Large expense: ${expense.amount} at ${expense.label} on ${expense.day}` });
   }
   const unlisted = facts.largeExpenseCount - facts.largeExpenses.length;
   if (unlisted > 0) {

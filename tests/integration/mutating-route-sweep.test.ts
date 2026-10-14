@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getCurrentUser } from "../../src/server/auth/current-user";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { ORIGIN_CHECK_EXEMPT, SWEPT_ROUTES } from "../routes/mutating-route-registry";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 /**
  * Safety net for the mutating routes (AGENTS.md §2, Section 2.4). Every swept
@@ -116,19 +117,10 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("mut
 
   afterAll(async () => {
     // AuditLog and LedgerCommit are append-only; a cascading delete would be
-    // refused by their triggers. Disable both for this one delete, in one
-    // transaction so a concurrent cleanup cannot interleave (see
-    // tests/integration/ledger-commit-test-helpers.ts for why).
-    await admin.$transaction(
-      async (tx) => {
-        await tx.$executeRaw`ALTER TABLE "AuditLog" DISABLE TRIGGER audit_log_append_only`;
-        await tx.$executeRaw`ALTER TABLE "LedgerCommit" DISABLE TRIGGER ledger_commit_append_only`;
-        await tx.user.deleteMany({ where: { id: user.id } });
-        await tx.$executeRaw`ALTER TABLE "AuditLog" ENABLE TRIGGER audit_log_append_only`;
-        await tx.$executeRaw`ALTER TABLE "LedgerCommit" ENABLE TRIGGER ledger_commit_append_only`;
-      },
-      { timeout: 30_000, maxWait: 30_000 },
-    );
+    // refused by their triggers. The shared helper disables both for this one
+    // delete, in a fixed lock order (see its comment for the deadlock that
+    // two inline copies of this once caused).
+    await deleteTestUsersWithLedgerCommits(admin, [user.id]);
     await admin.$disconnect();
   });
 
