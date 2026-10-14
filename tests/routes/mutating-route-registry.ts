@@ -73,6 +73,7 @@ export const SWEPT_ROUTES = [
 ] as const;
 
 export const EXCLUDED_ROUTES: Record<string, string> = {
+  "POST /api/account/delete": "Permanently deletes the signed-in account, which the sweep shares with every other route. Covered by tests/integration/account-deletion.test.ts and its own route test.",
   "POST /api/advisor": "Calls the Anthropic API: costs money and needs the network. Its tool-use loop is covered by tests/integration/copilot-tools.test.ts and the advisor's own unit tests.",
   "POST /api/chat": "Calls the Anthropic API (via @ai-sdk/anthropic): costs money and needs the network.",
   "POST /api/transactions/category-suggestions": "Calls the Anthropic API: costs money and needs the network. Covered by its own route test and src/server/categorization/claude-category-suggester.test.ts.",

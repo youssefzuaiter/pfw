@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getOperatorAlertEmail } from "../../server/env";
+import { getVaultStatus } from "../../server/dal/dead-mans-switch";
 import { getMfaStatus } from "../../server/dal/mfa";
 import { getPhoneAlertSettings } from "../../server/dal/phone-alerts";
+import { listMyGroups } from "../../server/dal/shared-groups";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
+import { DeleteAccountPanel } from "./_components/delete-account-panel";
 import { EmailVerificationPanel } from "./_components/email-verification-panel";
 import { MfaPanel } from "./_components/mfa-panel";
 import { PasskeyPanel } from "./_components/passkey-panel";
@@ -25,11 +28,15 @@ export const instant = false;
  */
 export default async function SettingsPage() {
   const user = await getCurrentUser();
-  const [mfaStatus, settings, phoneAlerts] = await Promise.all([
+  const [mfaStatus, settings, phoneAlerts, groups, vault] = await Promise.all([
     getMfaStatus(user.id),
     getOrCreateUserSettings(user.id),
     getPhoneAlertSettings(user.id),
+    listMyGroups(user.id),
+    getVaultStatus(user.id),
   ]);
+  // What deleting the account takes with it beyond the user's own rows (§3ttt).
+  const ownedHouseholds = groups.filter(({ group }) => group.createdById === user.id).map(({ group }) => group.name);
 
   // Only whoever runs this deployment gets the Operations link — the same
   // OPERATOR_ALERT_EMAIL gate the page itself enforces (it 404s for
@@ -95,6 +102,17 @@ export default async function SettingsPage() {
           >
             Open Banking (EU) →
           </Link>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Danger zone</h2>
+        <div className="mt-2">
+          <DeleteAccountPanel
+            totpEnabled={mfaStatus.enabled}
+            ownedHouseholds={ownedHouseholds}
+            hasEmergencyVault={vault.status !== null}
+          />
         </div>
       </div>
 

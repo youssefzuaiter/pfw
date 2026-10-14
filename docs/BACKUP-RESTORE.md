@@ -130,6 +130,11 @@ it is `CREATE DATABASE`. Verify there, then repoint `APP_DATABASE_URL`.
    psql 'postgresql://<owner>:<pw>@<direct host>/<db>?sslmode=require' \
      -f prisma/migrations/20260918140000_grants_follow_the_migrating_role/migration.sql
    ```
+   That migration grants the runtime role every table; take back the one it
+   must not read (the account-deletion migration's own revoke):
+   ```sql
+   REVOKE ALL ON "AccountDeletionRecord" FROM pfw_runtime;
+   ```
 7. **Verify**, as the owner:
    ```sql
    SELECT count(*) FROM "User";                         -- matches the source
@@ -139,11 +144,25 @@ it is `CREATE DATABASE`. Verify there, then repoint `APP_DATABASE_URL`.
    then `npx prisma migrate status` against the target must say
    `Database schema is up to date!` — if it lists pending migrations, the
    dump predates them: run *Deploy Migrations* against the target.
-8. **Point the app at it**: set `APP_DATABASE_URL` (Vercel → Project →
+8. **Delete again the accounts deleted since this backup** (AGENTS.md
+   §3ttt). A restore brings back every account deleted after the night it
+   was taken. Their ids are in `AccountDeletionRecord`, but the restored
+   copy of that table stops at the same night, so take the list from a
+   newer copy: the database being replaced, if it is still reachable, or
+   the newest backup. As that database's owner:
+   ```bash
+   psql '<newer db>' -At -c 'SELECT coalesce(json_agg("deletedUserId"), $$[]$$) FROM "AccountDeletionRecord"' > deleted-accounts.json
+   DATABASE_URL='<restored db, owner role>' npm run account:reapply-deletions -- deleted-accounts.json
+   ```
+   Do this before step 9, so no restored account is ever reachable. An
+   account deleted after the newest copy you still have cannot be
+   recovered from anywhere, and so cannot be re-deleted either: it is
+   gone already.
+9. **Point the app at it**: set `APP_DATABASE_URL` (Vercel → Project →
    Environment Variables) to the `pfw_runtime` string from step 4, keep
    `ENCRYPTION_KEY` unchanged, redeploy, and run
    `scripts/production-smoke.sh <deployment-url>`.
-9. **Update the backup credential** so tonight's run targets the new
+10. **Update the backup credential** so tonight's run targets the new
    database: `BACKUP_DATABASE_URL` in the `backup` environment.
 
 ### Rehearsed

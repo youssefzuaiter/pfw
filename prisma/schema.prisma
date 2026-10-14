@@ -1802,6 +1802,17 @@ model GroupInvite {
   @@index([invitedEmail])
 }
 
+/// The ids of deleted accounts (AGENTS.md §3ttt): a random cuid and a date,
+/// nothing else. Kept so that if an older backup is ever restored, the
+/// accounts deleted since can be deleted again
+/// (scripts/reapply-account-deletions.ts). Deliberately not a relation: the
+/// User row it names no longer exists. The runtime role cannot read it.
+model AccountDeletionRecord {
+  id            String   @id @default(cuid())
+  deletedUserId String   @unique
+  deletedAt     DateTime @default(now())
+}
+
 /// Append-only. Nothing in the application ever calls `.update()` or
 /// `.delete()` on this model — enforced additionally at the DB level by a
 /// trigger (prisma/migrations/*_rls_and_runtime_role) that rejects UPDATE
