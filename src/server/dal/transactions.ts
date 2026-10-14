@@ -509,6 +509,22 @@ export async function getSpendByCategoryInRange(userId: string, from: Date, to: 
   });
 }
 
+/**
+ * Every real movement of money in [from, to) (live, not a transfer), one
+ * row each with what a date-aware conversion needs: its ILS amount, its own
+ * currency and native amount, its moment and category (AGENTS.md §3vvv).
+ * The shekel aggregates above stay as they are for budget math; this feeds
+ * the reporting-currency figures, which must sum per transaction.
+ */
+export async function listRealMoneyFlowsInRange(userId: string, from: Date, to: Date) {
+  return withUserScope(userId, (tx) =>
+    tx.notableTransaction.findMany({
+      where: { userId, occurredAt: { gte: from, lt: to }, ...REAL_MONEY },
+      select: { amount: true, nativeAmount: true, currency: true, occurredAt: true, categoryId: true },
+    }),
+  );
+}
+
 export type MonthlyIncomeExpense = {
   monthKey: string;
   incomeAgorot: bigint;

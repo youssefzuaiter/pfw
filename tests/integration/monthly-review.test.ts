@@ -65,7 +65,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("mon
     expect(review.report.topCategories.map((c) => c.name)).toEqual([
       "Groceries", "Dining", "Transport", "Utilities", "Health", "Gifts",
     ]);
-    expect(review.previous).toEqual({ incomeAgorot: 600_000n, expenseAgorot: 200_000n });
+    expect(review.previous).toEqual({ incomeAgorot: 600_000n, expenseAgorot: 200_000n, incomeShown: 600_000, expenseShown: 200_000 });
   });
 
   it("lists the largest real expenses, biggest first, capped", async () => {
@@ -85,7 +85,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("mon
     expect(stranger.report.incomeAgorot).toBe(0n);
     expect(stranger.report.topCategories).toEqual([]);
     expect(stranger.largestExpenses).toEqual([]);
-    expect(stranger.previous).toEqual({ incomeAgorot: 0n, expenseAgorot: 0n });
+    expect(stranger.previous).toEqual({ incomeAgorot: 0n, expenseAgorot: 0n, incomeShown: 0, expenseShown: 0 });
 
     const empty = await buildMonthlyReview(userA.id, "2026-07");
     expect(empty.largestExpenses).toEqual([]);

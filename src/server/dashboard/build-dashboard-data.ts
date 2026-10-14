@@ -10,13 +10,20 @@ import { getEnvelopeBalances } from "../dal/envelopes";
 import { listCategories } from "../dal/categories";
 import { listGoals } from "../dal/goals";
 import { getLatestRateTable } from "../dal/exchange-rates";
-import { getReportingFormatter } from "../reporting/reporting-context";
+import { getReportingContext, getReportingFormatter } from "../reporting/reporting-context";
+import {
+  formatReportingMinorUnits,
+  incomeExpenseByMonthInReporting,
+  spendByCategoryInReporting,
+  type CategorizedFlow,
+} from "../../lib/reporting-currency";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
 import { listPortfolioHoldings, resolveHoldingPrices } from "../dal/portfolio";
 import {
   countNeedsReview,
   getMonthlyIncomeExpenseHistory,
   getSpendByCategoryInRange,
+  listRealMoneyFlowsInRange,
   getTransactionOccurrencesSince,
 } from "../dal/transactions";
 
@@ -71,6 +78,8 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     occurrences,
     needsReviewCount,
     rateTable,
+    flows,
+    reporting,
   ] = await Promise.all([
     computeLiveNetWorth(userId, now),
     getNetWorthHistory(userId, CASH_FLOW_HISTORY_DAYS),
@@ -84,7 +93,20 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     getTransactionOccurrencesSince(userId, occurrencesSince),
     countNeedsReview(userId),
     getLatestRateTable(now),
+    // Every transaction behind the figures shown in the reporting currency
+    // (AGENTS.md §3vvv): each is converted on its own day, then added.
+    listRealMoneyFlowsInRange(
+      userId,
+      new Date(Math.min(incomeExpenseSince.getTime(), spendHistoryWindows.at(-1)!.from.getTime())),
+      nextMonthStart,
+    ),
+    getReportingContext(userId),
   ]);
+  const categorizedFlows: CategorizedFlow[] = flows;
+  const flowsIn = (from: Date, to: Date) => categorizedFlows.filter((f) => f.occurredAt >= from && f.occurredAt < to);
+  const currentMonthSpendReporting = spendByCategoryInReporting(flowsIn(thisMonthStart, nextMonthStart), reporting);
+  const priorMonthsSpendReporting = spendHistoryWindows.map((w) => spendByCategoryInReporting(flowsIn(w.from, w.to), reporting));
+  const incomeExpenseReporting = incomeExpenseByMonthInReporting(flowsIn(incomeExpenseSince, nextMonthStart), reporting);
 
   // --- Envelope status (rolling balance per category) --------------------
   const spendThisMonthByCategory = new Map(currentMonthSpend.map((s) => [s.categoryId, s.totalAgorot]));
@@ -112,6 +134,10 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
       categoryName: c.name,
       currentMonthSpend: agorot(Number(spendThisMonthByCategory.get(c.id) ?? 0n)),
       priorMonthsSpend: (spendHistoryByCategory.get(c.id) ?? []).map((v) => agorot(v)),
+      reporting: {
+        currentMonthSpend: currentMonthSpendReporting.get(c.id) ?? 0,
+        priorMonthsSpend: priorMonthsSpendReporting.map((month) => month.get(c.id) ?? 0),
+      },
     }));
 
   // --- Category donut data (this month, expense categories only) -------
@@ -121,6 +147,8 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
       categoryId: s.categoryId,
       categoryName: categoryById.get(s.categoryId)?.name ?? "Unknown",
       amount: agorot(Number(s.totalAgorot)),
+      /** The same, in the reporting currency's minor units, per transaction on its own day. */
+      amountReporting: currentMonthSpendReporting.get(s.categoryId) ?? 0,
     }))
     .filter((s) => s.amount > 0)
     .sort((a, b) => b.amount - a.amount);
@@ -191,6 +219,7 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     merchantNameByKey,
     needsReviewCount,
     formatMoney: await getReportingFormatter(userId),
+    formatMinor: (minorUnits) => formatReportingMinorUnits(minorUnits, reporting),
   });
 
   return {
@@ -201,10 +230,11 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     })),
     cashFlowForecast,
     categorySpendBreakdown,
+    /** Per month, in the reporting currency's minor units: each transaction converted on its own day, then added. */
     incomeExpenseHistory: incomeExpenseHistory.map((m) => ({
       monthKey: m.monthKey,
-      income: agorot(Number(m.incomeAgorot)),
-      expense: agorot(Number(m.expenseAgorot)),
+      income: incomeExpenseReporting.get(m.monthKey)?.income ?? 0,
+      expense: incomeExpenseReporting.get(m.monthKey)?.expense ?? 0,
     })),
     insights,
     needsReviewCount,

@@ -1,6 +1,8 @@
 "use client";
 
 import { Area, AreaChart, ResponsiveContainer, YAxis } from "recharts";
+import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
+import { agorot } from "../../../../lib/money";
 
 type Point = { date: Date; netWorth: number };
 
@@ -10,6 +12,7 @@ type Point = { date: Date; netWorth: number };
  * just this one.
  */
 export function NetWorthSparkline({ history }: { history: readonly Point[] }) {
+  const money = useReportingMoney();
   if (history.length < 2) {
     return (
       <div className="flex h-full items-center text-xs text-muted" role="status">
@@ -18,7 +21,9 @@ export function NetWorthSparkline({ history }: { history: readonly Point[] }) {
     );
   }
 
-  const data = history.map((point) => ({ date: point.date.toISOString(), value: point.netWorth }));
+  // Each snapshot at the rate of its own day (AGENTS.md §3vvv), so the line's
+  // shape is the reporting currency's, not the shekel's.
+  const data = history.map((point) => ({ date: point.date.toISOString(), value: money.toMinorOn(agorot(point.netWorth), point.date) }));
 
   return (
     <ResponsiveContainer width="100%" height="100%">

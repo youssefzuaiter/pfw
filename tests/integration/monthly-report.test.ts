@@ -63,11 +63,15 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("mon
       monthKey: "2026-09",
       incomeAgorot: 500_000n,
       expenseAgorot: 130_000n, // the transfer and October's row are left out
+      // In shekels the figures shown are the stored agorot (AGENTS.md §3vvv).
+      incomeShown: 500_000,
+      expenseShown: 130_000,
       topCategories: [
-        { name: "Groceries", spentAgorot: 100_000n },
-        { name: "Dining", spentAgorot: 30_000n },
+        { name: "Groceries", spentAgorot: 100_000n, spentShown: 100_000 },
+        { name: "Dining", spentAgorot: 30_000n, spentShown: 30_000 },
       ],
-      netWorth: { startAgorot: 1_000_000n, endAgorot: 1_250_000n }, // October 1st's snapshot is the next month's
+      // October 1st's snapshot is the next month's.
+      netWorth: { startAgorot: 1_000_000n, endAgorot: 1_250_000n, startShown: 1_000_000, endShown: 1_250_000 },
       core: null,
       reporting: ILS_REPORTING, // no settings row: totals in shekels (AGENTS.md §3nnn)
     });
@@ -79,6 +83,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("mon
       monthKey: "2026-09",
       incomeAgorot: 0n,
       expenseAgorot: 0n,
+      incomeShown: 0,
+      expenseShown: 0,
       topCategories: [],
       netWorth: null,
       core: null,

@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { BASE_CURRENCY, isSupportedCurrency, type CurrencyCode } from "../../lib/currency";
-import { currenciesToSync, getLatestRateFetchedAt, upsertRate, type RateTable } from "../dal/exchange-rates";
+import { currenciesToSync, getEarliestRateDays, getLatestRateFetchedAt, insertMissingRates, upsertRate, type RateTable } from "../dal/exchange-rates";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { STALE_DATA_THRESHOLD_HOURS, StaleDataError } from "../stale-data-error";
 
@@ -179,4 +179,94 @@ export async function syncExchangeRates(fetchImpl: typeof fetch = fetch): Promis
  */
 export async function getRateTable(): Promise<RateTable> {
   return getLatestRateTable();
+}
+
+/**
+ * How far back the rate history reaches (AGENTS.md §3vvv). A transaction
+ * older than this converts at the earliest stored rate, flagged
+ * approximate on the page.
+ */
+export const RATE_HISTORY_DAYS = 3 * 366;
+/** Each night also re-reads this many recent days, so a night the sync missed is filled in. */
+export const RATE_HISTORY_REFRESH_DAYS = 14;
+/** A currency whose stored history starts more than this after the target start is backfilled. */
+const BACKFILL_SLACK_DAYS = 7;
+
+const FrankfurterSeriesSchema = z.object({
+  base: z.string(),
+  rates: z.record(z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.record(z.string(), z.number())),
+});
+
+/**
+ * One request for every business day's rates in [from, to] (UTC days),
+ * inverted to "ILS per 1 unit" like the daily sync. The provider publishes
+ * business days only; weekends and holidays are simply absent, and the
+ * date-aware lookup falls back to the last business day for them.
+ */
+export async function fetchRateHistory(
+  from: string,
+  to: string,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = 20_000,
+): Promise<SyncedRate[]> {
+  const wanted = currenciesToSync();
+  const url = `${FRANKFURTER_BASE_URL}/${from}..${to}?base=${BASE_CURRENCY}&symbols=${wanted.join(",")}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { signal: controller.signal, headers: { accept: "application/json" } });
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(`Exchange rate provider returned HTTP ${response.status}`);
+
+  const parsed = FrankfurterSeriesSchema.safeParse(await response.json());
+  if (!parsed.success) throw new Error(`Exchange rate provider returned an unexpected payload: ${parsed.error.message}`);
+  if (parsed.data.base !== BASE_CURRENCY) throw new Error(`Exchange rate provider answered for base ${parsed.data.base}`);
+
+  const rates: SyncedRate[] = [];
+  for (const [day, quotes] of Object.entries(parsed.data.rates)) {
+    const asOfDate = parseAsOfDate(day);
+    for (const [currency, quotedPerBase] of Object.entries(quotes)) {
+      if (!isSupportedCurrency(currency) || currency === BASE_CURRENCY) continue;
+      if (!Number.isFinite(quotedPerBase) || quotedPerBase <= 0) continue;
+      rates.push({ currency, rate: 1 / quotedPerBase, asOfDate });
+    }
+  }
+  return rates;
+}
+
+export type RateHistorySyncResult =
+  | { ok: true; from: string; to: string; fetched: number; added: number }
+  | { ok: false; error: string };
+
+/**
+ * Keeps the rate history complete (AGENTS.md §3vvv), nightly from the cron
+ * after the daily sync. When any currency's stored history starts later
+ * than RATE_HISTORY_DAYS ago — the first run, or a currency just added —
+ * it fetches the whole window; otherwise only the last
+ * RATE_HISTORY_REFRESH_DAYS, which fills a night the daily sync missed.
+ * One request and one insert either way; stored days are never rewritten.
+ * Never throws.
+ */
+export async function syncRateHistory(now: Date = new Date(), fetchImpl: typeof fetch = fetch): Promise<RateHistorySyncResult> {
+  try {
+    const dayMs = 86_400_000;
+    const target = new Date(now.getTime() - RATE_HISTORY_DAYS * dayMs);
+    const earliest = await getEarliestRateDays();
+    const needsBackfill = currenciesToSync().some((currency) => {
+      const first = earliest.get(currency);
+      return !first || first.getTime() > target.getTime() + BACKFILL_SLACK_DAYS * dayMs;
+    });
+    const fromDate = needsBackfill ? target : new Date(now.getTime() - RATE_HISTORY_REFRESH_DAYS * dayMs);
+    const from = fromDate.toISOString().slice(0, 10);
+    const to = now.toISOString().slice(0, 10);
+
+    const rates = await fetchRateHistory(from, to, fetchImpl);
+    const added = await insertMissingRates(rates.map((rate) => ({ ...rate, source: "frankfurter.dev (ECB) history" })));
+    return { ok: true, from, to, fetched: rates.length, added };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }

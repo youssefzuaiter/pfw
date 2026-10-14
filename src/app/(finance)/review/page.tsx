@@ -3,10 +3,10 @@ import { ReportingRateNote } from "../../../components/currency/reporting-curren
 import { Tickbar } from "../../../components/tickbar/tickbar";
 import { formatNativeAmount, nativeAmount } from "../../../lib/currency";
 import { compareMonthKeys, currentMonthKey, formatMonthKey, isValidMonthKey, shiftMonthKey } from "../../../lib/date-month";
-import { agorot } from "../../../lib/money";
 import { changeFrom, formatBpsChange, spendingShares } from "../../../lib/monthly-review";
 import { getCurrentUser } from "../../../server/auth/current-user";
-import { getReportingFormatter } from "../../../server/reporting/reporting-context";
+import { formatReportingFlow, formatReportingMinorUnits } from "../../../lib/reporting-currency";
+import { getReportingContext } from "../../../server/reporting/reporting-context";
 import { buildMonthlyReview } from "../../../server/reports/monthly-review";
 
 // Per-user financial data, never prerendered or cached across requests (AGENTS.md §3c).
@@ -43,19 +43,26 @@ export default async function MonthlyReviewPage({
   const isCurrentMonth = monthKey === thisMonth;
   const previousKey = shiftMonthKey(monthKey, -1);
 
-  const [review, formatMoney] = await Promise.all([buildMonthlyReview(user.id, monthKey), getReportingFormatter(user.id)]);
+  const [review, reporting] = await Promise.all([buildMonthlyReview(user.id, monthKey), getReportingContext(user.id)]);
   const { report, previous, largestExpenses, coreBenchmark } = review;
 
-  const money = (value: bigint, signed = false) => formatMoney(agorot(Number(value)), { showPositiveSign: signed });
-  const net = report.incomeAgorot - report.expenseAgorot;
-  const previousNet = previous.incomeAgorot - previous.expenseAgorot;
-  const shares = spendingShares(report.topCategories);
+  // Every figure here is already in the reporting currency's minor units
+  // (AGENTS.md §3vvv): totals and categories summed per transaction on its
+  // own day, snapshots at their own day's rate. The arithmetic below works
+  // on those units, so the categories, the totals and the changes agree.
+  const money = (minorUnits: bigint | number, signed = false) =>
+    formatReportingMinorUnits(Number(minorUnits), reporting, { showPositiveSign: signed });
+  const income = BigInt(report.incomeShown);
+  const expense = BigInt(report.expenseShown);
+  const previousIncome = BigInt(previous.incomeShown);
+  const previousExpense = BigInt(previous.expenseShown);
+  const shares = spendingShares(report.topCategories.map((category) => ({ name: category.name, spentAgorot: BigInt(category.spentShown) })));
   const isEmpty = report.incomeAgorot === 0n && report.expenseAgorot === 0n && largestExpenses.length === 0;
 
   const totals = [
-    { label: "Money in", value: report.incomeAgorot, before: previous.incomeAgorot },
-    { label: "Spending", value: report.expenseAgorot, before: previous.expenseAgorot },
-    { label: "Net", value: net, before: previousNet, signed: true },
+    { label: "Money in", value: income, before: previousIncome },
+    { label: "Spending", value: expense, before: previousExpense },
+    { label: "Net", value: income - expense, before: previousIncome - previousExpense, signed: true },
   ];
 
   return (
@@ -145,7 +152,10 @@ export default async function MonthlyReviewPage({
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="font-tabular-figures font-medium tracking-tight text-fg">
-                        {money(expense.amount)}
+                        {formatReportingFlow(
+                          { amount: expense.amount, occurredAt: expense.occurredAt, currency: expense.currency, nativeAmount: expense.nativeAmount },
+                          reporting,
+                        )}
                       </p>
                       {expense.currency !== "ILS" && (
                         <p className="font-tabular-figures text-xs text-muted">
@@ -167,11 +177,11 @@ export default async function MonthlyReviewPage({
         </h3>
         {report.netWorth ? (
           <p className="text-sm text-fg">
-            <span className="font-tabular-figures">{money(report.netWorth.startAgorot)}</span> →{" "}
-            <span className="font-tabular-figures">{money(report.netWorth.endAgorot)}</span>
+            <span className="font-tabular-figures">{money(report.netWorth.startShown)}</span> →{" "}
+            <span className="font-tabular-figures">{money(report.netWorth.endShown)}</span>
             <span className="font-tabular-figures text-muted">
               {" "}
-              ({money(report.netWorth.endAgorot - report.netWorth.startAgorot, true)})
+              ({money(report.netWorth.endShown - report.netWorth.startShown, true)})
             </span>
           </p>
         ) : (

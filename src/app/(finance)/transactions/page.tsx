@@ -73,6 +73,8 @@ export default async function TransactionsPage({
     categoryName: t.category.name,
     needsReview: t.needsReview,
     isTransfer: t.isTransfer,
+    currency: t.currency,
+    nativeAmount: Number(t.nativeAmount),
   }));
 
   return (

@@ -15,7 +15,7 @@ vi.mock("../../../server/env", () => ({
   // default rather than being silently undefined.
   getEncryptionKeyNext: () => null,
 }));
-vi.mock("../../../server/currency/rate-sync", () => ({ syncExchangeRates: vi.fn() }));
+vi.mock("../../../server/currency/rate-sync", () => ({ syncExchangeRates: vi.fn(), syncRateHistory: vi.fn() }));
 vi.mock("../../../server/crypto/price-sync", () => ({ syncCryptoPrices: vi.fn() }));
 vi.mock("../../../server/market-data/quote-sync", () => ({ syncEquityQuotes: vi.fn() }));
 vi.mock("../../../server/net-worth/snapshot-job", () => ({ recordDailyNetWorthSnapshots: vi.fn() }));
@@ -29,7 +29,7 @@ vi.mock("../../../server/ops/operator-alert", () => ({ sendOperatorAlert: vi.fn(
 vi.mock("../../../server/alerts/phone-alerts-job", () => ({ sendPhoneAlerts: vi.fn(), sendOperatorPhoneAlert: vi.fn() }));
 
 import { GET } from "./route";
-import { syncExchangeRates } from "../../../server/currency/rate-sync";
+import { syncExchangeRates, syncRateHistory } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { recordDailyNetWorthSnapshots } from "../../../server/net-worth/snapshot-job";
@@ -54,6 +54,7 @@ function request(): NextRequest {
 
 function allHealthy() {
   vi.mocked(syncExchangeRates).mockResolvedValue({ ok: true, synced: 3 } as never);
+  vi.mocked(syncRateHistory).mockResolvedValue({ ok: true, from: "2026-09-30", to: "2026-10-14", fetched: 44, added: 0 });
   vi.mocked(syncCryptoPrices).mockResolvedValue({ ok: true, synced: 2 } as never);
   vi.mocked(syncEquityQuotes).mockResolvedValue({ ok: true, synced: ["TSLA"], skipped: [] } as never);
   vi.mocked(recordDailyNetWorthSnapshots).mockResolvedValue({ ok: true, recorded: 2, failed: 0 });
@@ -82,7 +83,7 @@ describe("GET /api/cron operator alert", () => {
     allHealthy();
     const res = await GET(request());
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ fxRateSync: ok, equityQuoteSync: ok, netWorthSnapshots: ok, monthlyReports: ok, rateLimitCleanup: ok, operatorAlert: "not_needed" });
+    expect(await res.json()).toMatchObject({ fxRateSync: ok, fxRateHistory: ok, equityQuoteSync: ok, netWorthSnapshots: ok, monthlyReports: ok, rateLimitCleanup: ok, operatorAlert: "not_needed" });
     expect(sendOperatorAlert).not.toHaveBeenCalled();
     expect(sendOperatorPhoneAlert).not.toHaveBeenCalled();
     expect((await GET(request()).then((r) => r.json())).operatorPhoneAlert).toBe("not_needed");

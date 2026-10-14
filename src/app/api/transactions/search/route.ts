@@ -45,6 +45,8 @@ type SearchRow = {
   category: { name: string };
   needsReview: boolean;
   isTransfer: boolean;
+  currency: string;
+  nativeAmount: bigint;
 };
 
 function serializeRow(row: SearchRow) {
@@ -62,6 +64,8 @@ function serializeRow(row: SearchRow) {
     categoryName: row.category.name,
     needsReview: row.needsReview,
     isTransfer: row.isTransfer,
+    currency: row.currency,
+    nativeAmount: Number(row.nativeAmount),
   };
 }
 

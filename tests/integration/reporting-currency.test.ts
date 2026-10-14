@@ -33,7 +33,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rep
 
   it("is shekels for a user who never chose, with no settings row created by asking", async () => {
     expect(await getReportingCurrency(shekelUser.id)).toBe("ILS");
-    expect(await getReportingContext(shekelUser.id)).toEqual({ currency: "ILS", ilsPerUnit: 1, rateDay: null });
+    expect(await getReportingContext(shekelUser.id)).toEqual({ currency: "ILS", ilsPerUnit: 1, latestMicros: 1_000_000, rateDay: null, history: [] });
     expect(await admin.userSettings.count({ where: { userId: shekelUser.id } })).toBe(0);
   });
 
@@ -49,7 +49,11 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rep
     expect(context.currency).toBe("USD");
     if (latest) {
       expect(context.ilsPerUnit).toBe(Number(latest.rate));
+      expect(context.latestMicros).toBe(Math.round(Number(latest.rate) * 1_000_000));
       expect(context.rateDay).toBe(latest.asOfDate.toISOString().slice(0, 10));
+      // The whole stored history comes with it, oldest first, ending at today's rate (AGENTS.md §3vvv).
+      expect(context.history.at(-1)).toEqual({ day: context.rateDay, micros: context.latestMicros });
+      expect(context.history.length).toBe(await admin.exchangeRate.count({ where: { currency: "USD", asOfDate: { lte: new Date() } } }));
     } else {
       expect(context.ilsPerUnit).toBe(FALLBACK_RATES.USD);
       expect(context.rateDay).toBeNull();

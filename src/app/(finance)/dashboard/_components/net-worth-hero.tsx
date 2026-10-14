@@ -1,5 +1,6 @@
 import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
 import { agorot, type Agorot } from "../../../../lib/money";
+import { NetWorthChange } from "./net-worth-change";
 import { NetWorthSparkline } from "./net-worth-sparkline";
 
 type NetWorth = {
@@ -11,8 +12,6 @@ type NetWorth = {
 type HistoryPoint = { date: Date; netWorth: Agorot };
 
 export function NetWorthHero({ netWorth, history }: { netWorth: NetWorth; history: readonly HistoryPoint[] }) {
-  const first = history[0]?.netWorth;
-  const changePercent = first !== undefined && first !== 0 ? ((netWorth.netWorth - first) / Math.abs(first)) * 100 : null;
 
   return (
     <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="net-worth-heading">
@@ -23,15 +22,7 @@ export function NetWorthHero({ netWorth, history }: { netWorth: NetWorth; histor
         <p className="font-tabular-figures text-4xl font-semibold tracking-tight text-fg">
           <ReportingAmount value={netWorth.netWorth} />
         </p>
-        {changePercent !== null && (
-          <span
-            className={`font-tabular-figures text-sm font-medium tracking-tight ${changePercent >= 0 ? "text-positive" : "text-negative"}`}
-          >
-            <span aria-hidden="true">{changePercent >= 0 ? "▲" : "▼"} </span>
-            {Math.abs(changePercent).toFixed(1)}%
-            <span className="sr-only"> {changePercent >= 0 ? "up" : "down"} over the last {history.length} days</span>
-          </span>
-        )}
+        <NetWorthChange current={netWorth.netWorth} first={history[0] ?? null} days={history.length} />
       </div>
       <div className="mt-4 h-16">
         <NetWorthSparkline history={history.map((h) => ({ date: h.date, netWorth: agorot(h.netWorth) }))} />

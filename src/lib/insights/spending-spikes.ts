@@ -15,7 +15,17 @@ export type CategorySpendHistory = {
   currentMonthSpend: Agorot;
   /** Positive magnitudes, most-recent-first or in any order — order doesn't matter for the statistics. */
   priorMonthsSpend: readonly Agorot[];
+  /**
+   * The same months in the reporting currency, each converted per
+   * transaction on its own day (AGENTS.md §3vvv) — what the text shows, so it
+   * matches the category donut. Detection still uses the shekel figures
+   * above: an exchange-rate move must never look like a spending spike.
+   */
+  reporting?: { currentMonthSpend: number; priorMonthsSpend: readonly number[] };
 };
+
+/** Formats an amount already in the reporting currency's minor units. */
+export type MinorUnitsFormatter = (minorUnits: number) => string;
 
 /**
  * Flags a category whose spend this month is both above its recent
@@ -26,6 +36,7 @@ export type CategorySpendHistory = {
 export function generateSpendingSpikeInsights(
   histories: readonly CategorySpendHistory[],
   formatMoney: MoneyFormatter = formatAgorot,
+  formatMinor?: MinorUnitsFormatter,
 ): Insight[] {
   const insights: Insight[] = [];
 
@@ -39,13 +50,16 @@ export function generateSpendingSpikeInsights(
 
     const percentAboveAverage = average > 0 ? ((history.currentMonthSpend - average) / average) * 100 : 100;
     const severity = percentAboveAverage > CRITICAL_PERCENT_ABOVE_AVERAGE ? "critical" : "warning";
+    const shown = history.reporting && formatMinor ? history.reporting : null;
+    const spent = shown ? formatMinor!(shown.currentMonthSpend) : formatMoney(history.currentMonthSpend);
+    const averageText = shown ? formatMinor!(Math.round(mean(shown.priorMonthsSpend))) : formatMoney(agorot(Math.round(average)));
 
     insights.push({
       type: "spending_spike",
       severity,
       rank: computeRank(severity, percentAboveAverage),
       title: `Unusual spending spike in ${history.categoryName}`,
-      description: `Spent ${formatMoney(history.currentMonthSpend)} this month, ${Math.round(percentAboveAverage)}% above the recent average of ${formatMoney(agorot(Math.round(average)))}.`,
+      description: `Spent ${spent} this month, ${Math.round(percentAboveAverage)}% above the recent average of ${averageText}.`,
       relatedEntityId: history.categoryId,
     });
   }
