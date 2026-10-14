@@ -220,7 +220,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             aria-label="Close"

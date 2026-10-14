@@ -53,6 +53,14 @@ export const metadata: Metadata = {
 // not one subtree.
 export const viewport: Viewport = {
   themeColor: PWA_THEME_COLOR,
+  // Installed on an iPhone, the app is full-screen under a translucent
+  // status bar (`appleWebApp.statusBarStyle` above). iOS reports the notch
+  // and home-indicator margins as `env(safe-area-inset-*)` ONLY with
+  // viewport-fit=cover; without it they are 0, so page tops sat under the
+  // clock and the bottom tab bar's own inset padding did nothing. Everything
+  // pinned to an edge pads itself by these insets; on a desktop or a phone
+  // browser they are 0 and nothing moves.
+  viewportFit: "cover",
 };
 
 // Reading a dynamic API (headers(), below) opts the whole app shell out of
@@ -78,7 +86,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   return (
     <html lang="en" className={`${rubik.variable} ${ibmPlexMono.variable} h-full antialiased`}>
-      <body className="flex min-h-full flex-col bg-bg text-fg md:flex-row">
+      <body className="flex min-h-full flex-col bg-bg pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] text-fg md:flex-row">
         <ReportingCurrencyProvider value={reporting}>
           <OfflineBanner />
           {isAuthenticated && <Sidebar />}

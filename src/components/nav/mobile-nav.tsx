@@ -90,7 +90,7 @@ export function MobileNav() {
             role="dialog"
             aria-modal="true"
             aria-label="More navigation"
-            className="relative w-full rounded-t-lg border-t border-border bg-bg p-4"
+            className="relative w-full rounded-t-lg border-t border-border bg-bg p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
           >
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-medium uppercase tracking-wide text-muted">More</p>
