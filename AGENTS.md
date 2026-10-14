@@ -9068,6 +9068,92 @@ icon, never a financial figure.
   its own sign-in once (home-screen apps keep their own storage), and a link
   tapped in a notification may open in Safari rather than the installed app.
 
+## 3ttt. Account deletion (ad hoc)
+
+Permanent, self-service deletion of the signed-in account: Settings →
+Danger zone → Delete account. Planned as a read-only audit first and built
+after the user approved the plan; the audit changed three of the request's
+assumptions, recorded here because they decide the design.
+
+- **No per-user keys exist to destroy.** Every server-encrypted column uses
+  the one app-wide `ENCRYPTION_KEY`; the two vaults use browser-derived
+  keys the server never holds. Per-user keys kept in the same database
+  would not give cryptographic erasure either, because the nightly backup
+  copies the key along with the data; that would need keys held outside
+  the database (a KMS). So deletion is hard deletion, and the screen says
+  plainly that encrypted copies remain in the backups (30 days) and the
+  provider's restore window until they expire.
+- **No ledger chain crosses users.** A `LedgerCommit` chain covers one
+  transaction, which belongs to one user, so deleting a user's commits
+  cannot break another user's chain. `AuditLog` is not chained.
+- **The append-only triggers blocked every delete, cascades included.** The
+  seed and test helpers get past them with `ALTER TABLE ... DISABLE
+  TRIGGER`, which locks the table for everyone and leaves it unprotected
+  while it runs; unusable in production. Migration
+  `20261014150000_account_deletion` replaces both trigger functions: UPDATE
+  is still always rejected, and a DELETE is allowed only when the
+  transaction has set `pfw.purge_user_id` to the row's owner AND that
+  owner's `User` row is already gone (`pfw_is_account_purge`), i.e. only
+  as the cascade of deleting that user. The seed and test helpers still
+  use DISABLE TRIGGER; moving them is optional.
+- **`deleteAccount`** (`src/server/account/delete-account.ts`, an
+  allowlisted admin-client file): one transaction that locks the user row,
+  refuses if any OTHER user's row references this user's rows (the 15
+  foreign keys between user-owned tables, `CROSS_TENANT_FOREIGN_KEYS`; the
+  app never creates such a reference, but no constraint forbids it and the
+  cascade would delete the other user's row), records the id in
+  `AccountDeletionRecord`, sets the purge flag, deletes the `User` row,
+  and deletes the user's rate-limit windows (keys embed the id or email
+  with no foreign key). Everything else goes by `ON DELETE CASCADE`, so a
+  table added later is covered automatically;
+  `tests/guards/user-data-cascades.test.ts` fails if a relation to `User`
+  stops cascading or a `userId` column has no relation.
+- **Sessions** need no extra step: they are JWTs, and the jwt() callback
+  reads `tokenVersion` on every request; with the row gone it finds none
+  and clears the session.
+- **`POST /api/account/delete`**: the mutation guard at 5 attempts an
+  hour, then the current password (counts toward the lockout), the TOTP
+  code when two-factor sign-in is on, and the literal `DELETE`. Refuses
+  (409) the paper-trading account (`PAPER_TRADING_USER_EMAIL`) and the demo
+  account while demo mode is on (`protected-accounts.ts`), before checking
+  the password. Excluded from the route sweep. No audit entry: the user's
+  audit log goes with them.
+- **Households**: deleting an owner deletes the household; other members
+  keep their own rows, which stop being shared (`sharedGroupId` set null).
+  The form names each household it will remove and the Emergency Vault.
+- **This browser's copies**: after the server confirms, the panel clears
+  the copilot's IndexedDB vectors and local/session storage, signs out,
+  and the login page says the account was deleted.
+- **Restores**: `AccountDeletionRecord` (id and date only, unreadable by
+  the runtime role) lets `npm run account:reapply-deletions` delete again
+  the accounts an older backup brings back; `docs/BACKUP-RESTORE.md` step 8,
+  plus a revoke after the grants step.
+- **Verified**: `npm run check` with the DB live, 2,080 passed and 4
+  skipped (the embedding sidecar and one built-in route-sweep skip). The
+  integration test (`tests/integration/account-deletion.test.ts`) builds a
+  full profile for one user (encrypted fields, two ledger chains, audit
+  entries, envelope, rule, goal, passkey, recovery codes, phone alerts,
+  Emergency Vault, notifications, settings, a net-worth snapshot,
+  rate-limit windows, and a household another user belongs to), deletes
+  it, and checks against the database's own catalog that no table with a
+  `userId` column holds a row for it and that no text or jsonb column
+  anywhere holds its ciphertexts, email or id; the other user's rows are
+  unchanged except the removed membership, their chains verify, and the
+  append-only tables still refuse their UPDATE and DELETE even with the
+  purge flag set. It also checks `CROSS_TENANT_FOREIGN_KEYS` against
+  `pg_constraint` and that a planted cross-user reference makes the
+  deletion refuse and change nothing. Mutation-checked: dropping the purge
+  flag, the cross-user check, or the rate-limit cleanup each fails it.
+  Playwright (48 existing plus `account-deletion.spec.ts`): a fresh user
+  signs in, the open form passes axe, a wrong password is refused, the
+  right one deletes and lands on the login page, the rows are gone, and
+  the old session can no longer reach the dashboard. Gitleaks and Semgrep
+  clean.
+- **Not built**: transferring household ownership instead of deleting it;
+  a grace period or undo; per-user keys in a KMS; erasure from third
+  parties (ntfy.sh's message cache, Resend, Anthropic, Vercel logs) and
+  from backups before they expire.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

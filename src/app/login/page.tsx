@@ -15,12 +15,18 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const from = firstString(params.from, "/dashboard");
+  const accountDeleted = params.deleted === "1";
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6">
         <h1 className="font-display text-xl font-semibold text-fg">Sign in</h1>
         <p className="mt-1 text-sm text-muted">PFW — personal finance</p>
+        {accountDeleted && (
+          <p role="status" className="mt-3 rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg">
+            Your account and its data were deleted.
+          </p>
+        )}
         <LoginForm redirectTo={from} />
         {/* Only while sign-up is open (REGISTRATION_OPEN, env.ts): otherwise the link leads to a closed page. */}
         {isRegistrationOpen() && (

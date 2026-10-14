@@ -104,6 +104,10 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // (§3rrr): every user's rows, no session. Never reads a decrypted value
       // out; it rewrites each one through the extension.
       path.resolve(SRC_ROOT, "server", "crypto", "legacy-plaintext-sweep.ts"),
+      // Account deletion (§3ttt): deletes the User row and its cascade,
+      // which no scoped role may do (the append-only tables), and checks
+      // that no OTHER user's rows reference this user's, which RLS would hide.
+      path.resolve(SRC_ROOT, "server", "account", "delete-account.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));
