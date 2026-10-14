@@ -94,6 +94,11 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // Monthly report: lists who opted in and their address (no session, no
       // single userId); the claim, figures and release go through the DAL.
       path.resolve(SRC_ROOT, "server", "reports", "monthly-report-job.ts"),
+      // Phone alerts (§3qqq): lists the user ids that have alerts on, and
+      // resolves OPERATOR_ALERT_EMAIL to an account for the cron's failure
+      // alert (no session, no single userId). Never reads a topic; the
+      // topic and every figure go through the scoped DAL.
+      path.resolve(SRC_ROOT, "server", "alerts", "phone-alerts-job.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

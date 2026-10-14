@@ -25,6 +25,7 @@ vi.mock("../../../server/dal/rate-limit-buckets", () => ({ deleteExpiredRateLimi
 vi.mock("../../../server/crypto/key-rotation", () => ({ runEncryptionKeyRotationSweep: vi.fn() }));
 vi.mock("../../../server/crypto/field-encryption", () => ({ getEncryptionKeyFingerprints: vi.fn() }));
 vi.mock("../../../server/ops/operator-alert", () => ({ sendOperatorAlert: vi.fn() }));
+vi.mock("../../../server/alerts/phone-alerts-job", () => ({ sendPhoneAlerts: vi.fn(), sendOperatorPhoneAlert: vi.fn() }));
 
 import { GET } from "./route";
 import { syncExchangeRates } from "../../../server/currency/rate-sync";
@@ -37,6 +38,7 @@ import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-bu
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
 import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
+import { sendOperatorPhoneAlert, sendPhoneAlerts } from "../../../server/alerts/phone-alerts-job";
 import { StaleDataError } from "../../../server/stale-data-error";
 
 const ok = { ok: true as const };
@@ -55,6 +57,7 @@ function allHealthy() {
   vi.mocked(recordDailyNetWorthSnapshots).mockResolvedValue({ ok: true, recorded: 2, failed: 0 });
   vi.mocked(sendMonthlyReports).mockResolvedValue({ ok: true, monthKey: "2026-09", sent: 0, failed: 0 });
   vi.mocked(runInactivityCheck).mockResolvedValue({ movedToGracePeriod: [], triggered: [] } as never);
+  vi.mocked(sendPhoneAlerts).mockResolvedValue({ ok: true, checked: 1, sent: 0, failed: 0 });
   vi.mocked(deleteExpiredRateLimitBuckets).mockResolvedValue(0 as never);
   vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({ ok: true, inProgress: false } as never);
   vi.mocked(getEncryptionKeyFingerprints).mockReturnValue({ current: CURRENT_KID, next: null });
@@ -69,6 +72,7 @@ describe("GET /api/cron operator alert", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(sendOperatorAlert).mockResolvedValue("sent");
+    vi.mocked(sendOperatorPhoneAlert).mockResolvedValue("not_configured");
   });
 
   it("sends nothing when every job succeeds", async () => {
@@ -77,6 +81,28 @@ describe("GET /api/cron operator alert", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ fxRateSync: ok, equityQuoteSync: ok, netWorthSnapshots: ok, monthlyReports: ok, rateLimitCleanup: ok, operatorAlert: "not_needed" });
     expect(sendOperatorAlert).not.toHaveBeenCalled();
+    expect(sendOperatorPhoneAlert).not.toHaveBeenCalled();
+    expect((await GET(request()).then((r) => r.json())).operatorPhoneAlert).toBe("not_needed");
+  });
+
+  it("sends the same failure lines to the operator's phone, and runs phone alerts after the vault check", async () => {
+    allHealthy();
+    const order: string[] = [];
+    vi.mocked(runInactivityCheck).mockImplementation(async () => {
+      order.push("vault");
+      return { movedToGracePeriod: [], triggered: [] } as never;
+    });
+    vi.mocked(sendPhoneAlerts).mockImplementation(async () => {
+      order.push("phone");
+      return { ok: true, checked: 2, sent: 1, failed: 1 };
+    });
+    vi.mocked(sendOperatorPhoneAlert).mockResolvedValue("sent");
+
+    const body = await (await GET(request())).json();
+    expect(order).toEqual(["vault", "phone"]);
+    expect(body.phoneAlerts).toEqual({ ok: false, error: "1 phone alert(s) could not be sent; retried tomorrow", staleData: false });
+    expect(body.operatorPhoneAlert).toBe("sent");
+    expect(sendOperatorPhoneAlert).toHaveBeenCalledWith(["phoneAlerts: 1 phone alert(s) could not be sent; retried tomorrow"]);
   });
 
   it("sends ONE email listing every failed job, and names the stale-data breaker", async () => {

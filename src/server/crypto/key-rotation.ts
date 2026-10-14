@@ -27,18 +27,19 @@ import { decryptField, encryptField, getActiveEncryptionKeyId } from "./field-en
  * instead of "which switches have gone stale" or "which symbols does
  * anyone hold."
  *
- * SIX PLACES THIS APP STORES CIPHERTEXT, all six covered:
+ * SEVEN PLACES THIS APP STORES CIPHERTEXT, all seven covered:
  *
- *   - Four columns the `encrypted-fields.ts` Prisma Client extension
+ *   - Five columns the `encrypted-fields.ts` Prisma Client extension
  *     already manages transparently (`BankAccount.last4`,
  *     `NotableTransaction.description`, `User.totpSecret`,
- *     `BankConnection.accessToken`) — for these, re-keying is nothing
+ *     `BankConnection.accessToken`, `PhoneAlertSubscription.topic`) — for
+ *     these, re-keying is nothing
  *     more than a plain READ-THEN-WRITE-BACK round trip: the extension
  *     decrypts on read (using whichever key `field-encryption.ts` says
  *     the row's own format/key-id calls for) and re-encrypts on write
  *     (always onto `ENCRYPTION_KEY_NEXT`, since `encryptField()` already
  *     prefers it whenever it's set) — no manual `encryptField`/
- *     `decryptField` call needed here at all for these four. Every raw
+ *     `decryptField` call needed here at all for these five. Every raw
  *     SQL statement below is a literal, hardcoded string with the table
  *     and column names written directly into it (never built from a
  *     variable) — only the search prefix and row-count LIMIT are
@@ -182,6 +183,21 @@ export async function sweepBankConnectionAccessToken(admin: AdminClient, prefix:
   return { reencrypted, failed, remaining: Number(count) };
 }
 
+export async function sweepPhoneAlertTopic(admin: AdminClient, prefix: string): Promise<Tally> {
+  const stale = await admin.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "PhoneAlertSubscription" WHERE "topic" NOT LIKE ${`${prefix}%`}
+    LIMIT ${MAX_ROWS_PER_TABLE_PER_RUN}
+  `;
+  const { reencrypted, failed } = await touchRows("PhoneAlertSubscription.topic", stale.map((r) => r.id), async (id) => {
+    const row = await admin.phoneAlertSubscription.findUniqueOrThrow({ where: { id }, select: { topic: true } });
+    await admin.phoneAlertSubscription.update({ where: { id }, data: { topic: row.topic } });
+  });
+  const [{ count }] = await admin.$queryRaw<{ count: bigint }[]>`
+    SELECT count(*)::bigint AS count FROM "PhoneAlertSubscription" WHERE "topic" NOT LIKE ${`${prefix}%`}
+  `;
+  return { reencrypted, failed, remaining: Number(count) };
+}
+
 /**
  * `RecoveryShareSubmission.shareValueCiphertext` sits outside the
  * extension (`dead-mans-switch/recovery-service.ts` calls `encryptField`/
@@ -258,6 +274,7 @@ export async function runEncryptionKeyRotationSweep(): Promise<KeyRotationSweepR
     tally = addTally(tally, await sweepTransactionDescription(admin, prefix));
     tally = addTally(tally, await sweepUserTotpSecret(admin, prefix));
     tally = addTally(tally, await sweepBankConnectionAccessToken(admin, prefix));
+    tally = addTally(tally, await sweepPhoneAlertTopic(admin, prefix));
     tally = addTally(tally, await sweepRecoveryShareSubmissions(admin, prefix));
     tally = addTally(tally, await sweepLegacyGoalContributionNotes(admin, prefix));
 

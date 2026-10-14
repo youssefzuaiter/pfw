@@ -35,6 +35,9 @@ const ENCRYPTED_FIELDS = {
   // need, even though nothing real ever accepts this one (see
   // BankConnection's own schema comment).
   bankConnection: ["accessToken"],
+  // Phone alerts (AGENTS.md §3qqq): an ntfy.sh topic is its own password —
+  // anyone who knows it can read every alert sent to it.
+  phoneAlertSubscription: ["topic"],
 } as const;
 
 type EncryptedModelKey = keyof typeof ENCRYPTED_FIELDS;
@@ -112,6 +115,7 @@ export function withEncryptedFields(client: PrismaClient) {
       bankAccount: { $allOperations: makeAllOperationsHandler("bankAccount") },
       notableTransaction: { $allOperations: makeAllOperationsHandler("notableTransaction") },
       user: { $allOperations: makeAllOperationsHandler("user") },
+      phoneAlertSubscription: { $allOperations: makeAllOperationsHandler("phoneAlertSubscription") },
     },
   });
 }

@@ -8807,6 +8807,82 @@ re-denominating every stored amount, which was never on the table.
   still shekels; with no synced rate for the chosen currency the figures are
   approximate (and say so).
 
+## 3qqq. Phone alerts through ntfy (ad hoc)
+
+Email from this app only reaches the Resend account's own address until a
+sending domain is verified, and nobody reads the cron's JSON at 00:00 UTC. The
+core router already pushes its own alerts through ntfy.sh; this gives the app
+the same channel. Turned on per user in Settings → Notifications.
+
+- **One table, `PhoneAlertSubscription`** (migration
+  `20261013200000_phone_alerts`), one row per user who turned alerts on;
+  deleting it turns them off. Not more `UserSettings` columns: the topic is
+  encrypted, and the field-encryption extension refuses `updateMany` on an
+  encrypted model, which `UserSettings`' monthly-report claim uses. RLS
+  `tenant_isolation`, and both grants stated in the migration (`pfw_runtime`
+  DML, `backup_reader` SELECT) because default privileges did not cover new
+  tables on production twice before (§3uu, `20261011160000`).
+- **The topic is a password.** On ntfy.sh anyone who knows a topic can read
+  it. It is AES-256-GCM at rest (`encrypted-fields.ts`, and swept by the
+  key-rotation job, now seven places), must be 12–64 of `[A-Za-z0-9_-]`
+  (`src/lib/ntfy-topic.ts`, the same rule in the form and on the server), is
+  generated with 120 random bits when the user does not choose one, is shown
+  in full once and afterwards only as its last four characters, and never
+  reaches a log, an error or the audit row. Only the name is stored, never a
+  server: a pasted `https://ntfy.sh/<topic>` is reduced to its name, any other
+  host is refused, and `sendNtfy` posts to a constant `https://ntfy.sh`, so a
+  stored value cannot point the server anywhere else.
+- **`sendNtfy`** (`src/server/alerts/ntfy-client.ts`): JSON publishing (the
+  topic in the body, POST to the root), so Turkish and Hebrew titles survive
+  where header values would not; 5s timeout; never throws. The contract was
+  checked against the real service before writing it: a message published
+  this way and read back from `/<topic>/json?poll=1&since=all` kept its
+  title, text, priority and link.
+- **What a night sends** (`src/lib/phone-alerts.ts`, pure): new in-app
+  notifications (today the Emergency Vault's grace-period and triggered
+  notices, so the phone job runs after the vault check), an envelope that
+  went from not overdrawn to overdrawn, each expense at or above the user's
+  threshold (default ₪1,000) that reached the ledger since the last check —
+  by `createdAt`, so an import of old rows is still news — and a reminder when
+  nothing has been imported or synced (`csv:`/`psd2:` rows) for 35 days, at
+  most weekly. All of it in ONE notification. The first check only records a
+  starting point, so turning alerts on never pushes the past.
+  - **Overdrawn means budgeted.** The dashboard counts a never-budgeted
+    category with spending as overdrawn (its balance is negative by
+    construction); a push for each would buzz once per category for anyone
+    who does not budget, so phone alerts only watch envelopes that have had
+    money allocated at least once.
+  - **Details off** sends only "N new alerts", so no merchant, amount or
+    category passes through ntfy.sh or the phone's push service.
+- **The job** (`src/server/alerts/phone-alerts-job.ts`, allowlisted
+  admin-client file: it lists subscriber user ids, never topics, and resolves
+  `OPERATOR_ALERT_EMAIL` to an account): the state moves only after a
+  successful send, so an outage repeats tonight's alerts tomorrow instead of
+  losing them; one user's failure is counted, not fatal. Wired into
+  `GET /api/cron` as `phone-alerts`, and the cron's failure lines now also go
+  to the operator's phone (`operatorPhoneAlert` in the response) when that
+  account has alerts on.
+- **Routes**: `POST/PATCH/DELETE /api/phone-alerts` (turn on or change topic,
+  threshold and details, turn off) and `POST /api/phone-alerts/test` (3 per 10
+  minutes; excluded from the route sweep because it sends a real push), all
+  behind `guardMutation`.
+- **Verified**: unit tests for the topic rule, the alert rules (first check,
+  once per overdrawn envelope, the 35-day and weekly reminder boundaries,
+  details off), the client (constant host, no topic or message in an error,
+  the timeout), the job and the operator alert, the routes, and the cron
+  wiring and order; component tests for the panel; 7 integration tests against
+  real Postgres (ciphertext at rest, RLS on every call, exactly the right
+  facts, the first check, saving state, turning off). Mutation-checked: the
+  transfer and deleted filter, the budgeted filter, saving state after a
+  failed send, and alerting every night were each caught. Live on localhost:
+  turned on in the browser, a test alert and then the nightly job's real
+  large-expense alert both read back from ntfy.sh; a third run sent nothing.
+- **Known limitations**: nightly only (Vercel's free cron), so an alert is up
+  to a day late; ntfy.sh rate-limits by address and Vercel's addresses are
+  shared, so a send can fail with 429 and is retried the next night; no
+  self-hosted ntfy server; the threshold is entered in shekels like every
+  other form.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
