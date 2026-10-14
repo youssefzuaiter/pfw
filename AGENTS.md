@@ -9154,6 +9154,67 @@ assumptions, recorded here because they decide the design.
   parties (ntfy.sh's message cache, Resend, Anthropic, Vercel logs) and
   from backups before they expire.
 
+## 3uuu. Data export (ad hoc)
+
+Settings → Your data → Download JSON / Download CSV (ZIP): everything the
+signed-in user owns, decrypted. Audited first; two findings shaped it.
+
+- **Decryption works only on flat reads.** The field-encryption extension
+  decrypts `BankAccount.last4`, `NotableTransaction.description`,
+  `User.totpSecret`, `BankConnection.accessToken` and
+  `PhoneAlertSubscription.topic` only when the query is on that model; an
+  `include`d relation arrives as ciphertext (§3jj). So the export
+  (`src/server/dal/data-export.ts`) reads every table flat, never
+  includes, and picks columns with `omit`. Legacy server-encrypted goal
+  notes (`v1:`/`v2:`) are decrypted by hand; browser-encrypted values
+  (`zk1:` notes, `dms1:` vault documents) cannot be and are exported as
+  stored, with the salt and iterations needed to open them.
+- **RLS alone would leak.** The household policies let a member READ a
+  housemate's shared categories, accounts, envelopes, the household itself
+  and the housemate's `User` row. Every query therefore names the user
+  explicitly (`userId`, or `createdById` / `id` for the three tables keyed
+  differently), still inside `withUserScope` so RLS stays the second wall.
+  The user's own rows can also name other people, which the export
+  redacts: user ids and emails under keys ending `UserId`/`Email` (audit
+  `afterData`, invites), a `GroupMember` audit entry's entity id, and the
+  id of any household someone else owns (the user's membership of it, and
+  anything they shared into it).
+- **What is in it**: 35 tables (`EXPORT_TABLES` in
+  `src/lib/data-export/format.ts`), deleted transactions included. Left
+  out: password hash, TOTP secret and replay step, backup-code hashes,
+  passkey keys, bank-connection token, phone-alert topic, beneficiary
+  share/invite hashes, merchant embedding vectors, sign-in tokens and
+  challenges, and the shares beneficiaries submitted
+  (`EXCLUDED_FROM_EXPORT`, `OMITTED_COLUMNS`).
+  `tests/guards/data-export-coverage.test.ts` fails when a model with a
+  `userId` column is neither exported nor excluded, and when the export
+  module uses `include` or raw SQL.
+- **Values**: BigInt as a decimal string always (exact, and past 2^53),
+  Decimal as its string, dates ISO, JSON nested. CSV cells that a
+  spreadsheet would run as a formula get the importer's apostrophe guard,
+  except plain numbers (`-12550` stays a number). The notes in the JSON
+  and the ZIP's README state the units.
+- **Packaging** (`src/server/data-export/package-export.ts`): in memory
+  only, nothing written to disk. JSON is one document; CSV is a ZIP (fflate,
+  now a direct dependency at the version already installed) of a README,
+  `account.csv` and one file per non-empty table.
+- **`POST /api/account/export`**: mutation guard (Origin check; another
+  site cannot make a signed-in browser fetch it), 10 an hour,
+  `Cache-Control: no-store`, an audit entry per export. In the route sweep.
+- **Verified**: `npm run check` with the DB live, 2,108 passed and 4
+  skipped. `tests/integration/data-export.test.ts` seeds A and B with the
+  same category names, dates, amounts and encrypted fields, makes them
+  housemates both ways with shared rows (and first proves A's scope really
+  can read B's shared category), has A's audit log and invite name B, then
+  exports A as JSON and as a ZIP and searches every byte: all of A's
+  decrypted plaintext is there, none of A's stored ciphertext, and not one
+  of B's texts, ids, email or ciphertexts. Mutation-checked: dropping the
+  userId filter on categories or bank accounts, the owner filter on
+  households, the audit redaction or the household-id redaction each fails
+  it. Playwright (50 passed): both buttons download in a real browser, the
+  files parse, no CSP violation.
+- **Not built**: a scheduled or emailed export, and an import of an export.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
