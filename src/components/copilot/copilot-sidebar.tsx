@@ -47,6 +47,9 @@ export function CopilotSidebar() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(false);
   // A ref, not state: "have we already checked" doesn't need to trigger a
   // re-render, and using state here would call setState synchronously at
   // the top of the effect body (react-hooks/set-state-in-effect).
@@ -85,6 +88,26 @@ export function CopilotSidebar() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "nearest" });
   }, [messages, isSending]);
+
+  // The floating launcher is hidden while the panel is open: on a phone it
+  // sat on top of the message box and the Send button. So focus moves to the
+  // panel's own close button on open, back to the launcher on close, and
+  // Escape closes the panel, or a keyboard user would be left on a hidden
+  // element.
+  useEffect(() => {
+    if (isOpen) closeButtonRef.current?.focus();
+    else if (wasOpenRef.current) launcherRef.current?.focus();
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setIsOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
 
   async function sendMessage(content: string) {
     const trimmed = content.trim();
@@ -156,13 +179,14 @@ export function CopilotSidebar() {
   return (
     <>
       <button
+        ref={launcherRef}
         type="button"
         onClick={handleToggle}
         aria-expanded={isOpen}
         aria-controls="copilot-panel"
-        className="uv-btn-press fixed bottom-4 right-4 z-30 flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2.5 text-sm font-medium text-bg shadow-lg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:bottom-6 md:right-6"
+        className={`uv-btn-press fixed right-4 bottom-[calc(2.75rem+env(safe-area-inset-bottom))] z-30 ${isOpen ? "hidden" : "flex"} items-center gap-2 rounded-full border border-border bg-accent px-4 py-2.5 text-sm font-medium text-bg shadow-lg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:bottom-6 md:right-6`}
       >
-        {isOpen ? "Close copilot" : "Copilot"}
+        Copilot
       </button>
 
       <div
@@ -179,7 +203,7 @@ export function CopilotSidebar() {
         // from both the tab order and the accessibility tree at once,
         // which `aria-hidden` on its own never did.
         inert={!isOpen}
-        className={`uv-copilot-panel fixed inset-y-0 right-0 z-20 flex w-full max-w-sm flex-col border-l border-border bg-surface shadow-2xl ${
+        className={`uv-copilot-panel fixed inset-y-0 right-0 z-20 flex w-full max-w-sm flex-col border-l border-border bg-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-2xl ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -189,6 +213,7 @@ export function CopilotSidebar() {
             <p className="text-xs text-muted">Runs 100% locally — nothing here reaches a cloud AI provider.</p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={handleClose}
             aria-label="Close copilot"

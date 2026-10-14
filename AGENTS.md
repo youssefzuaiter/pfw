@@ -9023,6 +9023,51 @@ bank is connected, and the docs said it was already protected.
   separate lists that must agree and nothing enforced it. Checked against the
   original bug: it fails with the `bankConnection` registration removed.
 
+## 3sss. Installing the app on a phone or desktop (ad hoc)
+
+Asked for "an application instead of always opening a browser". The site has
+been an installable web app since Phase 4 (`public/manifest.json`,
+`public/sw.js`, `src/app/~offline`, iPhone metadata in the root layout), so
+this pass made the installed version right on an iPhone rather than building
+a second app. Re-verified first on a production build: manifest, all four
+icons, an active service worker that caches only the offline page and one
+icon, never a financial figure.
+
+- **Why not a native or App Store app**: two codebases for every future
+  feature, a paid developer account, and App Store review, where a wrapped
+  website is a common rejection. The installed web app is the same site, so
+  every feature is in it the moment it deploys.
+- **The real iPhone bug: content under the clock.** The app asks iOS for a
+  full-screen translucent status bar (`appleWebApp.statusBarStyle`), but the
+  viewport never set `viewport-fit=cover`, and without it iOS reports every
+  `env(safe-area-inset-*)` as 0. So the top of each page sat under the
+  status bar and notch, and the bottom tab bar's existing inset padding did
+  nothing. Now `viewportFit: "cover"` in the root layout's `viewport`, the
+  body pads by the top/left/right insets, and everything pinned to an edge
+  pads itself: the copilot panel, the "More" drawer, the three dialogs and
+  the offline banner. In a normal browser the insets are 0 and nothing moves.
+- **Icons**: the standard and iPhone icons had "PFW" running to the edges, so
+  iOS's rounded corners clipped the P and the W. Regenerated from the
+  maskable icon's design, which already kept a safe margin.
+- **The Copilot button covered the "More" tab** on phones (and, with the
+  panel open, the message box and Send button on every screen size). It now
+  sits above the tab bar, and is hidden while the panel is open; focus moves
+  to the panel's own close button on open and back on close, and Escape
+  closes it (the panel had neither before). First component tests for the
+  panel; mutation-checked (focus not moved, no Escape handler).
+- **Manifest**: a stable `id`, and shortcuts (Transactions, Budgets, Monthly
+  review) on a long press of the icon. Android and desktop Chrome only; iOS
+  does not support web app shortcuts.
+- **Verified** on a local production build at 375px: `viewport-fit=cover`
+  present, zero body padding in a browser, no horizontal overflow, the button
+  clear of every tab, the panel's controls uncovered, Escape and focus
+  behaving; full suite and the 48 Playwright tests pass.
+- **Not verified here**: a real notch. There is no Xcode on this Mac, so no
+  iPhone simulator, and Chromium cannot emulate safe-area insets; the owner
+  checks it on the phone. Also: an iPhone app installed from Safari may need
+  its own sign-in once (home-screen apps keep their own storage), and a link
+  tapped in a notification may open in Safari rather than the installed app.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
