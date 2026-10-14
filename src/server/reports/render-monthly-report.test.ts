@@ -24,7 +24,7 @@ describe("renderMonthlyReport", () => {
     expect(text).toContain("Groceries: ₪6,000.00");
     expect(text).toContain("Dining: ₪2,500.50");
     expect(text).toContain("Change: +₪1,200.00");
-    expect(text).toContain("Open the dashboard: https://pfw.example/dashboard");
+    expect(text).toContain("See the full review: https://pfw.example/review?month=2026-09");
   });
 
   it("says what is missing instead of inventing a figure", () => {
@@ -32,7 +32,7 @@ describe("renderMonthlyReport", () => {
     expect(text).toContain("No spending recorded this month.");
     expect(text).toContain("Not enough history yet");
     expect(text).not.toContain("Start of month");
-    expect(text).toContain("https://pfw.example/dashboard"); // a trailing slash on the origin is not doubled
+    expect(text).toContain("https://pfw.example/review?month=2026-09"); // a trailing slash on the origin is not doubled
   });
 
   it("adds the core section only when there is core data, with the change as a percent", () => {
@@ -51,7 +51,7 @@ describe("renderMonthlyReport", () => {
     );
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
-    expect(html).toContain('<a href="https://pfw.example/dashboard">');
+    expect(html).toContain('<a href="https://pfw.example/review?month=2026-09">');
   });
 
   it("shows a loss with a minus sign", () => {

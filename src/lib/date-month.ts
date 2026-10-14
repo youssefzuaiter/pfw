@@ -46,3 +46,14 @@ export function monthKeyToExclusiveEndDate(monthKey: string): Date {
   const [year, month] = monthKey.split("-").map(Number);
   return new Date(Date.UTC(year, month, 1));
 }
+
+/** The month `months` away from `monthKey` (negative for earlier), e.g. shiftMonthKey("2026-01", -1) === "2025-12". */
+export function shiftMonthKey(monthKey: string, months: number): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  return monthKeyFor(new Date(Date.UTC(year, month - 1 + months, 1)));
+}
+
+/** "October 2026", always in UTC so a server and a browser agree. */
+export function formatMonthKey(monthKey: string): string {
+  return monthKeyToStartDate(monthKey).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
