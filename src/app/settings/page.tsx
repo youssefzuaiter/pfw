@@ -7,6 +7,7 @@ import { getPhoneAlertSettings } from "../../server/dal/phone-alerts";
 import { listMyGroups } from "../../server/dal/shared-groups";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
 import { DeleteAccountPanel } from "./_components/delete-account-panel";
+import { ExportDataPanel } from "./_components/export-data-panel";
 import { EmailVerificationPanel } from "./_components/email-verification-panel";
 import { MfaPanel } from "./_components/mfa-panel";
 import { PasskeyPanel } from "./_components/passkey-panel";
@@ -102,6 +103,13 @@ export default async function SettingsPage() {
           >
             Open Banking (EU) →
           </Link>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Your data</h2>
+        <div className="mt-2">
+          <ExportDataPanel />
         </div>
       </div>
 

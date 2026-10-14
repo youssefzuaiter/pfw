@@ -36,6 +36,7 @@ export const SWEPT_ROUTES = [
   "PATCH /api/transaction-rules/[id]",
   "PATCH /api/transactions/[id]",
   "PATCH /api/user-settings",
+  "POST /api/account/export",
   "POST /api/assets",
   "POST /api/assets/[id]/valuation",
   "POST /api/auth/revoke-sessions",
