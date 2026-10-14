@@ -8953,6 +8953,18 @@ the same channel. Turned on per user in Settings → Notifications.
   failed send, and alerting every night were each caught. Live on localhost:
   turned on in the browser, a test alert and then the nightly job's real
   large-expense alert both read back from ntfy.sh; a third run sent nothing.
+- **Checked on a real phone (iPhone, ntfy app)**, through a throwaway topic
+  with fake data and the real compose and send code: all five kinds arrived
+  at once, the priorities showed as high / default / low, details-off showed
+  only a count, and Turkish (`MİGROS -₺4,500.00`) rendered correctly. **It
+  also found a bug no test would:** with a Hebrew merchant before the amount
+  (`קפה קפה -₪1,250.00`) the phone reordered the minus sign to the far side of
+  the number and showed `₪1,250.00-`. The text is now
+  `Large expense: <amount> at <merchant> on <day>`, so a right-to-left name
+  never touches the figure; confirmed on the phone for Hebrew and Arabic, and
+  pinned by a test (nothing right-to-left before the amount). Unicode
+  isolates would also work but put invisible characters in every notification
+  on clients that may not handle them.
 - **Known limitations**: nightly only (Vercel's free cron), so an alert is up
   to a day late; ntfy.sh rate-limits by address and Vercel's addresses are
   shared, so a send can fail with 429 and is retried the next night; no
