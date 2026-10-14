@@ -163,3 +163,76 @@ export async function deleteTransactionRule(userId: string, id: string): Promise
     return { ok: true };
   });
 }
+
+/** A rule the user accepted from an AI suggestion (AGENTS.md §3ooo): "the merchant/description contains `keyword`" → `categoryId`. */
+export type SuggestedRuleInput = {
+  field: "merchantName" | "description";
+  keyword: string;
+  categoryId: string;
+};
+
+/**
+ * Rules saved from AI suggestions run after a hand-written rule, whose
+ * default priority is 0 — so if the two ever disagree, the one the user
+ * wrote themselves wins.
+ */
+export const SUGGESTED_RULE_PRIORITY = 100;
+
+/** The longest rule name the rules route accepts. */
+const MAX_RULE_NAME_LENGTH = 80;
+
+/**
+ * Creates one `contains` → `categorize` rule per accepted suggestion, in one
+ * transaction. Skipped, not failed: a category that is not this user's (or
+ * is archived, or is Uncategorized), an empty keyword, and a keyword that
+ * already has a single-condition rule on the same field — whatever that
+ * rule does, a second one on the same word would either repeat it or lose
+ * to it, so neither is worth saving.
+ */
+export async function createRulesFromSuggestions(
+  userId: string,
+  rules: readonly SuggestedRuleInput[],
+): Promise<{ created: number; skipped: number }> {
+  if (rules.length === 0) return { created: 0, skipped: 0 };
+  return withUserScope(userId, async (tx) => {
+    const categories = await tx.category.findMany({
+      where: { userId, id: { in: [...new Set(rules.map((rule) => rule.categoryId))] }, archivedAt: null, isUncategorized: false },
+      select: { id: true, slug: true, name: true },
+    });
+    const categoryById = new Map(categories.map((category) => [category.id, category]));
+
+    const existing = await tx.transactionRule.findMany({ where: { userId }, select: { conditions: true } });
+    const taken = new Set<string>();
+    for (const row of existing) {
+      const parsed = RuleConditionsSchema.safeParse(row.conditions);
+      if (!parsed.success || parsed.data.length !== 1) continue;
+      const [condition] = parsed.data;
+      if (condition.field !== "amount") taken.add(ruleKey(condition.field, condition.value));
+    }
+
+    let created = 0;
+    for (const rule of rules) {
+      const category = categoryById.get(rule.categoryId);
+      const keyword = rule.keyword.trim();
+      const key = ruleKey(rule.field, keyword);
+      if (!category || keyword.length === 0 || taken.has(key)) continue;
+      taken.add(key);
+      await tx.transactionRule.create({
+        data: {
+          userId,
+          name: `${keyword} → ${category.name}`.slice(0, MAX_RULE_NAME_LENGTH),
+          priority: SUGGESTED_RULE_PRIORITY,
+          isActive: true,
+          conditions: [{ field: rule.field, operator: "contains", value: keyword }] as unknown as Prisma.InputJsonValue,
+          actions: [{ type: "categorize", categorySlug: category.slug }] as unknown as Prisma.InputJsonValue,
+        },
+      });
+      created += 1;
+    }
+    return { created, skipped: rules.length - created };
+  });
+}
+
+function ruleKey(field: string, value: string): string {
+  return `${field}|${value.trim().toLocaleLowerCase()}`;
+}

@@ -8807,6 +8807,43 @@ re-denominating every stored amount, which was never on the table.
   still shekels; with no synced rate for the chosen currency the figures are
   approximate (and say so).
 
+## 3ooo. Rules from AI suggestions (ad hoc)
+
+§3kkk's suggestions categorized rows once; the next month's statement from
+the same merchants landed in Uncategorized again and cost another Claude
+call. Now an accepted suggestion can be kept as a Tier-0 rule (§3rr), so
+recurring merchants sort themselves on import.
+
+- **Claude names the word**: each answer carries a `keyword`, the shortest
+  text copied from the row that names the merchant (MİGROS, NETFLIX), never
+  a generic payment word, code, city, date or amount; empty when unsure or
+  when the category is "none". The prompt says a rule may be built from it.
+- **The server does not trust it** (`claude-category-suggester.ts`):
+  `locateKeyword` keeps it only if it occurs as a whole word in that row's
+  own text (law #4's matcher), is 3–40 characters and holds a letter, and
+  records which field it was found in (merchant preferred).
+  `keepConsistentKeywords` then drops any keyword that another row in the
+  batch contains under a different category or under no confident one — the
+  data, not the model, is what keeps "Pos" or a bank's own name out.
+- **The panel offers, the user decides**: "Also save as rules" lists one
+  checkbox per word among the ticked rows (`proposeRules`). A word seen on
+  two or more rows is offered ticked, a single sighting unticked, and a word
+  whose rows the user sent to different categories is not offered at all.
+- **Saving** (`createRulesFromSuggestions`, called by the apply route in the
+  same request): one `contains` → `categorize` rule per word, priority
+  `SUGGESTED_RULE_PRIORITY` (100) so a hand-written rule (default 0) wins a
+  conflict; skipped, never failed, for another user's or an archived
+  category and for a word that already has a single-condition rule on the
+  same field. The apply response gains `rulesCreated`/`rulesSkipped`.
+- **Verified**: unit tests for keyword location and the consistency check
+  (Turkish dotted İ included), route and panel tests, integration tests
+  against real Postgres (the rule is stored as specified, actually sorts the
+  matching row through `applyRulesToExistingTransactions`, another user's
+  category and a repeat are skipped, a malformed rule is a 400, RLS). One
+  real Claude call with made-up rows: MİGROS, STARBUCKS and SHELL came back
+  as keywords, never "Pos", and the planted "ignore previous instructions"
+  row got neither a category nor a keyword.
+
 ## 3ppp. A monthly review page (ad hoc)
 
 The monthly email (§3lll) only reaches the Resend account's own address

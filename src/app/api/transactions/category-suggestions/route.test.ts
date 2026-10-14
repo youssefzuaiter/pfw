@@ -78,7 +78,11 @@ describe("POST /api/transactions/category-suggestions", () => {
   });
 
   it("sends opaque refs and formatted amounts, and maps the answer back to the user's category ids", async () => {
-    vi.mocked(suggestCategories).mockResolvedValue({ ok: true, suggestions: new Map([["t0", "groceries"]]) });
+    vi.mocked(suggestCategories).mockResolvedValue({
+      ok: true,
+      suggestions: new Map([["t0", "groceries"]]),
+      keywords: new Map([["t0", { field: "merchantName" as const, keyword: "MIGROS" }]]),
+    });
 
     const response = await POST(request());
     expect(response.status).toBe(200);
@@ -102,8 +106,19 @@ describe("POST /api/transactions/category-suggestions", () => {
         amount: "-₺94.25",
         categoryId: "cat-groceries",
         categoryName: "Groceries",
+        rule: { field: "merchantName", keyword: "MIGROS" },
       },
     ]);
+  });
+
+  it("offers no rule for a suggestion that came without a usable keyword", async () => {
+    vi.mocked(suggestCategories).mockResolvedValue({
+      ok: true,
+      suggestions: new Map([["t1", "dining"]]),
+      keywords: new Map(),
+    });
+    const body = await (await POST(request())).json();
+    expect(body.suggestions).toEqual([expect.objectContaining({ transactionId: "tx-2", rule: null })]);
   });
 
   it("answers 502 when Claude declines or cannot be read", async () => {

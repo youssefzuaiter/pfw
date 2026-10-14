@@ -83,6 +83,8 @@ export async function POST(request: NextRequest) {
           amount: input.amount,
           categoryId: category.id,
           categoryName: category.name,
+          // The word a rule could match on (AGENTS.md §3ooo), or null.
+          rule: result.keywords.get(input.ref) ?? null,
         },
       ];
     });
