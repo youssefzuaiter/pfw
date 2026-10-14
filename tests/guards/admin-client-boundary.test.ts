@@ -99,6 +99,11 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // alert (no session, no single userId). Never reads a topic; the
       // topic and every figure go through the scoped DAL.
       path.resolve(SRC_ROOT, "server", "alerts", "phone-alerts-job.ts"),
+      // Encrypts BankConnection.accessToken values stored as plaintext
+      // before the field-encryption extension was registered for the model
+      // (§3rrr): every user's rows, no session. Never reads a decrypted value
+      // out; it rewrites each one through the extension.
+      path.resolve(SRC_ROOT, "server", "crypto", "legacy-plaintext-sweep.ts"),
     ];
 
     const files = walkSourceFiles(SRC_ROOT, [".ts", ".tsx"]).filter((file) => !allowedImporters.includes(file));

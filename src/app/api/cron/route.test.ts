@@ -23,6 +23,7 @@ vi.mock("../../../server/reports/monthly-report-job", () => ({ sendMonthlyReport
 vi.mock("../../../server/dead-mans-switch/inactivity-check", () => ({ runInactivityCheck: vi.fn() }));
 vi.mock("../../../server/dal/rate-limit-buckets", () => ({ deleteExpiredRateLimitBuckets: vi.fn() }));
 vi.mock("../../../server/crypto/key-rotation", () => ({ runEncryptionKeyRotationSweep: vi.fn() }));
+vi.mock("../../../server/crypto/legacy-plaintext-sweep", () => ({ encryptLegacyPlaintextBankTokens: vi.fn() }));
 vi.mock("../../../server/crypto/field-encryption", () => ({ getEncryptionKeyFingerprints: vi.fn() }));
 vi.mock("../../../server/ops/operator-alert", () => ({ sendOperatorAlert: vi.fn() }));
 vi.mock("../../../server/alerts/phone-alerts-job", () => ({ sendPhoneAlerts: vi.fn(), sendOperatorPhoneAlert: vi.fn() }));
@@ -36,6 +37,7 @@ import { sendMonthlyReports } from "../../../server/reports/monthly-report-job";
 import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-check";
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
+import { encryptLegacyPlaintextBankTokens } from "../../../server/crypto/legacy-plaintext-sweep";
 import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
 import { sendOperatorPhoneAlert, sendPhoneAlerts } from "../../../server/alerts/phone-alerts-job";
@@ -60,6 +62,7 @@ function allHealthy() {
   vi.mocked(sendPhoneAlerts).mockResolvedValue({ ok: true, checked: 1, sent: 0, failed: 0 });
   vi.mocked(deleteExpiredRateLimitBuckets).mockResolvedValue(0 as never);
   vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({ ok: true, inProgress: false } as never);
+  vi.mocked(encryptLegacyPlaintextBankTokens).mockResolvedValue({ ok: true, encrypted: 0, failed: 0, remaining: 0 });
   vi.mocked(getEncryptionKeyFingerprints).mockReturnValue({ current: CURRENT_KID, next: null });
 }
 
@@ -83,6 +86,17 @@ describe("GET /api/cron operator alert", () => {
     expect(sendOperatorAlert).not.toHaveBeenCalled();
     expect(sendOperatorPhoneAlert).not.toHaveBeenCalled();
     expect((await GET(request()).then((r) => r.json())).operatorPhoneAlert).toBe("not_needed");
+  });
+
+  it("reports a bank token that could not be encrypted, with how many are still plaintext", async () => {
+    allHealthy();
+    vi.mocked(encryptLegacyPlaintextBankTokens).mockResolvedValue({ ok: true, encrypted: 1, failed: 2, remaining: 2 });
+
+    const body = await (await GET(request())).json();
+    expect(body.legacyPlaintextEncryption).toEqual({ ok: false, error: "2 bank token(s) could not be encrypted (2 still plaintext)", staleData: false });
+    expect(vi.mocked(sendOperatorAlert).mock.calls[0][0].lines).toEqual([
+      "legacyPlaintextEncryption: 2 bank token(s) could not be encrypted (2 still plaintext)",
+    ]);
   });
 
   it("sends the same failure lines to the operator's phone, and runs phone alerts after the vault check", async () => {

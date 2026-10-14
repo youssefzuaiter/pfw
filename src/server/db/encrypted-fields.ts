@@ -42,6 +42,28 @@ const ENCRYPTED_FIELDS = {
 
 type EncryptedModelKey = keyof typeof ENCRYPTED_FIELDS;
 
+/**
+ * Fields that were stored as PLAINTEXT before they were wired to this
+ * extension, and so may still hold an unencrypted value that has not been
+ * swept yet (`src/server/crypto/legacy-plaintext-sweep.ts`).
+ *
+ * `BankConnection.accessToken` was listed in ENCRYPTED_FIELDS from the day
+ * it was added but its model was never registered in `withEncryptedFields`
+ * below, so every token ever written went in as plaintext. Registering the
+ * model fixes every write from now on; this keeps the rows already stored
+ * readable until the sweep encrypts them, instead of every list or sync of
+ * an existing connection throwing on a value with no `v1:`/`v2:` prefix.
+ *
+ * Deliberately per field, never for the extension as a whole: for every
+ * other column a value without the prefix is corruption, and failing loudly
+ * there is the point.
+ */
+const LEGACY_PLAINTEXT_FIELDS: Partial<Record<EncryptedModelKey, readonly string[]>> = {
+  bankConnection: ["accessToken"],
+};
+
+const ENCRYPTED_VALUE_PREFIX = /^v[12]:/;
+
 function encryptInPlace(data: unknown, fields: readonly string[]): void {
   if (!data || typeof data !== "object") return;
   const record = data as Record<string, unknown>;
@@ -52,16 +74,17 @@ function encryptInPlace(data: unknown, fields: readonly string[]): void {
   }
 }
 
-function decryptResult<T>(result: T, fields: readonly string[]): T {
+function decryptResult<T>(result: T, fields: readonly string[], legacyPlaintextFields: readonly string[] = []): T {
   if (Array.isArray(result)) {
-    return result.map((item) => decryptResult(item, fields)) as unknown as T;
+    return result.map((item) => decryptResult(item, fields, legacyPlaintextFields)) as unknown as T;
   }
   if (result && typeof result === "object") {
     const record = result as Record<string, unknown>;
     for (const field of fields) {
-      if (typeof record[field] === "string") {
-        record[field] = decryptField(record[field] as string);
-      }
+      const value = record[field];
+      if (typeof value !== "string") continue;
+      if (legacyPlaintextFields.includes(field) && !ENCRYPTED_VALUE_PREFIX.test(value)) continue;
+      record[field] = decryptField(value);
     }
   }
   return result;
@@ -75,6 +98,7 @@ type AllOperationsArgs = {
 
 function makeAllOperationsHandler(modelKey: EncryptedModelKey) {
   const fields = ENCRYPTED_FIELDS[modelKey];
+  const legacyPlaintextFields = LEGACY_PLAINTEXT_FIELDS[modelKey] ?? [];
 
   return async ({ operation, args, query }: AllOperationsArgs) => {
     switch (operation) {
@@ -99,7 +123,7 @@ function makeAllOperationsHandler(modelKey: EncryptedModelKey) {
     }
 
     const result = await query(args);
-    return decryptResult(result, fields);
+    return decryptResult(result, fields, legacyPlaintextFields);
   };
 }
 
@@ -115,6 +139,7 @@ export function withEncryptedFields(client: PrismaClient) {
       bankAccount: { $allOperations: makeAllOperationsHandler("bankAccount") },
       notableTransaction: { $allOperations: makeAllOperationsHandler("notableTransaction") },
       user: { $allOperations: makeAllOperationsHandler("user") },
+      bankConnection: { $allOperations: makeAllOperationsHandler("bankConnection") },
       phoneAlertSubscription: { $allOperations: makeAllOperationsHandler("phoneAlertSubscription") },
     },
   });
