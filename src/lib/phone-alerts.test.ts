@@ -60,7 +60,7 @@ describe("evaluatePhoneAlerts", () => {
       facts({ largeExpenses: [{ label: "MİGROS", amount: "-₺4,500.00", day: "2026-10-12" }], largeExpenseCount: 3 }),
     );
     expect(result.lines.map((line) => line.text)).toEqual([
-      "Large expense: MİGROS -₺4,500.00 on 2026-10-12",
+      "Large expense: -₺4,500.00 at MİGROS on 2026-10-12",
       "…and 2 more large expenses",
     ]);
     const one = evaluatePhoneAlerts(
@@ -68,6 +68,18 @@ describe("evaluatePhoneAlerts", () => {
       facts({ largeExpenses: [{ label: "A", amount: "-₪1", day: "d" }], largeExpenseCount: 2 }),
     );
     expect(one.lines[1].text).toBe("…and 1 more large expense");
+  });
+
+  it("never puts a right-to-left merchant name next to the amount (the minus sign would swap sides on a phone)", () => {
+    const result = evaluatePhoneAlerts(
+      CHECKED,
+      facts({ largeExpenses: [{ label: "קפה קפה", amount: "-₪1,250.00", day: "2026-10-13" }], largeExpenseCount: 1 }),
+    );
+    const text = result.lines[0].text;
+    expect(text).toBe("Large expense: -₪1,250.00 at קפה קפה on 2026-10-13");
+    const amountAt = text.indexOf("-₪1,250.00");
+    expect(text.slice(0, amountAt)).not.toMatch(/[\u0590-\u08FF]/); // nothing right-to-left before the amount
+    expect(text.slice(amountAt, amountAt + "-₪1,250.00 at".length)).toBe("-₪1,250.00 at"); // and a left-to-right word after it
   });
 
   it("forwards new in-app notifications first", () => {
@@ -142,7 +154,7 @@ describe("composePhoneAlert", () => {
     const message = composePhoneAlert(
       [
         { kind: "overdrawn", text: "Dining is overdrawn: -₪50.00" },
-        { kind: "large_expense", text: "Large expense: MİGROS -₺4,500.00 on 2026-10-12" },
+        { kind: "large_expense", text: "Large expense: -₺4,500.00 at MİGROS on 2026-10-12" },
       ],
       { includeDetails: false, appUrl: APP },
     );

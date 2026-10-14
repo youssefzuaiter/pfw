@@ -6,6 +6,7 @@ import { listUncategorizedForSuggestions } from "../../src/server/dal/category-s
 import { POST as applyPost } from "../../src/app/api/transactions/category-suggestions/apply/route";
 import { applyRulesToExistingTransactions } from "../../src/server/dal/transactions";
 import { SUGGESTED_RULE_PRIORITY } from "../../src/server/dal/transaction-rules";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 /**
  * The AI category suggestions' two database halves against real Postgres
@@ -69,18 +70,9 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("AI 
 
   afterAll(async () => {
     // Applying writes an AuditLog row and a LedgerCommit, both append-only:
-    // a cascading delete is refused by their triggers. Disable both for this
-    // one delete, in one transaction (as the route sweep does).
-    await admin.$transaction(
-      async (db) => {
-        await db.$executeRaw`ALTER TABLE "AuditLog" DISABLE TRIGGER audit_log_append_only`;
-        await db.$executeRaw`ALTER TABLE "LedgerCommit" DISABLE TRIGGER ledger_commit_append_only`;
-        await db.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
-        await db.$executeRaw`ALTER TABLE "AuditLog" ENABLE TRIGGER audit_log_append_only`;
-        await db.$executeRaw`ALTER TABLE "LedgerCommit" ENABLE TRIGGER ledger_commit_append_only`;
-      },
-      { timeout: 30_000, maxWait: 30_000 },
-    );
+    // a cascading delete is refused by their triggers, so use the shared
+    // helper (one lock order, retried on deadlock).
+    await deleteTestUsersWithLedgerCommits(admin, [userA.id, userB.id]);
     await admin.$disconnect();
   });
 
