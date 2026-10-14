@@ -13,6 +13,7 @@ import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encry
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
+import { sendOperatorPhoneAlert, sendPhoneAlerts } from "../../../server/alerts/phone-alerts-job";
 
 /**
  * Vercel Cron & Notifications Engine (ad hoc) — the automated replacement
@@ -157,6 +158,17 @@ export async function GET(request: NextRequest) {
       deadMansSwitchCheck = { ok: false, error: message, staleData: false };
     }
 
+    // After the Emergency Vault check, so a grace-period notice written
+    // tonight is on the phone tonight (AGENTS.md §3qqq). A user whose alert
+    // could not be sent keeps their state and is retried tomorrow.
+    const phoneAlerts = await runJob("phone-alerts", async () => {
+      const result = await sendPhoneAlerts();
+      if (!result.ok) return result;
+      console.log(`cron: phone-alerts ok — checked=${result.checked} sent=${result.sent} failed=${result.failed}`);
+      if (result.failed > 0) return { ok: false, error: `${result.failed} phone alert(s) could not be sent; retried tomorrow` };
+      return { ok: true };
+    });
+
     // Sweeps `RateLimitBucket` windows that have fully elapsed (see that
     // model's doc comment). Every check upserts its own row, so nothing
     // depends on this running — it only keeps the table from growing
@@ -209,6 +221,7 @@ export async function GET(request: NextRequest) {
       netWorthSnapshots,
       monthlyReports,
       deadMansSwitchCheck,
+      phoneAlerts,
       rateLimitCleanup,
       encryptionKeyRotation,
     };
@@ -217,15 +230,21 @@ export async function GET(request: NextRequest) {
     // One email per run, every failed job listed, the stale-data breaker
     // named as such — and a no-op when OPERATOR_ALERT_EMAIL is unset.
     const failures = Object.entries(results).filter(([, r]) => !r.ok) as [string, Extract<JobResult, { ok: false }>][];
+    // The same lines on the operator's phone too, when their account has
+    // phone alerts on (§3qqq) — Resend only reaches the Resend account's own
+    // address until a sending domain is verified, so the email alone can miss.
     let operatorAlert: "sent" | "not_configured" | "failed" | "not_needed" = "not_needed";
+    let operatorPhoneAlert: "sent" | "not_configured" | "failed" | "not_needed" = "not_needed";
     if (failures.length > 0) {
+      const lines = failures.map(([name, r]) => `${name}: ${r.staleData ? "[stale data] " : ""}${r.error}`);
       operatorAlert = await sendOperatorAlert({
         subject: `cron: ${failures.length} job(s) failed${failures.some(([, r]) => r.staleData) ? " — STALE-DATA BREAKER TRIPPED" : ""}`,
-        lines: failures.map(([name, r]) => `${name}: ${r.staleData ? "[stale data] " : ""}${r.error}`),
+        lines,
       });
+      operatorPhoneAlert = await sendOperatorPhoneAlert(lines);
     }
 
-    return NextResponse.json({ ...results, operatorAlert });
+    return NextResponse.json({ ...results, operatorAlert, operatorPhoneAlert });
   } catch (error) {
     console.error("GET /api/cron failed unexpectedly", error);
     return jsonServerError();

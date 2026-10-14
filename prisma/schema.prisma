@@ -322,6 +322,7 @@ model User {
   updatedAt            DateTime @updatedAt
 
   settings                 UserSettings?
+  phoneAlertSubscription   PhoneAlertSubscription?
   bankAccounts             BankAccount[]
   categories               Category[]
   transactions             NotableTransaction[]
@@ -505,6 +506,44 @@ model UserSettings {
   /// every amount is still stored and summed in ILS agorot (law #3), and
   /// is converted at the latest synced rate when it becomes text.
   reportingCurrency Currency @default(ILS)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Phone alerts through ntfy (AGENTS.md §3qqq). One row per user who turned
+/// them on; deleting the row turns them off. A separate table rather than
+/// more `UserSettings` columns because the topic is encrypted at rest, and
+/// the field-encryption extension refuses `updateMany` on an encrypted
+/// model — which `UserSettings`' monthly-report claim relies on.
+model PhoneAlertSubscription {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The ntfy.sh topic name, AES-256-GCM ciphertext at rest (added to
+  /// encrypted-fields.ts). On ntfy.sh a topic is its own password: anyone
+  /// who knows it can read every message sent to it. Only the name is
+  /// stored, never a URL — every message goes to https://ntfy.sh, so a
+  /// stored value can never point the server at another host.
+  topic String
+
+  /// An expense at least this large (agorot, positive) gets its own alert.
+  largeExpenseAgorot BigInt  @default(100000)
+  /// Off: the notification says how many alerts there are and nothing else,
+  /// so no merchant name or amount passes through ntfy.sh or the phone's
+  /// push service.
+  includeDetails     Boolean @default(true)
+
+  /// Where the nightly check left off. Null until the first run, which
+  /// only records a starting point: turning alerts on never produces a
+  /// flood about the past.
+  lastCheckedAt        DateTime?
+  /// Envelopes already overdrawn at the last check, so each one alerts
+  /// once when it goes negative, not every night it stays there.
+  overdrawnCategoryIds String[]  @default([])
+  /// When the "no statement imported lately" reminder last went out.
+  importReminderSentAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

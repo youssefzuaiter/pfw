@@ -63,7 +63,7 @@ describe("runEncryptionKeyRotationSweep() — the top-level no-op guard", () => 
   });
 });
 
-describe("runEncryptionKeyRotationSweep() — orchestration across all six tables", () => {
+describe("runEncryptionKeyRotationSweep() — orchestration across all seven tables", () => {
   beforeEach(resetKeys);
 
   function emptyQueryRaw() {
@@ -85,6 +85,7 @@ describe("runEncryptionKeyRotationSweep() — orchestration across all six table
       notableTransaction: { ...noop },
       user: { ...noop },
       bankConnection: { ...noop },
+      phoneAlertSubscription: { ...noop },
       recoveryShareSubmission: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
       goalContribution: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
     } as unknown as AdminClient;
@@ -101,6 +102,21 @@ describe("runEncryptionKeyRotationSweep() — orchestration across all six table
 
     expect(result).toEqual({ ok: true, inProgress: true, reencrypted: 0, remaining: 0, failed: 0 });
     expect(fakeAdmin.$disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("scans every extension-managed column, the phone-alert topic included", async () => {
+    process.env.ENCRYPTION_KEY_NEXT = randomBytes(32).toString("base64");
+    const { createAdminClient } = await import("../db/admin-client");
+    const fakeAdmin = makeEmptyFakeAdmin();
+    vi.mocked(createAdminClient).mockReturnValue(fakeAdmin);
+
+    const { runEncryptionKeyRotationSweep } = await import("./key-rotation");
+    await runEncryptionKeyRotationSweep();
+
+    const scanned = vi.mocked(fakeAdmin.$queryRaw).mock.calls.map(([strings]) => (strings as TemplateStringsArray).join(""));
+    for (const table of ["BankAccount", "NotableTransaction", "User", "BankConnection", "PhoneAlertSubscription"]) {
+      expect(scanned.some((sql) => sql.includes(`FROM "${table}"`))).toBe(true);
+    }
   });
 
   it("catches a total sweep failure (e.g. a lost DB connection) and still disconnects", async () => {

@@ -2,10 +2,12 @@ import Link from "next/link";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getOperatorAlertEmail } from "../../server/env";
 import { getMfaStatus } from "../../server/dal/mfa";
+import { getPhoneAlertSettings } from "../../server/dal/phone-alerts";
 import { getOrCreateUserSettings } from "../../server/dal/user-settings";
 import { EmailVerificationPanel } from "./_components/email-verification-panel";
 import { MfaPanel } from "./_components/mfa-panel";
 import { PasskeyPanel } from "./_components/passkey-panel";
+import { PhoneAlertsPanel } from "./_components/phone-alerts-panel";
 import { PreferencesForm, type PreferencesFormData } from "./_components/preferences-form";
 import { RevokeSessionsButton } from "./_components/revoke-sessions-button";
 
@@ -23,7 +25,11 @@ export const instant = false;
  */
 export default async function SettingsPage() {
   const user = await getCurrentUser();
-  const [mfaStatus, settings] = await Promise.all([getMfaStatus(user.id), getOrCreateUserSettings(user.id)]);
+  const [mfaStatus, settings, phoneAlerts] = await Promise.all([
+    getMfaStatus(user.id),
+    getOrCreateUserSettings(user.id),
+    getPhoneAlertSettings(user.id),
+  ]);
 
   // Only whoever runs this deployment gets the Operations link — the same
   // OPERATOR_ALERT_EMAIL gate the page itself enforces (it 404s for
@@ -70,6 +76,13 @@ export default async function SettingsPage() {
         <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Preferences</h2>
         <div className="mt-2">
           <PreferencesForm initial={initialPreferences} />
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Notifications</h2>
+        <div className="mt-2">
+          <PhoneAlertsPanel initial={phoneAlerts} />
         </div>
       </div>
 
