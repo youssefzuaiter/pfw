@@ -20,15 +20,18 @@ import { formatReportingMinorUnits } from "../../src/lib/reporting-currency";
  * report the same totals. A shekel user over the same rows must see exactly
  * the stored agorot.
  *
- * Needs the rate history for August–September 2026 (`npm run
- * sync:rates:history`, or the nightly cron); skipped without it.
+ * The rates come from the shared `ExchangeRate` table. Any weekday in the
+ * window that has no stored rate (a fresh CI database has none) gets one
+ * seeded here, and only those rows are removed afterwards; a database that
+ * already holds the real ECB history is used as it is. Either way the
+ * expected figures come from the SQL oracle, never from the seed values.
  */
 describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("historical exchange rates", () => {
   let admin: ReturnType<typeof createAdminClient>;
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let usdUser = "";
   let ilsUser = "";
-  let haveHistory = false;
+  const SEED_SOURCE = "test-historical-rates";
 
   /** Independent oracle: the newest stored USD rate on or before a UTC day, straight from SQL. */
   async function usdMicrosOn(day: string): Promise<{ micros: number; rateDay: string }> {
@@ -85,8 +88,14 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("his
 
   beforeAll(async () => {
     admin = createAdminClient();
-    const covered = await admin.exchangeRate.count({ where: { currency: "USD", asOfDate: { gte: new Date("2026-08-20"), lte: new Date("2026-09-03") } } });
-    haveHistory = covered >= 8;
+    // Weekdays only, like the ECB: the weekend must fall back to Friday.
+    const seed = [];
+    for (let day = Date.UTC(2026, 7, 17), i = 0; day <= Date.UTC(2026, 8, 4); day += 86_400_000, i++) {
+      const weekday = new Date(day).getUTCDay();
+      if (weekday === 0 || weekday === 6) continue;
+      seed.push({ currency: "USD" as const, rate: (3.6 + i * 0.0123457).toFixed(6), asOfDate: new Date(day), source: SEED_SOURCE });
+    }
+    await admin.exchangeRate.createMany({ data: seed, skipDuplicates: true });
     usdUser = await seedUser("usd", "USD");
     ilsUser = await seedUser("ils", "ILS");
   });
@@ -94,6 +103,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("his
   afterAll(async () => {
     for (const id of [usdUser, ilsUser]) if (id) await deleteAccount(id);
     await admin.accountDeletionRecord.deleteMany({ where: { deletedUserId: { in: [usdUser, ilsUser] } } });
+    await admin.exchangeRate.deleteMany({ where: { source: SEED_SOURCE } });
     await admin.$disconnect();
   });
 
@@ -101,11 +111,6 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("his
     const { micros } = await usdMicrosOn(occurredAt.slice(0, 10));
     return convertAgorotExact(amount, micros);
   }
-
-  it("has the stored rate history this test relies on", () => {
-    if (!haveHistory) console.warn("historical-rates: no rate history for Aug–Sep 2026; run `npm run sync:rates:history`");
-    expect(haveHistory).toBe(true);
-  });
 
   it("gives the Saturday transaction the Friday rate (there is no weekend row)", async () => {
     expect((await usdMicrosOn("2026-08-29")).rateDay).toBe("2026-08-28");
