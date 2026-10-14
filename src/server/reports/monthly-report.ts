@@ -28,9 +28,14 @@ export type MonthlyReportData = {
  * Everything one monthly report shows (AGENTS.md §3lll), read through the
  * same user-scoped DAL functions the dashboard uses, so the email and the
  * screens agree. Income and spending exclude transfers between the user's
- * own accounts (REAL_MONEY inside those functions).
+ * own accounts (REAL_MONEY inside those functions). The email lists the top
+ * five categories; the review page (§3ppp) passes a larger `categoryLimit`.
  */
-export async function gatherMonthlyReport(userId: string, monthKey: string): Promise<MonthlyReportData> {
+export async function gatherMonthlyReport(
+  userId: string,
+  monthKey: string,
+  options: { categoryLimit?: number } = {},
+): Promise<MonthlyReportData> {
   const from = monthKeyToStartDate(monthKey);
   const to = monthKeyToExclusiveEndDate(monthKey);
 
@@ -49,7 +54,7 @@ export async function gatherMonthlyReport(userId: string, monthKey: string): Pro
   const topCategories = spend
     .filter((row) => row.totalAgorot > 0n)
     .sort((a, b) => (b.totalAgorot > a.totalAgorot ? 1 : b.totalAgorot < a.totalAgorot ? -1 : 0))
-    .slice(0, TOP_CATEGORY_COUNT)
+    .slice(0, options.categoryLimit ?? TOP_CATEGORY_COUNT)
     .map((row) => ({ name: nameById.get(row.categoryId) ?? "Unknown category", spentAgorot: row.totalAgorot }));
 
   const corePoints = coreSeries.filter((point) => point.takenAt >= from && point.takenAt < to);

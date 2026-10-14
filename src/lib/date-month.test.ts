@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  compareMonthKeys,
-  currentMonthKey,
-  isValidMonthKey,
-  monthKeyFor,
-  monthKeyToExclusiveEndDate,
-  monthKeyToStartDate,
-} from "./date-month";
+import { compareMonthKeys, currentMonthKey, isValidMonthKey, monthKeyFor, monthKeyToExclusiveEndDate, monthKeyToStartDate, shiftMonthKey, formatMonthKey } from "./date-month";
 
 describe("isValidMonthKey()", () => {
   it("accepts well-formed month keys", () => {
@@ -76,5 +69,22 @@ describe("monthKeyToExclusiveEndDate()", () => {
     const start = monthKeyToStartDate("2026-02");
     const end = monthKeyToExclusiveEndDate("2026-02");
     expect(end.getTime()).toBeGreaterThan(start.getTime());
+  });
+});
+
+describe("shiftMonthKey", () => {
+  it("moves across month and year boundaries in both directions", () => {
+    expect(shiftMonthKey("2026-10", -1)).toBe("2026-09");
+    expect(shiftMonthKey("2026-01", -1)).toBe("2025-12");
+    expect(shiftMonthKey("2025-12", 1)).toBe("2026-01");
+    expect(shiftMonthKey("2026-03", -14)).toBe("2025-01");
+    expect(shiftMonthKey("2026-03", 0)).toBe("2026-03");
+  });
+});
+
+describe("formatMonthKey", () => {
+  it("names the month in English, in UTC", () => {
+    expect(formatMonthKey("2026-10")).toBe("October 2026");
+    expect(formatMonthKey("2027-01")).toBe("January 2027");
   });
 });

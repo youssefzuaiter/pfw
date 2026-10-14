@@ -23,7 +23,15 @@ name: Production smoke check
 # tell `production` (the migration gate) from `Production` (Vercel). The
 # first run after a migration deploy did exactly that: smoke-tested a
 # github.com Actions URL, four 404s, a failure email for a healthy site.
-# Hence the creator check, with the URL shape as a second guard.
+#
+# The filter is the URL's shape, not who created the deployment. A
+# creator check (`vercel[bot]`) was tried and silently skipped real
+# deploys: when the migration workflow runs on a commit before Vercel
+# finishes building it — the recommended "migrate in the same sitting" —
+# Vercel posts its success onto the GitHub Deployment the migration job
+# already created, whose creator is the person who dispatched it. Seen on
+# 2ae09d2. Vercel's statuses carry a *.vercel.app URL; the migration
+# job's carry a github.com Actions URL; that difference is reliable.
 on:
   deployment_status:
 
@@ -36,9 +44,8 @@ jobs:
     name: Smoke-test the production deployment
     if: >-
       github.event.deployment_status.state == 'success' &&
-      github.event.deployment.creator.login == 'vercel[bot]' &&
       startsWith(github.event.deployment_status.target_url, 'https://') &&
-      contains(github.event.deployment_status.target_url, '.vercel.app')
+      endsWith(github.event.deployment_status.target_url, '.vercel.app')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
