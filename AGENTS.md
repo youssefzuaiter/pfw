@@ -8807,6 +8807,43 @@ re-denominating every stored amount, which was never on the table.
   still shekels; with no synced rate for the chosen currency the figures are
   approximate (and say so).
 
+## 3ppp. A monthly review page (ad hoc)
+
+The monthly email (§3lll) only reaches the Resend account's own address
+until a sending domain is verified, and covers one month. `/review` shows
+the same figures for any month, in the app.
+
+- **`/review?month=YYYY-MM`** (`src/app/(finance)/review/page.tsx`, a
+  sub-view linked from the dashboard's quick links, not a primary
+  destination): money in, spending and net against the month before;
+  spending by category as Tickbar shares; the five largest expenses (native
+  amount beside the converted one for a foreign row); the net-worth change
+  from the nightly snapshots; and the core account with VT over the same
+  days (§3mmm). Defaults to this month ("so far … through" today); an
+  invalid or future month falls back to this month; an empty month says so.
+  Totals are in the reporting currency (§3nnn).
+- **One source with the email**: `buildMonthlyReview`
+  (`src/server/reports/monthly-review.ts`, `cache()`-wrapped) calls the same
+  `gatherMonthlyReport`, which gained a `categoryLimit` option (the email
+  keeps five, the page lists all). New: `listLargestExpensesInRange` (DAL,
+  `REAL_MONEY`, negative only), `shiftMonthKey`/`formatMonthKey`
+  (`date-month.ts`), and `src/lib/monthly-review.ts` (`changeFrom` in
+  integer basis points rounded half away from zero, measured against the
+  size of a negative starting figure; `spendingShares`).
+- **The email now links to `/review?month=…`** for its month instead of the
+  dashboard.
+- **Verified**: unit tests for the arithmetic (rounding both ways, a zero or
+  negative starting month, ties) and the month helpers (year boundaries);
+  integration tests against real Postgres (all six categories where the
+  email stops at five, the month before, the largest expenses in order with
+  a transfer and a deleted row left out, another user's month empty);
+  mutation-checked (dropping the transfer filter was caught). In the
+  browser: September and the current month on the demo account, an empty
+  month, a future and a malformed month falling back, no horizontal overflow
+  at 375 px; `/review` joined the axe accessibility audit.
+- **Not built**: per-month exchange rates (§3nnn's limitation applies),
+  category drill-down links, a chart of months side by side.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

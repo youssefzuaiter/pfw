@@ -87,7 +87,8 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
   const label = monthLabel(data.monthKey);
   const subject = `Your PFW summary for ${label}`;
   const blocks = sections(data);
-  const dashboardUrl = `${appUrl.replace(/\/$/, "")}/dashboard`;
+  // The month's full review page (AGENTS.md §3ppp): every category, the largest expenses.
+  const reviewUrl = `${appUrl.replace(/\/$/, "")}/review?month=${data.monthKey}`;
   const rate = describeReportingRate(data.reporting ?? ILS_REPORTING);
   const rateNote = rate ? `Totals converted at ${rate}. Amounts are recorded in shekels.` : null;
 
@@ -100,7 +101,7 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
       "",
     ]),
     ...(rateNote ? [rateNote, ""] : []),
-    `Open the dashboard: ${dashboardUrl}`,
+    `See the full review: ${reviewUrl}`,
     "You receive this because the monthly report is turned on in Settings.",
   ].join("\n");
 
@@ -120,7 +121,7 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
   const html = `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px">
 <h1 style="font-size:18px;margin:0 0 4px">${escapeHtml(subject)}</h1>${htmlBlocks}
 ${rateNote ? `<p style="margin-top:16px;font-size:12px;color:dimgray">${escapeHtml(rateNote)}</p>` : ""}
-<p style="margin-top:24px;font-size:14px"><a href="${escapeHtml(dashboardUrl)}">Open the dashboard</a></p>
+<p style="margin-top:24px;font-size:14px"><a href="${escapeHtml(reviewUrl)}">See the full review</a></p>
 <p style="font-size:12px;color:dimgray">You receive this because the monthly report is turned on in Settings.</p>
 </div>`;
 
