@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeftRight, LineChart, PiggyBank, Radar, Receipt, TrendingUp, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, LineChart, PiggyBank, Radar, Receipt, TrendingUp, type LucideIcon } from "lucide-react";
 
 type QuickLink = {
   href: string;
@@ -28,6 +28,7 @@ type QuickLink = {
 const QUICK_LINKS: QuickLink[] = [
   { href: "/budgets", label: "Budget", icon: PiggyBank },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/review", label: "Monthly review", icon: CalendarDays },
   { href: "/transactions/subscriptions", label: "Subscription Radar", icon: Radar },
   { href: "/trading/portfolio", label: "Trading / Portfolio", icon: LineChart },
   { href: "/analytics", label: "Retirement Analytics", icon: TrendingUp },
