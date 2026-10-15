@@ -44,6 +44,17 @@ export type LedgerCommitState = {
    * simply has one fewer to serialize.
    */
   providerTransactionId?: string | null;
+  /**
+   * The exchange rate the shekel amount was converted at, as the exact
+   * six-decimal text stored in `exchangeRateAtEntry` ("3.037667"). Present
+   * only for a row recorded in a currency other than shekels.
+   *
+   * Without it the chain covered both amounts but not the rate linking
+   * them, so the stored rate could be changed without breaking
+   * verification (AGENTS.md §3www). Optional, so every commit written
+   * before this field existed hashes exactly as it did.
+   */
+  exchangeRate?: string;
 };
 
 /**

@@ -3,13 +3,15 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "../../../../components/badge/badge";
+import { CurrencyPicker } from "../../../../components/currency/currency-picker";
 import { Spinner } from "../../../../components/spinner/spinner";
-import { formatAgorot } from "../../../../lib/money";
+import { CURRENCY_SYMBOLS, formatNativeAmount, nativeAmount, type CurrencyCode } from "../../../../lib/currency";
+import { useEnteredAmount } from "../../../../lib/hooks/use-entered-amount";
 import type { ParsedReceipt } from "../../../../lib/receipt-parser";
 import { parseReceiptText } from "../../../../lib/receipt-parser";
 import { useInlineStyleProperty } from "../../../../lib/hooks/use-inline-style-property";
 
-type BankAccountOption = { id: string; label: string };
+type BankAccountOption = { id: string; label: string; currency: CurrencyCode };
 type Stage = "idle" | "processing" | "review" | "submitting" | "error";
 
 // Deliberately narrow — this dialog's content is fixed, not arbitrary
@@ -43,6 +45,11 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
   const [occurredAt, setOccurredAt] = useState("");
   const [amount, setAmount] = useState("");
   const [bankAccountId, setBankAccountId] = useState(bankAccounts[0]?.id ?? "");
+  // The receipt's currency: defaults to the account's (AGENTS.md §3www).
+  // The OCR total is read as plain minor units, so it means whatever
+  // currency is picked here. A receipt is always an expense.
+  const [currency, setCurrency] = useState<CurrencyCode>(bankAccounts[0]?.currency ?? "ILS");
+  const entered = useEnteredAmount({ currency, amount, negative: true, day: occurredAt });
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const openButtonRef = useRef<HTMLButtonElement>(null);
@@ -88,6 +95,13 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
     setMerchantName("");
     setOccurredAt("");
     setAmount("");
+    setCurrency(bankAccounts.find((account) => account.id === bankAccountId)?.currency ?? "ILS");
+  }
+
+  function handleAccountChange(event: ChangeEvent<HTMLSelectElement>) {
+    setBankAccountId(event.target.value);
+    const account = bankAccounts.find((option) => option.id === event.target.value);
+    if (account) setCurrency(account.currency);
   }
 
   function handleOpen() {
@@ -165,6 +179,10 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!bankAccountId || !amount.trim() || !merchantName.trim()) return;
+    if (entered.status !== "shekels" && entered.expectedAmountAgorot === null) {
+      setError(entered.message ?? "The shekel amount isn't ready yet.");
+      return;
+    }
 
     setStage("submitting");
     setError(null);
@@ -189,6 +207,8 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
           // of what was typed, rather than trusting a sign the user
           // never actually entered.
           amount: `-${amount.trim().replace(/^-/, "")}`,
+          currency,
+          expectedAmountAgorot: entered.expectedAmountAgorot ?? undefined,
           occurredAt: new Date(occurredAt).toISOString(),
           description: merchantName.trim(),
           merchantName: merchantName.trim(),
@@ -197,6 +217,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (body.code === "rate_changed") entered.refresh();
         throw new Error(body.error ?? "Failed to add the transaction");
       }
 
@@ -314,7 +335,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                     />
                   </label>
                   <label className="flex flex-1 flex-col gap-1">
-                    <span className="text-xs font-medium text-muted">Total (₪)</span>
+                    <span className="text-xs font-medium text-muted">Total ({CURRENCY_SYMBOLS[currency]})</span>
                     <input
                       inputMode="decimal"
                       value={amount}
@@ -324,11 +345,20 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                     />
                   </label>
                 </div>
+                <CurrencyPicker id="receipt-currency" value={currency} onChange={setCurrency} />
+                {entered.message && (
+                  <p
+                    aria-live="polite"
+                    className={`text-xs ${entered.status === "error" ? "text-negative" : "text-muted"}`}
+                  >
+                    {entered.message}
+                  </p>
+                )}
                 <label className="flex flex-col gap-1">
                   <span className="text-xs font-medium text-muted">Account</span>
                   <select
                     value={bankAccountId}
-                    onChange={(event) => setBankAccountId(event.target.value)}
+                    onChange={handleAccountChange}
                     required
                     className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
@@ -340,7 +370,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                   </select>
                 </label>
                 {parsed?.taxAgorot !== null && parsed?.taxAgorot !== undefined && (
-                  <p className="text-xs text-muted">Detected tax: {formatAgorot(parsed.taxAgorot)}</p>
+                  <p className="text-xs text-muted">Detected tax: {formatNativeAmount(nativeAmount(parsed.taxAgorot), currency)}</p>
                 )}
                 {parsed && parsed.lineItems.length > 0 && (
                   <details className="text-xs text-muted">
@@ -349,7 +379,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                       {parsed.lineItems.map((item, index) => (
                         <li key={index} className="flex justify-between">
                           <span>{item.description}</span>
-                          <span className="font-tabular-figures">{formatAgorot(item.amountAgorot)}</span>
+                          <span className="font-tabular-figures">{formatNativeAmount(nativeAmount(item.amountAgorot), currency)}</span>
                         </li>
                       ))}
                     </ul>
@@ -367,7 +397,7 @@ export function ReceiptScannerModal({ bankAccounts }: { bankAccounts: readonly B
                   </button>
                   <button
                     type="submit"
-                    disabled={stage === "submitting" || !bankAccountId}
+                    disabled={stage === "submitting" || !bankAccountId || entered.status === "loading"}
                     className="uv-btn-press flex items-center gap-2 rounded-md border border-transparent bg-accent px-4 py-2 text-sm font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                   >
                     {stage === "submitting" && <Spinner />}

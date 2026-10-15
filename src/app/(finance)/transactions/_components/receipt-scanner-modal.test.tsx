@@ -9,7 +9,7 @@ vi.mock("../../../../lib/receipt-ocr", () => ({ recognizeReceiptText: recognizeR
 
 const { ReceiptScannerModal } = await import("./receipt-scanner-modal");
 
-const BANK_ACCOUNTS = [{ id: "acc-1", label: "Checking (…1234)" }];
+const BANK_ACCOUNTS = [{ id: "acc-1", label: "Checking (…1234)", currency: "ILS" as const }];
 
 function makeImageFile(name = "receipt.jpg") {
   return new File(["fake-image-bytes"], name, { type: "image/jpeg" });

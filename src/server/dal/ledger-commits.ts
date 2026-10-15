@@ -21,10 +21,12 @@ export type LedgerableTransaction = {
   occurredAt: Date;
   description: string;
   merchantName: string | null;
+  /** A Prisma `Decimal(12,6)`; null for a shekel row. */
+  exchangeRateAtEntry?: { toFixed(digits: number): string } | null;
 };
 
 export function buildLedgerState(row: LedgerableTransaction): LedgerCommitState {
-  return {
+  const state: LedgerCommitState = {
     transactionId: row.id,
     categoryId: row.categoryId,
     categoryName: row.categoryName,
@@ -35,6 +37,13 @@ export function buildLedgerState(row: LedgerableTransaction): LedgerCommitState 
     description: row.description,
     merchantName: row.merchantName,
   };
+  // Only a foreign-currency row carries a rate, and only then is it hashed,
+  // so a shekel row's state (and every commit written before rates were
+  // hashed) is unchanged.
+  if (row.currency !== "ILS" && row.exchangeRateAtEntry) {
+    state.exchangeRate = row.exchangeRateAtEntry.toFixed(6);
+  }
+  return state;
 }
 
 /**
@@ -116,7 +125,23 @@ export type LedgerVerificationResult = {
   valid: boolean;
   /** The id of the first commit whose stored hash doesn't match what's recomputed from its own patchData/previousHash — null when `valid` is true or there are no commits at all. */
   brokenAtCommitId: string | null;
+  /**
+   * The money fields where the live row differs from its latest commit
+   * (AGENTS.md §3www) — empty when they agree or there are no commits.
+   * When non-empty, `valid` is false and `brokenAtCommitId` is that latest
+   * commit.
+   */
+  mismatchedFields: string[];
 };
+
+/**
+ * The fields of a row that nothing in this app ever changes after the row
+ * is created, so its latest commit must still hold them exactly. Category,
+ * description, merchant and the deleted flag are left out: each of those
+ * changes through a path that appends its own commit, and a category
+ * RENAME (which does not) would otherwise read as tampering.
+ */
+const IMMUTABLE_MONEY_FIELDS = ["amountAgorot", "currency", "nativeAmount", "occurredAtIso"] as const;
 
 /**
  * Recomputes every commit's hash from its own stored `patchData` and
@@ -132,6 +157,12 @@ export type LedgerVerificationResult = {
  * ever actually happen through this app's own runtime role — this
  * function is what makes that guarantee CHECKABLE rather than merely
  * asserted.
+ *
+ * Then it compares the LIVE row with the latest commit (AGENTS.md §3www):
+ * amount, currency, native amount, date, and the exchange rate when that
+ * commit recorded one. An intact chain alone proves only that the history
+ * is unaltered; without this check, editing the transaction row itself
+ * (its amount, or the rate it was converted at) would go unnoticed.
  */
 export async function verifyLedgerChain(userId: string, transactionId: string): Promise<LedgerVerificationResult> {
   const commits = await getLedgerHistory(userId, transactionId);
@@ -139,14 +170,40 @@ export async function verifyLedgerChain(userId: string, transactionId: string): 
   let expectedPreviousHash: string | null = null;
   for (const commit of commits) {
     if (commit.previousHash !== expectedPreviousHash) {
-      return { valid: false, brokenAtCommitId: commit.id };
+      return { valid: false, brokenAtCommitId: commit.id, mismatchedFields: [] };
     }
     const recomputed = computeLedgerCommitHash(commit.previousHash, commit.patchData);
     if (recomputed !== commit.currentHash) {
-      return { valid: false, brokenAtCommitId: commit.id };
+      return { valid: false, brokenAtCommitId: commit.id, mismatchedFields: [] };
     }
     expectedPreviousHash = commit.currentHash;
   }
 
-  return { valid: true, brokenAtCommitId: null };
+  const head = commits.at(-1);
+  if (!head) return { valid: true, brokenAtCommitId: null, mismatchedFields: [] };
+
+  const row = await withUserScope(userId, (tx) =>
+    tx.notableTransaction.findFirst({
+      where: { id: transactionId, userId },
+      select: { amount: true, currency: true, nativeAmount: true, occurredAt: true, exchangeRateAtEntry: true },
+    }),
+  );
+  if (!row) return { valid: true, brokenAtCommitId: null, mismatchedFields: [] };
+
+  const live: Record<(typeof IMMUTABLE_MONEY_FIELDS)[number], string> = {
+    amountAgorot: row.amount.toString(),
+    currency: row.currency,
+    nativeAmount: row.nativeAmount.toString(),
+    occurredAtIso: row.occurredAt.toISOString(),
+  };
+  const mismatchedFields: string[] = IMMUTABLE_MONEY_FIELDS.filter((field) => head.patchData[field] !== live[field]);
+  // A commit written before rates were hashed has no `exchangeRate` key;
+  // only a commit that recorded one can be held to it.
+  if ("exchangeRate" in head.patchData && head.patchData.exchangeRate !== (row.exchangeRateAtEntry?.toFixed(6) ?? undefined)) {
+    mismatchedFields.push("exchangeRate");
+  }
+
+  return mismatchedFields.length > 0
+    ? { valid: false, brokenAtCommitId: head.id, mismatchedFields }
+    : { valid: true, brokenAtCommitId: null, mismatchedFields: [] };
 }

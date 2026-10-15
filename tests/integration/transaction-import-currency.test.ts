@@ -30,19 +30,14 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("imp
   let tryAccountA: { id: string };
   let ilsAccountA: { id: string };
 
-  /** 1 TRY = ₪0.09 — deliberately NOT a real synced rate, so a real row can't accidentally satisfy the assertions. */
-  const TEST_TRY_RATE = 0.09;
+  /** 1 TRY = ₪0.09 for every day — deliberately NOT a real synced rate, so a real row can't accidentally satisfy the assertions. */
   const fixedRateSource: ImportRateSource = {
-    getLatestRateFetchedAt: async () => new Date(),
-    getLatestRateTable: async () => ({ ILS: 1, USD: 3.7, EUR: 4, GBP: 4.7, TRY: TEST_TRY_RATE }),
-    syncRates: async () => undefined,
+    listRatePoints: async () => [{ day: "2020-01-01", micros: 90_000 }],
+    syncRateHistory: async () => undefined,
   };
   const noRateSource: ImportRateSource = {
-    getLatestRateFetchedAt: async () => null,
-    getLatestRateTable: async () => {
-      throw new Error("must not be consulted when no rate exists");
-    },
-    syncRates: async () => undefined,
+    listRatePoints: async () => [],
+    syncRateHistory: async () => undefined,
   };
 
   function row(
@@ -120,7 +115,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("imp
   it("re-importing the same rows is a no-op regardless of the rate on the day (native-amount dedupe keys)", async () => {
     const differentRateSource: ImportRateSource = {
       ...fixedRateSource,
-      getLatestRateTable: async () => ({ ILS: 1, USD: 3.7, EUR: 4, GBP: 4.7, TRY: 0.12 }),
+      listRatePoints: async () => [{ day: "2020-01-01", micros: 120_000 }],
     };
     const summary = await importTransactions(userA.id, {
       bankAccountId: tryAccountA.id,
@@ -183,9 +178,9 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("imp
     let rateConsulted = false;
     const spyingSource: ImportRateSource = {
       ...fixedRateSource,
-      getLatestRateFetchedAt: async () => {
+      listRatePoints: async () => {
         rateConsulted = true;
-        return new Date();
+        return [{ day: "2020-01-01", micros: 90_000 }];
       },
     };
     await expect(
@@ -197,5 +192,29 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("imp
       }),
     ).rejects.toThrow(BankAccountNotFoundError);
     expect(rateConsulted).toBe(false);
+  });
+  it("freezes each row at its own day's rate, exactly, the stored rate reproducing the stored agorot (AGENTS.md §3www)", async () => {
+    const twoDaySource: ImportRateSource = {
+      listRatePoints: async () => [
+        { day: "2026-04-03", micros: 85_123 }, // Friday
+        { day: "2026-04-06", micros: 92_876 }, // Monday
+      ],
+      syncRateHistory: async () => undefined,
+    };
+    const summary = await importTransactions(userA.id, {
+      bankAccountId: tryAccountA.id,
+      adapterId: "turkish-signed-amount",
+      rateSource: twoDaySource,
+      rows: [
+        row({ nativeAmount: -100_000, dedupeKeySource: "day-fri", occurredAt: new Date("2026-04-03T00:00:00.000Z") }),
+        row({ nativeAmount: -100_000, dedupeKeySource: "day-sun", occurredAt: new Date("2026-04-05T00:00:00.000Z") }),
+        row({ nativeAmount: -100_000, dedupeKeySource: "day-mon", occurredAt: new Date("2026-04-06T00:00:00.000Z") }),
+      ],
+    });
+    expect(summary.importedCount).toBe(3);
+    const stored = await admin.notableTransaction.findMany({ where: { id: { in: summary.importedIds } }, orderBy: { occurredAt: "asc" } });
+    expect(stored.map((t) => t.exchangeRateAtEntry?.toFixed(6))).toEqual(["0.085123", "0.085123", "0.092876"]);
+    // -1,000.00 TRY × 0.085123 = -85.123 ILS → -8512; × 0.092876 → -9288.
+    expect(stored.map((t) => t.amount)).toEqual([-8512n, -8512n, -9288n]);
   });
 });

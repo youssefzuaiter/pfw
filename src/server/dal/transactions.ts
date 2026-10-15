@@ -6,6 +6,8 @@ import { applyRules, type TransactionRuleData } from "../../lib/categorization/r
 import type { PastOccurrence } from "../../lib/categorization/types";
 import { neutralizeFormulaInjection } from "../../lib/csv-import/formula-injection";
 import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model";
+import { BASE_CURRENCY, type CurrencyCode } from "../../lib/currency";
+import { convertNativeToAgorotExact, rateMicrosFromDecimal } from "../../lib/fx-history";
 import { agorot } from "../../lib/money";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { parsePgVectorLiteral, toPgVectorLiteral } from "../../lib/vector-math";
@@ -327,6 +329,14 @@ export type CreateTransactionInput = {
   bankAccountId: string;
   /** Signed agorot — negative for an expense, positive for income. */
   amountAgorot: bigint;
+  /**
+   * What the user actually typed, when it wasn't shekels (AGENTS.md §3www):
+   * the currency, the signed amount in its minor units, and the rate it was
+   * locked at as the exact six-decimal text. Omitted for a shekel entry.
+   * `amountAgorot` must be exactly `nativeAmount` × `exchangeRate`, rounded
+   * half away from zero — checked here, not trusted from the caller.
+   */
+  entered?: { currency: CurrencyCode; nativeAmount: bigint; exchangeRate: string };
   occurredAt: Date;
   description: string;
   merchantName?: string;
@@ -369,7 +379,19 @@ export type CreateTransactionInput = {
  * defined deterministic rules) ahead of the cascade — see the Tier 0
  * block below for exactly what bypasses what.
  */
+/** Thrown when `entered` and `amountAgorot` disagree — a caller bug, never user input. */
+export class EnteredAmountMismatchError extends Error {
+  constructor() {
+    super("amountAgorot is not the entered amount converted at the entered rate");
+    this.name = "EnteredAmountMismatchError";
+  }
+}
+
 export async function createTransaction(userId: string, input: CreateTransactionInput) {
+  const foreign = input.entered && input.entered.currency !== BASE_CURRENCY ? input.entered : null;
+  if (foreign && BigInt(convertNativeToAgorotExact(foreign.nativeAmount, rateMicrosFromDecimal(foreign.exchangeRate))) !== input.amountAgorot) {
+    throw new EnteredAmountMismatchError();
+  }
   return withUserScope(userId, async (tx) => {
     const account = await tx.bankAccount.findFirst({ where: { id: input.bankAccountId, userId } });
     if (!account) throw new BankAccountNotFoundError();
@@ -455,9 +477,10 @@ export async function createTransaction(userId: string, input: CreateTransaction
         bankAccountId: input.bankAccountId,
         categoryId,
         occurredAt: input.occurredAt,
-        currency: "ILS",
+        currency: foreign ? foreign.currency : BASE_CURRENCY,
         amount: input.amountAgorot,
-        nativeAmount: input.amountAgorot,
+        nativeAmount: foreign ? foreign.nativeAmount : input.amountAgorot,
+        exchangeRateAtEntry: foreign ? foreign.exchangeRate : null,
         description,
         merchantName: finalMerchantName,
         isManual: true,

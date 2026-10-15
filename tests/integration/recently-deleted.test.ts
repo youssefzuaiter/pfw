@@ -159,7 +159,7 @@ describe.skipIf(!hasDb)("recently deleted", () => {
     for (const id of ids) {
       const actions = (await admin.ledgerCommit.findMany({ where: { transactionId: id }, orderBy: { createdAt: "asc" }, select: { action: true } })).map((c) => c.action);
       expect(actions).toEqual(["DELETE", "RESTORE"]);
-      expect(await verifyLedgerChain(userId, id)).toEqual({ valid: true, brokenAtCommitId: null });
+      expect(await verifyLedgerChain(userId, id)).toEqual({ valid: true, brokenAtCommitId: null, mismatchedFields: [] });
     }
     // The row that was already live got no commit from the restore.
     expect(await admin.ledgerCommit.count({ where: { transactionId: stillLive.id, action: "RESTORE" } })).toBe(0);

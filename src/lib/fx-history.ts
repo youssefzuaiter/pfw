@@ -79,6 +79,43 @@ export function convertAgorotExact(amount: number | bigint, micros: number): num
   return Number(signed);
 }
 
+/**
+ * The reverse direction: native minor units × (micros / 1e6), rounded half
+ * away from zero, exactly. This is the one conversion that turns an amount
+ * entered or imported in a foreign currency into the agorot the ledger
+ * stores, so the stored `exchangeRateAtEntry` × `nativeAmount` always
+ * reproduces the stored `amount` to the agorah (AGENTS.md §3www).
+ *
+ * A float `amount * rate` cannot promise that: on a product that lands
+ * exactly on half an agorah it rounds the wrong way about one time in
+ * seven (100,000 at 0.285085 is 28,508.5, which float arithmetic sees as
+ * 28,508.4999… and rounds down).
+ */
+export function convertNativeToAgorotExact(amount: number | bigint, micros: number): number {
+  if (!Number.isSafeInteger(micros) || micros <= 0) throw new RangeError(`Rate must be positive micros: ${micros}`);
+  if (typeof amount === "number" && !Number.isSafeInteger(amount)) throw new RangeError(`Amount must be a safe integer: ${amount}`);
+  const value = BigInt(amount);
+  const magnitude = value < 0n ? -value : value;
+  // round(m × r / 1e6) half up on the magnitude: floor((2·m·r + 1e6) / 2e6)
+  const rounded = (2n * magnitude * BigInt(micros) + MICROS_PER_UNIT) / (2n * MICROS_PER_UNIT);
+  const signed = value < 0n ? -rounded : rounded;
+  if (signed > BigInt(Number.MAX_SAFE_INTEGER) || signed < BigInt(Number.MIN_SAFE_INTEGER)) {
+    throw new RangeError("Converted amount is outside the safe integer range");
+  }
+  return Number(signed);
+}
+
+/**
+ * Micros as the exact six-decimal text a `Decimal(12,6)` column stores:
+ * 3_037_667 → "3.037667". Writing this string (never a float) is what keeps
+ * the stored rate identical to the one the conversion used.
+ */
+export function formatRateMicros(micros: number): string {
+  if (!Number.isSafeInteger(micros) || micros <= 0) throw new RangeError(`Rate must be positive micros: ${micros}`);
+  const text = String(micros).padStart(7, "0");
+  return `${text.slice(0, -6)}.${text.slice(-6)}`;
+}
+
 export type RateOnDay = {
   micros: number;
   /** The day the rate was published, or null when no rate exists at all (a fallback). */

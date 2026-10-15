@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { ShekelEquivalentHint } from "../../../components/currency/shekel-equivalent-hint";
 
 export function CreateGoalForm() {
   const router = useRouter();
@@ -69,6 +70,7 @@ export function CreateGoalForm() {
           placeholder="10000.00"
           className="w-32 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
+        <ShekelEquivalentHint value={targetAmount} />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="goal-target-date" className="text-xs font-medium text-muted">

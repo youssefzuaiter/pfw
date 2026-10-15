@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CurrencyCode } from "../../lib/currency";
-import { type ImportRateSource, NoExchangeRateError, resolveImportRate } from "./transaction-import";
+import type { RatePoint } from "../../lib/fx-history";
+import { NoExchangeRateError, resolveImportRates } from "./transaction-import";
 
 /**
  * The rate gate in front of a foreign-currency statement import, tested
@@ -10,77 +10,57 @@ import { type ImportRateSource, NoExchangeRateError, resolveImportRate } from ".
  * path itself has integration coverage in
  * tests/integration/transaction-import-currency.test.ts.
  */
-type FakeSource = {
-  getLatestRateFetchedAt: ReturnType<typeof vi.fn<ImportRateSource["getLatestRateFetchedAt"]>>;
-  getLatestRateTable: ReturnType<typeof vi.fn<ImportRateSource["getLatestRateTable"]>>;
-  syncRates: ReturnType<typeof vi.fn<ImportRateSource["syncRates"]>>;
-};
-
-function fakeSource(overrides: Partial<FakeSource> = {}): FakeSource {
-  const table: Record<CurrencyCode, number> = { ILS: 1, USD: 3.7, EUR: 4, GBP: 4.7, TRY: 0.09 };
+function fakeSource(points: RatePoint[], afterSync: RatePoint[] = points) {
+  let synced = false;
   return {
-    getLatestRateFetchedAt: vi.fn<ImportRateSource["getLatestRateFetchedAt"]>(async () => new Date()),
-    getLatestRateTable: vi.fn<ImportRateSource["getLatestRateTable"]>(async () => table),
-    syncRates: vi.fn<ImportRateSource["syncRates"]>(async () => undefined),
-    ...overrides,
+    listRatePoints: vi.fn(async () => (synced ? afterSync : points)),
+    syncRateHistory: vi.fn(async () => {
+      synced = true;
+    }),
   };
 }
 
-describe("resolveImportRate", () => {
+const HISTORY: RatePoint[] = [
+  { day: "2026-08-28", micros: 90_000 }, // Friday
+  { day: "2026-08-31", micros: 95_000 }, // Monday
+];
+
+describe("resolveImportRates", () => {
   it("returns null for ILS without consulting the source at all", async () => {
-    const source = fakeSource();
-    expect(await resolveImportRate("ILS", source)).toBeNull();
-    expect(source.getLatestRateFetchedAt).not.toHaveBeenCalled();
-    expect(source.getLatestRateTable).not.toHaveBeenCalled();
-    expect(source.syncRates).not.toHaveBeenCalled();
+    const source = fakeSource(HISTORY);
+    expect(await resolveImportRates("ILS", ["2026-08-29"], source)).toBeNull();
+    expect(source.listRatePoints).not.toHaveBeenCalled();
   });
 
-  it("returns the stored rate without syncing when one already exists", async () => {
-    const source = fakeSource();
-    expect(await resolveImportRate("TRY", source)).toBe(0.09);
-    expect(source.syncRates).not.toHaveBeenCalled();
+  it("locks each day at its own rate, a weekend at Friday's", async () => {
+    const rates = await resolveImportRates("TRY", ["2026-08-28", "2026-08-30", "2026-08-31", "2026-09-04"], fakeSource(HISTORY));
+    expect(rates?.get("2026-08-28")).toMatchObject({ micros: 90_000, rate: "0.090000", rateDay: "2026-08-28" });
+    expect(rates?.get("2026-08-30")).toMatchObject({ micros: 90_000, rateDay: "2026-08-28" });
+    expect(rates?.get("2026-08-31")).toMatchObject({ micros: 95_000, rate: "0.095000" });
+    // A day past the newest stored rate takes the newest one.
+    expect(rates?.get("2026-09-04")).toMatchObject({ micros: 95_000, rateDay: "2026-08-31" });
   });
 
-  it("syncs exactly once on demand when nothing has been stored yet, then uses the freshly stored rate", async () => {
-    let stored = false;
-    const source = fakeSource({
-      getLatestRateFetchedAt: vi.fn<ImportRateSource["getLatestRateFetchedAt"]>(async () => (stored ? new Date() : null)),
-      syncRates: vi.fn<ImportRateSource["syncRates"]>(async () => {
-        stored = true;
-      }),
+  it("backfills once when no history is stored, then uses it", async () => {
+    const source = fakeSource([], HISTORY);
+    const rates = await resolveImportRates("TRY", ["2026-08-31"], source);
+    expect(source.syncRateHistory).toHaveBeenCalledTimes(1);
+    expect(rates?.get("2026-08-31")?.micros).toBe(95_000);
+  });
+
+  it("refuses with NoExchangeRateError when there is still no rate — never the fallback guess", async () => {
+    const source = fakeSource([]);
+    await expect(resolveImportRates("TRY", ["2026-08-31"], source)).rejects.toThrow(NoExchangeRateError);
+    await expect(resolveImportRates("TRY", ["2026-08-31"], source)).rejects.toThrow(/TRY.*2026-08-31/);
+  });
+
+  it("refuses a statement with a row dated before the stored history, naming the day", async () => {
+    const source = fakeSource(HISTORY);
+    await expect(resolveImportRates("TRY", ["2026-08-31", "2026-08-27"], source)).rejects.toMatchObject({
+      code: "no_exchange_rate",
+      day: "2026-08-27",
     });
-    expect(await resolveImportRate("TRY", source)).toBe(0.09);
-    expect(source.syncRates).toHaveBeenCalledTimes(1);
-  });
-
-  it("refuses with NoExchangeRateError when no rate exists and the sync produces none — never the fallback guess", async () => {
-    const source = fakeSource({ getLatestRateFetchedAt: vi.fn<ImportRateSource["getLatestRateFetchedAt"]>(async () => null) });
-    await expect(resolveImportRate("TRY", source)).rejects.toThrow(NoExchangeRateError);
-    await expect(resolveImportRate("TRY", source)).rejects.toThrow(/TRY/);
-    // The table (which would have handed back FALLBACK_RATES.TRY) is
-    // never even consulted on this path.
-    expect(source.getLatestRateTable).not.toHaveBeenCalled();
-  });
-
-  it("treats a THROWING sync (e.g. the stale-data circuit breaker firing for another currency) as 'no rate arrived', not as its own error", async () => {
-    const source = fakeSource({
-      getLatestRateFetchedAt: vi.fn<ImportRateSource["getLatestRateFetchedAt"]>(async () => null),
-      syncRates: vi.fn<ImportRateSource["syncRates"]>(async () => {
-        throw new Error("StaleDataError: USD is 30h old");
-      }),
-    });
-    await expect(resolveImportRate("TRY", source)).rejects.toThrow(NoExchangeRateError);
-  });
-
-  it("still succeeds when the sync throws but DID store the wanted rate before failing", async () => {
-    let stored = false;
-    const source = fakeSource({
-      getLatestRateFetchedAt: vi.fn<ImportRateSource["getLatestRateFetchedAt"]>(async () => (stored ? new Date() : null)),
-      syncRates: vi.fn<ImportRateSource["syncRates"]>(async () => {
-        stored = true;
-        throw new Error("partial failure after the upsert");
-      }),
-    });
-    expect(await resolveImportRate("TRY", source)).toBe(0.09);
+    // It tried to backfill first.
+    expect(source.syncRateHistory).toHaveBeenCalled();
   });
 });
