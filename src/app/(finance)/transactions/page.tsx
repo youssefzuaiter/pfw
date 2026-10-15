@@ -51,16 +51,17 @@ export default async function TransactionsPage({
     label: account.nickname
       ? `${account.nickname} — ${account.institutionName}`
       : `${account.institutionName} ••${account.last4}`,
+    // The manual-entry and receipt modals default their currency picker to
+    // the account's own currency (AGENTS.md §3www).
+    currency: account.currency,
   }));
   // The currency is part of the label in the import form specifically:
   // it decides which statement layouts are accepted and what every
   // parsed amount means, so a user picking "QNB ••7669 · TRY" can see
-  // which ledger a file is about to land in. The manual-entry and
-  // receipt modals keep the plain label (they book ILS, §3q).
+  // which ledger a file is about to land in.
   const importAccountOptions = bankAccounts.map((account, index) => ({
     ...accountOptions[index],
     label: `${accountOptions[index].label} · ${account.currency}`,
-    currency: account.currency,
   }));
 
   const rows: TransactionRow[] = transactions.map((t) => ({

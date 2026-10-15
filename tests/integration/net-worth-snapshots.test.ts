@@ -57,7 +57,10 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("net
 
   it("adds a new row on the next day, and the history reads them oldest first", async () => {
     // `getNetWorthHistory` looks back from the real clock, so these rows are
-    // dated relative to now, not to the fixed dates above.
+    // dated relative to now, not to the fixed dates above. Those earlier rows
+    // are cleared first: once the real clock is within a week of them they
+    // would fall inside the 7-day window and appear in the history too.
+    await admin.netWorthSnapshot.deleteMany({ where: { userId: userA.id } });
     const today = new Date();
     const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
     await recordNetWorthSnapshot(userA.id, yesterday);

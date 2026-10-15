@@ -6,6 +6,7 @@ import { Badge } from "../../../../components/badge/badge";
 import { ShareResourceControl } from "../../../../components/household/share-resource-control";
 import { Spinner } from "../../../../components/spinner/spinner";
 import { Tickbar, type TickbarStatus } from "../../../../components/tickbar/tickbar";
+import { ShekelEquivalentHint } from "../../../../components/currency/shekel-equivalent-hint";
 
 function statusFromUtilization(utilization: number): TickbarStatus {
   if (utilization >= 1) return "critical";
@@ -103,6 +104,7 @@ export function EnvelopeRow({
               inputMode="decimal"
               className="w-28 rounded-md border border-border bg-elevated px-2 py-1 text-right text-sm font-tabular-figures tracking-tight text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
+            <ShekelEquivalentHint value={amount} />
             <button
               type="submit"
               disabled={isSubmitting}

@@ -66,4 +66,24 @@ describe("computeLedgerCommitHash", () => {
     expect(hash).toHaveLength(64);
     expect(hash).not.toBe(computeLedgerCommitHash("x", BASE_STATE));
   });
+
+  describe("the exchange rate (AGENTS.md §3www)", () => {
+    // Computed with the code on `main` before the rate field existed: a
+    // commit written then must still hash exactly the same today.
+    const HASH_BEFORE_RATES_ILS = "f664c66736f65ad885ee29ab60b9874e32a9db222cffd9c73c20c0713eb1df4a";
+    const HASH_BEFORE_RATES_USD = "1895dd72504c871ff202fd368d8c512d87936e6efb24512bf0c9bb2e9f65abc1";
+    const USD_STATE: LedgerCommitState = { ...BASE_STATE, amountAgorot: "-15158", currency: "USD", nativeAmount: "-4990" };
+
+    it("leaves every commit written before rates were hashed unchanged", () => {
+      expect(computeLedgerCommitHash(null, BASE_STATE)).toBe(HASH_BEFORE_RATES_ILS);
+      expect(computeLedgerCommitHash(null, USD_STATE)).toBe(HASH_BEFORE_RATES_USD);
+    });
+
+    it("covers the rate: changing only the rate changes the hash", () => {
+      const locked = computeLedgerCommitHash(null, { ...USD_STATE, exchangeRate: "3.037667" });
+      expect(locked).not.toBe(HASH_BEFORE_RATES_USD);
+      expect(computeLedgerCommitHash(null, { ...USD_STATE, exchangeRate: "3.037668" })).not.toBe(locked);
+      expect(computeLedgerCommitHash(null, { ...USD_STATE, exchangeRate: "3.037667" })).toBe(locked);
+    });
+  });
 });

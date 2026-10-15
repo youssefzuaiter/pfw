@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { ShekelEquivalentHint } from "../../../components/currency/shekel-equivalent-hint";
 
 export function UpdateValuationForm({ assetId }: { assetId: string }) {
   const router = useRouter();
@@ -48,6 +49,7 @@ export function UpdateValuationForm({ assetId }: { assetId: string }) {
         placeholder="₪510000.00"
         className="w-32 rounded-md border border-border bg-elevated px-2 py-1 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
+      <ShekelEquivalentHint value={currentValue} />
       <button
         type="submit"
         disabled={isSubmitting || !currentValue.trim()}

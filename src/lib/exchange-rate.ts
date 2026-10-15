@@ -14,6 +14,7 @@
 
 import { agorot, type Agorot } from "./money";
 import { BASE_CURRENCY, nativeAmount, type CurrencyCode, type NativeAmount } from "./currency";
+import { convertAgorotExact, convertNativeToAgorotExact, rateMicrosFromNumber } from "./fx-history";
 
 /** ILS per 1 unit of the given currency. Used only when no synced rate exists yet
  * (a fresh install, or the sync service's own fetch is unavailable) — see
@@ -57,9 +58,9 @@ export function convertNativeAmountToAgorot(amount: NativeAmount, currency: Curr
     return agorot(amount);
   }
   assertValidRate(rate, currency);
-  const scaled = amount * rate;
-  const rounded = Math.sign(scaled) * Math.round(Math.abs(scaled));
-  return agorot(rounded);
+  // Exact integer math at the rate's stored precision (six decimals), so the
+  // stored rate always reproduces the stored agorot (AGENTS.md §3www).
+  return agorot(convertNativeToAgorotExact(amount, rateMicrosFromNumber(rate)));
 }
 
 /**
@@ -74,9 +75,7 @@ export function convertAgorotToNativeAmount(amount: Agorot, currency: CurrencyCo
     return nativeAmount(amount);
   }
   assertValidRate(rate, currency);
-  const scaled = amount / rate;
-  const rounded = Math.sign(scaled) * Math.round(Math.abs(scaled));
-  return nativeAmount(rounded);
+  return nativeAmount(convertAgorotExact(amount, rateMicrosFromNumber(rate)));
 }
 
 /** "3.7" -> "3.7000" for consistent-width display in rate tables/tooltips. */

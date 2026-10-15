@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
 import { useZkVaultStore } from "../../../lib/stores/zk-vault-store";
 import { zkVaultEncrypt } from "../../../lib/workers/zk-vault-worker-client";
+import { ShekelEquivalentHint } from "../../../components/currency/shekel-equivalent-hint";
 
 export function AddContributionForm({ goalId }: { goalId: string }) {
   const router = useRouter();
@@ -59,6 +60,7 @@ export function AddContributionForm({ goalId }: { goalId: string }) {
         placeholder="₪500.00"
         className="w-28 rounded-md border border-border bg-elevated px-2 py-1 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
+      <ShekelEquivalentHint value={amount} />
       <label className="sr-only" htmlFor={`contribution-note-${goalId}`}>
         Encrypted note (optional)
       </label>

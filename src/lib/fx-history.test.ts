@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertAgorotExact, rateMicrosFromDecimal, rateMicrosFromNumber, rateOnDay, sortRateHistory, utcDayKey, type RatePoint } from "./fx-history";
+import { convertAgorotExact, convertNativeToAgorotExact, formatRateMicros, rateMicrosFromDecimal, rateMicrosFromNumber, rateOnDay, sortRateHistory, utcDayKey, type RatePoint } from "./fx-history";
 
 /** The date-aware rate lookup and the one exact conversion (AGENTS.md §3vvv). */
 describe("utcDayKey", () => {
@@ -156,5 +156,112 @@ describe("sortRateHistory", () => {
       { day: "2026-08-28", micros: 2 },
       { day: "2026-08-31", micros: 3 },
     ]);
+  });
+});
+
+/**
+ * Native minor units → agorot, the conversion that freezes a foreign
+ * amount into the ledger (AGENTS.md §3www). The reference below is a
+ * separate BigInt formulation (scale, add half the divisor, divide) so the
+ * check is not the implementation compared with itself.
+ */
+function reference(amount: bigint, micros: bigint): bigint {
+  const negative = amount < 0n;
+  const scaled = (negative ? -amount : amount) * micros;
+  const whole = scaled / 1_000_000n;
+  const remainder = scaled % 1_000_000n;
+  const rounded = remainder >= 500_000n ? whole + 1n : whole;
+  return negative ? -rounded : rounded;
+}
+
+describe("convertNativeToAgorotExact", () => {
+  it("rounds an exact half agorah away from zero, where float multiplication rounds the wrong way", () => {
+    // Each of these products is exactly x.5 agorot; `Math.round(amount * rate)`
+    // gives one less because the float product is x.4999….
+    const floatFailures: Array<[number, number, number]> = [
+      [100_000, 285_085, 28_509],
+      [100_000, 601_845, 60_185],
+      [25_000, 1_116_580, 27_915],
+      [175_000, 1_116_580, 195_402],
+      [150_000, 1_670_910, 250_637],
+    ];
+    for (const [amount, micros, expected] of floatFailures) {
+      expect(Math.round(amount * (micros / 1_000_000))).toBe(expected - 1); // the bug being prevented
+      expect(convertNativeToAgorotExact(amount, micros)).toBe(expected);
+      expect(convertNativeToAgorotExact(-amount, micros)).toBe(-expected);
+    }
+  });
+
+  it("agrees with an independent BigInt reference across many amounts and six-decimal rates", () => {
+    let seed = 20261014;
+    const next = () => (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648);
+    for (let i = 0; i < 20_000; i++) {
+      const micros = 1 + (next() % 9_999_999); // 0.000001 .. 9.999999
+      const amount = (next() % 2_000_000_000) - 1_000_000_000;
+      expect(convertNativeToAgorotExact(amount, micros)).toBe(Number(reference(BigInt(amount), BigInt(micros))));
+    }
+    // And every exact-half case for a few real rates.
+    for (const micros of [3_037_667, 62_267, 4_712_309]) {
+      for (let amount = 1; amount < 200_000; amount++) {
+        if ((BigInt(amount) * BigInt(micros)) % 1_000_000n !== 500_000n) continue;
+        expect(convertNativeToAgorotExact(amount, micros)).toBe(Number(reference(BigInt(amount), BigInt(micros))));
+      }
+    }
+  });
+
+  it("is exact for the whole safe range of a bigint amount, and refuses a result past it", () => {
+    expect(convertNativeToAgorotExact(9_000_000_000_000n, 1_000_000)).toBe(9_000_000_000_000);
+    expect(convertNativeToAgorotExact(-2_000_000_000_000n, 4_500_000)).toBe(-9_000_000_000_000);
+    expect(() => convertNativeToAgorotExact(9_000_000_000_000_000n, 2_000_000)).toThrow(RangeError);
+  });
+
+  it("is the identity at a rate of exactly 1 and zero at zero", () => {
+    for (const amount of [0, 1, -1, 12_345, -987_654_321]) expect(convertNativeToAgorotExact(amount, 1_000_000)).toBe(amount);
+    expect(convertNativeToAgorotExact(0, 3_037_667)).toBe(0);
+  });
+
+  it("refuses a non-integer amount or a non-positive rate", () => {
+    expect(() => convertNativeToAgorotExact(1.5, 1_000_000)).toThrow(RangeError);
+    expect(() => convertNativeToAgorotExact(100, 0)).toThrow(RangeError);
+    expect(() => convertNativeToAgorotExact(100, -5)).toThrow(RangeError);
+    expect(() => convertNativeToAgorotExact(100, 1.5)).toThrow(RangeError);
+  });
+
+  it("converts there and back within one rounding step, and repeating it never drifts further", () => {
+    for (const micros of [3_037_667, 62_267, 4_012_345, 285_085]) {
+      for (let amount = -5_000; amount <= 5_000; amount += 7) {
+        const shekels = convertNativeToAgorotExact(amount, micros);
+        const back = convertAgorotExact(shekels, micros);
+        // Going back can only lose what one rounding to the agorah lost.
+        const tolerance = Math.ceil(1_000_000 / micros);
+        expect(Math.abs(back - amount)).toBeLessThanOrEqual(tolerance);
+        // A second trip lands on the same figures: no compounding.
+        expect(convertNativeToAgorotExact(back, micros)).toBe(convertNativeToAgorotExact(convertAgorotExact(convertNativeToAgorotExact(back, micros), micros), micros));
+      }
+    }
+  });
+
+  it("gives the same total whether rows are converted one by one and summed, in any order", () => {
+    const micros = 62_267;
+    const rows = Array.from({ length: 500 }, (_, i) => ((i * 7_919) % 100_000) - 50_000);
+    const forward = rows.reduce((sum, amount) => sum + convertNativeToAgorotExact(amount, micros), 0);
+    const backward = [...rows].reverse().reduce((sum, amount) => sum + convertNativeToAgorotExact(amount, micros), 0);
+    expect(backward).toBe(forward);
+  });
+});
+
+describe("formatRateMicros", () => {
+  it("writes micros as the exact six-decimal text the database stores, and reads back unchanged", () => {
+    expect(formatRateMicros(3_037_667)).toBe("3.037667");
+    expect(formatRateMicros(62_267)).toBe("0.062267");
+    expect(formatRateMicros(1)).toBe("0.000001");
+    expect(formatRateMicros(1_000_000)).toBe("1.000000");
+    expect(formatRateMicros(12_345_678_901)).toBe("12345.678901");
+    for (const micros of [1, 62_267, 3_037_667, 999_999_999]) expect(rateMicrosFromDecimal(formatRateMicros(micros))).toBe(micros);
+  });
+
+  it("refuses a rate that is not positive whole micros", () => {
+    expect(() => formatRateMicros(0)).toThrow(RangeError);
+    expect(() => formatRateMicros(3.5)).toThrow(RangeError);
   });
 });
