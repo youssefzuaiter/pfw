@@ -20,6 +20,10 @@ const MAX_TAB_PRESSES = 800;
 
 for (const route of ROUTES) {
   test(`${route}: repeated Tab always lands on a visible element, never gets stuck on <body>`, async ({ page }) => {
+    // /transactions has about 70 rows of six Tab stops each, and a CI run
+    // took 32s against the default 30s limit. The check itself is unchanged:
+    // the cap above still bounds the loop, this only gives it time to finish.
+    test.setTimeout(120_000);
     await page.goto(route);
     await page.waitForLoadState("networkidle");
 
