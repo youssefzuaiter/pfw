@@ -16,7 +16,7 @@ test.describe("reporting currency", () => {
       await page.goto("/dashboard");
       await page.getByRole("heading", { level: 1, name: "Dashboard" }).waitFor({ state: "visible" });
 
-      await expect(page.getByText(/^Totals shown in US dollars at ₪\d+\.\d{4} per \$1/)).toBeVisible();
+      await expect(page.getByText(/^Totals shown in US dollars; today’s rate is ₪\d+\.\d{4} per \$1/)).toBeVisible();
       const netWorth = page.locator('[aria-labelledby="net-worth-heading"]');
       await expect(netWorth).toContainText(/-?\$[\d,]+\.\d\d/);
       await expect(netWorth).not.toContainText("₪");

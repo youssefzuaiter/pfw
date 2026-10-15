@@ -56,6 +56,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       })),
       chainValid: verification.valid,
       brokenAtCommitId: verification.brokenAtCommitId,
+      mismatchedFields: verification.mismatchedFields,
     });
   } catch (error) {
     console.error("GET /api/transactions/[id]/ledger failed", error);

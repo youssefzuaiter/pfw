@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { CurrencyPicker } from "../../../../components/currency/currency-picker";
 import { Spinner } from "../../../../components/spinner/spinner";
 import { ToggleSwitch } from "../../../../components/toggle/toggle-switch";
+import { CURRENCY_SYMBOLS, type CurrencyCode } from "../../../../lib/currency";
+import { useEnteredAmount } from "../../../../lib/hooks/use-entered-amount";
 
-type BankAccountOption = { id: string; label: string };
+type BankAccountOption = { id: string; label: string; currency: CurrencyCode };
 
 // Deliberately narrow — this dialog's content is fixed, not arbitrary
 // markup — same convention as ReceiptScannerModal/MobileNav's drawer.
@@ -31,6 +34,10 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
   const [amount, setAmount] = useState("");
   const [occurredAt, setOccurredAt] = useState("");
   const [bankAccountId, setBankAccountId] = useState(bankAccounts[0]?.id ?? "");
+  // Defaults to the account's own currency (AGENTS.md §3www); any supported
+  // currency can be picked, and the server locks the rate on submit.
+  const [currency, setCurrency] = useState<CurrencyCode>(bankAccounts[0]?.currency ?? "ILS");
+  const entered = useEnteredAmount({ currency, amount, negative: !isIncome, day: occurredAt });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,7 +80,14 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
     setDescription("");
     setAmount("");
     setOccurredAt("");
+    setCurrency(bankAccounts.find((account) => account.id === bankAccountId)?.currency ?? "ILS");
     setError(null);
+  }
+
+  function handleAccountChange(event: ChangeEvent<HTMLSelectElement>) {
+    setBankAccountId(event.target.value);
+    const account = bankAccounts.find((option) => option.id === event.target.value);
+    if (account) setCurrency(account.currency);
   }
 
   function handleOpen() {
@@ -90,6 +104,10 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!bankAccountId || !amount.trim() || !description.trim()) return;
+    if (entered.status !== "shekels" && entered.expectedAmountAgorot === null) {
+      setError(entered.message ?? "The shekel amount isn't ready yet.");
+      return;
+    }
 
     setIsSubmitting(true);
     setError(null);
@@ -109,6 +127,8 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
         body: JSON.stringify({
           bankAccountId,
           amount: signedAmount,
+          currency,
+          expectedAmountAgorot: entered.expectedAmountAgorot ?? undefined,
           occurredAt: new Date(occurredAt).toISOString(),
           description: description.trim(),
           merchantName: description.trim(),
@@ -117,6 +137,9 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
+        // The rate moved between the preview and the submit: show the new
+        // figure and let the user submit again, never store a surprise.
+        if (body.code === "rate_changed") entered.refresh();
         throw new Error(body.error ?? "Failed to add the transaction");
       }
 
@@ -205,7 +228,7 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
                   />
                 </label>
                 <label className="flex flex-1 flex-col gap-1">
-                  <span className="text-xs font-medium text-muted">Amount (₪)</span>
+                  <span className="text-xs font-medium text-muted">Amount ({CURRENCY_SYMBOLS[currency]})</span>
                   <input
                     inputMode="decimal"
                     value={amount}
@@ -216,11 +239,20 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
                   />
                 </label>
               </div>
+              <CurrencyPicker id="txn-currency" value={currency} onChange={setCurrency} />
+              {entered.message && (
+                <p
+                  aria-live="polite"
+                  className={`text-xs ${entered.status === "error" ? "text-negative" : "text-muted"}`}
+                >
+                  {entered.message}
+                </p>
+              )}
               <label className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-muted">Account</span>
                 <select
                   value={bankAccountId}
-                  onChange={(event) => setBankAccountId(event.target.value)}
+                  onChange={handleAccountChange}
                   required
                   className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
@@ -243,7 +275,7 @@ export function AddTransactionModal({ bankAccounts }: { bankAccounts: readonly B
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting || !bankAccountId}
+                  disabled={isSubmitting || !bankAccountId || entered.status === "loading"}
                   className="uv-btn-press flex items-center gap-2 rounded-md border border-transparent bg-accent px-4 py-2 text-sm font-medium text-bg hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 >
                   {isSubmitting && <Spinner />}

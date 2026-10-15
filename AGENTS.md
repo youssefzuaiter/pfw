@@ -9215,6 +9215,160 @@ signed-in user owns, decrypted. Audited first; two findings shaped it.
   files parse, no CSP violation.
 - **Not built**: a scheduled or emailed export, and an import of an export.
 
+## 3vvv. Historical exchange rates for past money (ad hoc)
+
+§3nnn's reporting currency converted every figure, last year's included,
+at today's rate, so a month's dollar total moved whenever the shekel
+moved, and a month's categories did not add up to the month. This pass
+converts money that moved on a day at that day's rate.
+
+- **What the audit found.** `ExchangeRate` already kept one row per
+  currency per business day (`Decimal(12,6)`, `asOfDate` a `@db.Date`),
+  but only from the first nightly sync onwards, so there was no history to
+  use. `getReportingContext` loaded one rate. `convertAgorotToNativeAmount`
+  divided in floating point (33 agorot at 4.4 gave 7 cents instead of 8),
+  and days were already UTC day keys everywhere. The ECB publishes no
+  weekend or holiday rows.
+- **The rule** (`src/lib/fx-history.ts`, `src/lib/reporting-currency.ts`):
+  - money that moved (a transaction, a month's income or spending, a
+    category's spend) uses the rate of its own UTC day;
+  - a historical snapshot uses its own day's rate;
+  - balances, budgets, goals, debts, assets, forecasts, Monte Carlo and
+    plans use today's rate;
+  - a transaction already recorded in the reporting currency shows its own
+    native amount, exactly.
+
+  A day's rate is the newest stored rate on or before it, so a weekend or
+  holiday takes the last business day's. A day before the stored history
+  takes the earliest rate and is flagged approximate. With no rates at all,
+  the fallback table is used.
+- **Exact rounding.** A rate is held as whole millionths parsed from the
+  decimal text (3.037667 is 3,037,667), and
+  `convertAgorotExact` computes `agorot × 1e6 ÷ micros` in BigInt, rounded
+  half away from zero. Each transaction is rounded once and the results
+  are summed, so a total equals the sum of its categories, its months and
+  its days, in any order. A seeded 2,000-transaction test checks this.
+- **Where it shows**:
+  - the transactions list and recently deleted;
+  - the dashboard's income/expense chart, donut, net-worth sparkline and
+    change (`net-worth-change.tsx`);
+  - `/review` and the monthly email (`*Shown` fields gathered once in
+    `gatherMonthlyReport`, so the page and the email cannot differ);
+  - the advisor's history, spending and recent-transactions tools, and the
+    copilot's injected transactions.
+
+  `ReportingRateNote` and the email state the rule and the first stored
+  day. Spike detection still compares in shekels and only formats in the
+  reporting currency.
+- **History** (`syncRateHistory` in `rate-sync.ts`): one Frankfurter time
+  series request (`/v1/{from}..{to}?base=ILS`). The first run fetches
+  `RATE_HISTORY_DAYS` (about 3 years); each later run re-reads the last 14
+  days. If any currency's history starts more than a week late (TRY was
+  added later), it fetches the whole window again. Inserts use
+  `createMany` with `skipDuplicates`, so an existing row is never changed.
+  It runs nightly as the `fx-rate-history` cron job after `fx-rate-sync`,
+  and by hand with `npm run sync:rates:history`. No migration.
+- **Verified**:
+  - unit tests: 20 in `fx-history.test.ts` (23:59 vs 00:01, offsets, the
+    leap day, weekend and holiday fallback, before-history, rounding both
+    ways, a brute-force lookup comparison), the rewritten
+    `reporting-currency.test.ts` (month split, native exactness, the
+    additivity test), 7 for the history sync;
+  - `tests/integration/historical-rates.test.ts`: checks expected values
+    against a separate SQL rate lookup, and that the dashboard, `/review`,
+    the email data and the advisor agree to the cent;
+  - mutation checks, each caught: weekend taking Monday's rate, a shifted
+    day key, truncating instead of rounding, ignoring a same-currency
+    native amount, dashboard months at today's rate;
+  - `npm run check` 2149 passed / 4 skipped; Playwright 50 passed;
+  - locally: 3 years backfilled (3,061 rows, 767 per currency). In the
+    browser in dollars, August's categories added up exactly to its
+    spending, and the 3 August rent matched in the transactions list, the
+    review's largest expenses and its category.
+- **Known limitations**:
+  - budgets and goals use today's rate on purpose: they are amounts you
+    plan in shekels today;
+  - the recurring-charge insight's average uses today's rate;
+  - before the stored history (about 3 years back), amounts use the
+    earliest rate;
+  - the trading screens stay in shekels (`convertAgorotToNativeAmount`
+    is exact since §3www);
+  - production has no history until the first nightly `fx-rate-history`
+    run (or a manual cron trigger). Until then, past figures use the
+    earliest stored rate and are labelled approximate.
+
+## 3www. Entering amounts in another currency (ad hoc)
+
+Asked for: type a transaction in lira, dollars or any supported currency
+while the ledger keeps exact shekel figures. Audited first, then built on
+`feat/currency-entry`, stacked on §3vvv's branch. The three decisions the
+user took: real currency entry on the two transaction forms, exact integer
+conversion everywhere money is converted on the way in, and per-day rates
+for imports.
+
+- **No migration.** `NotableTransaction` already had `currency`,
+  `nativeAmount` and `exchangeRateAtEntry` (§3k); manual entry just never
+  filled them with anything but shekels.
+- **The float bug this fixes.** `convertNativeAmountToAgorot` was
+  `Math.round(amount * rate)`. Against every exact half-agorah case in a
+  sweep, 216 of 1,432 rounded the wrong way (100,000 at 0.285085 gave
+  28,508, not 28,509). `convertNativeToAgorotExact` (`fx-history.ts`)
+  computes `native × micros / 1e6` in BigInt, half away from zero, and
+  `convertNativeAmountToAgorot`/`convertAgorotToNativeAmount` now go
+  through it, so imports, the PSD2 sync, trades and dividends are exact
+  too. The stored rate times the stored entered amount now always gives
+  the stored shekels.
+- **Rate locking** (`src/server/currency/lock-rate.ts`): the newest stored
+  rate on or before the transaction's UTC day (a weekend takes Friday's,
+  §3vvv's rule). A frozen figure must use a real rate, so a day before the
+  stored history, or no history at all, is refused (`NoRateForDayError`)
+  after one backfill attempt; never the fallback table.
+- **Preview, then submit.** `GET /api/exchange-rates/on?currency=&day=`
+  (identity check, 60/min) returns the locked rate; `useEnteredAmount`
+  shows "Records as ₪151.58 at ₪3.037667 per $1, rate of 2026-10-09"
+  computed with the same exact function, and sends that figure as
+  `expectedAmountAgorot`. `POST /api/transactions` re-locks the rate and
+  answers 409 `rate_changed` if its figure differs (a sync ran in between;
+  the form fetches the rate again), 422 `no_rate_for_day`, 400 when the
+  amount converts to zero. `currency` defaults to the account's. Shekel
+  entry is unchanged and makes no rate lookup. `createTransaction` checks
+  the arithmetic once more (`EnteredAmountMismatchError`) before writing.
+- **Forms**: Add transaction and the receipt scanner gained a currency
+  picker (defaults to the account's currency and follows it), a live
+  preview line, and the currency symbol in the amount label; the scanner's
+  detected tax and line items show in the chosen currency.
+- **Imports** convert each row at its own day's rate
+  (`resolveImportRates`), not one rate for the whole file. §3bbb's
+  "converts at the rate current at import time" limitation is gone.
+- **Ledger**: `LedgerCommitState` gained an optional `exchangeRate`
+  (six-decimal text), present only for a foreign row, so commits written
+  before this hash exactly as before (two pre-change hashes are pinned in
+  `ledger-hash.test.ts`). `verifyLedgerChain` now also compares the live
+  row with its latest commit (amount, currency, native amount, date, and
+  the rate when that commit has one) and returns `mismatchedFields`. Before
+  this, a row edited directly in the database still verified. The history
+  dialog names the field and shows "entered as -$49.90 at ₪3.057263 per $1".
+- **Shekel-only forms** (debts, goals, assets, envelopes, the phone-alert
+  threshold) keep taking shekels, because their tables have no
+  entered-currency columns; `ShekelEquivalentHint` shows "≈ $162.52 at
+  today's rate" beside the input when totals are shown in another currency.
+- **Verified**: `npm run check` 2,188 passed / 4 skipped before the
+  final additions; new suites for rate locking (7), the route (8), the
+  modal (5), the hint (3), and `foreign-currency-entry.test.ts` (6, real
+  Postgres: the four stored fields agree, the half-agorah case, the rate
+  in the CREATE hash, a refused mismatch, direct edits of the rate or the
+  amount caught, a category rename and a pre-§3www commit not mistaken for
+  tampering). 8 mutations, each caught. In a production build: a $49.90
+  purchase dated Sunday 2026-10-11 previewed as ₪152.56 at Friday's
+  3.057263 and was stored exactly so; editing its rate in the database
+  showed "Tampering detected" naming the rate. The goals hint checked live
+  in the browser (₪500 → $162.52 at 3.0766).
+- **Known limitations**: the PSD2 sync converts at the latest rate, not
+  the transaction day's; Settings → Preferences' three ₪ inputs and the
+  debts page's extra-budget field have no hint (the settings form holds
+  numbers, not text, so it needs a small change first); a rate that moves
+  between preview and submit costs one extra click, by design.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

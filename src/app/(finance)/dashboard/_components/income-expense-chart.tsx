@@ -2,8 +2,8 @@
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
-import { agorot } from "../../../../lib/money";
 
+/** Already in the reporting currency's minor units: each transaction converted on its own day (AGENTS.md §3vvv). */
 type MonthPoint = { monthKey: string; income: number; expense: number };
 
 function IncomeExpenseTooltip({
@@ -23,7 +23,7 @@ function IncomeExpenseTooltip({
       {payload.map((entry) =>
         entry.value === undefined ? null : (
           <p key={entry.dataKey} className="font-tabular-figures font-medium tracking-tight text-fg">
-            {entry.name}: {money.format(agorot(Math.round(entry.value)))}
+            {entry.name}: {money.formatMinor(entry.value)}
           </p>
         ),
       )}

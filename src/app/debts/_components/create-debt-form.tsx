@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
+import { ShekelEquivalentHint } from "../../../components/currency/shekel-equivalent-hint";
 
 const DEBT_TYPES = [
   { value: "CREDIT_CARD", label: "Credit card" },
@@ -100,6 +101,7 @@ export function CreateDebtForm() {
           placeholder="5000.00"
           className="w-28 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
+        <ShekelEquivalentHint value={currentBalance} />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="debt-apr" className="text-xs font-medium text-muted">
@@ -126,6 +128,7 @@ export function CreateDebtForm() {
           placeholder="300.00"
           className="w-28 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
+        <ShekelEquivalentHint value={minimumPayment} />
       </div>
       <button
         type="submit"

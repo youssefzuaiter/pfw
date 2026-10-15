@@ -5,13 +5,13 @@ import { applyRules, type TransactionRuleData } from "../../lib/categorization/r
 import type { PastOccurrence } from "../../lib/categorization/types";
 import type { CanonicalImportRow } from "../../lib/csv-import/types";
 import { BASE_CURRENCY, type CurrencyCode } from "../../lib/currency";
-import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
+import { convertNativeToAgorotExact, utcDayKey } from "../../lib/fx-history";
+import { agorot } from "../../lib/money";
+import { lockRatesForDays, NoRateForDayError, type LockedRate, type LockRateDeps } from "../currency/lock-rate";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { buildProviderTransactionId as buildSharedProviderTransactionId } from "../../lib/transaction-dedupe";
-import { syncExchangeRates } from "../currency/rate-sync";
 import { withUserScope } from "../db/with-user-scope";
 import { getOrCreateUncategorizedCategory } from "./categories";
-import { getLatestRateFetchedAt, getLatestRateTable } from "./exchange-rates";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
 /** Bulk imports write row-by-row (see with-user-scope.ts) — well above Prisma's 5s default. */
@@ -55,9 +55,14 @@ export class ImportCurrencyMismatchError extends Error {
  */
 export class NoExchangeRateError extends Error {
   readonly code = "no_exchange_rate";
-  constructor(readonly currency: CurrencyCode) {
+  constructor(
+    readonly currency: CurrencyCode,
+    readonly day?: string,
+  ) {
     super(
-      `No exchange rate for ${currency} has been synced yet, so these rows can't be converted to shekels. Run the rate sync (npm run sync:rates) and try again.`,
+      day
+        ? `No ${currency} exchange rate is stored for ${day} or any day before it, so these rows can't be converted to shekels. Run the rate sync (npm run sync:rates:history) and try again.`
+        : `No exchange rate for ${currency} has been synced yet, so these rows can't be converted to shekels. Run the rate sync (npm run sync:rates:history) and try again.`,
     );
     this.name = "NoExchangeRateError";
   }
@@ -91,24 +96,14 @@ export type ImportSummary = {
 };
 
 /**
- * Where the import's conversion rate comes from. Injectable as one seam
+ * Where the import's conversion rates come from. Injectable as one seam
  * because `ExchangeRate` is a global, non-user-scoped table: a test that
  * needs "no rate exists for TRY" can't arrange that in the shared dev
  * database without racing every other test file that reads the real
  * rows, so tests hand in a fake source instead. Production callers leave
- * it at the default (the real DAL reads + the Frankfurter sync).
+ * it at the default (the stored history + the Frankfurter backfill).
  */
-export type ImportRateSource = {
-  getLatestRateFetchedAt: (currency: CurrencyCode) => Promise<Date | null>;
-  getLatestRateTable: () => Promise<Readonly<Record<CurrencyCode, number>>>;
-  syncRates: () => Promise<unknown>;
-};
-
-const DEFAULT_RATE_SOURCE: ImportRateSource = {
-  getLatestRateFetchedAt,
-  getLatestRateTable: () => getLatestRateTable(),
-  syncRates: () => syncExchangeRates(),
-};
+export type ImportRateSource = LockRateDeps;
 
 export type ImportTransactionsInput = {
   bankAccountId: string;
@@ -118,41 +113,30 @@ export type ImportTransactionsInput = {
 };
 
 /**
- * Resolves the one conversion rate every row of this import is frozen
- * at. ILS needs none (returns `null` without touching the source at
- * all). For any other currency, a REAL stored rate is required — never
- * `FALLBACK_RATE_TABLE`'s guess (see `NoExchangeRateError`): if nothing
- * has ever been synced for it, one sync is attempted on demand (the
- * first import into a brand-new TRY account shouldn't fail just because
- * the nightly cron hasn't run yet), and if that still leaves no row, the
- * import is refused.
+ * Locks one conversion rate per UTC day the statement's rows fall on: the
+ * newest published rate on or before that day, a weekend taking Friday's
+ * (AGENTS.md §3www). ILS needs none (returns `null` without touching the
+ * source). For any other currency every day must have a REAL stored rate,
+ * never `FALLBACK_RATE_TABLE`'s guess (see `NoExchangeRateError`); a missing
+ * history is backfilled once on demand, and if a day still has no rate the
+ * whole import is refused.
  *
- * Accepted, documented limitation: the whole statement converts at the
- * rate current at import time, not per-row historical rates — exactly
- * the trade-off the PSD2 sync path (`sync-service.ts`) already makes,
- * and the reason `exchangeRateAtEntry` is stored per row at all: the
- * rate each row was actually booked at is on the row, auditable.
+ * Each row is frozen at its own day's rate, recorded per row in
+ * `exchangeRateAtEntry`. (Before §3www the whole statement converted at the
+ * rate current on the day of the import.)
  */
-export async function resolveImportRate(
+export async function resolveImportRates(
   currency: CurrencyCode,
-  source: ImportRateSource = DEFAULT_RATE_SOURCE,
-): Promise<number | null> {
+  days: readonly string[],
+  source?: ImportRateSource,
+): Promise<Map<string, LockedRate> | null> {
   if (currency === BASE_CURRENCY) return null;
-
-  if ((await source.getLatestRateFetchedAt(currency)) === null) {
-    try {
-      await source.syncRates();
-    } catch {
-      // A sync failure (including the stale-data circuit breaker firing
-      // for some OTHER currency) is not this import's error to surface;
-      // the re-check below decides.
-    }
-    if ((await source.getLatestRateFetchedAt(currency)) === null) {
-      throw new NoExchangeRateError(currency);
-    }
+  try {
+    return await lockRatesForDays(currency, days, source);
+  } catch (error) {
+    if (error instanceof NoRateForDayError) throw new NoExchangeRateError(currency, error.day);
+    throw error;
   }
-
-  return (await source.getLatestRateTable())[currency];
 }
 
 /**
@@ -203,7 +187,11 @@ export async function importTransactions(
     if (row.currency !== currency) throw new ImportCurrencyMismatchError(currency, row.currency);
   }
 
-  const rate = await resolveImportRate(currency, input.rateSource);
+  const rates = await resolveImportRates(
+    currency,
+    input.rows.map((row) => utcDayKey(row.occurredAt)),
+    input.rateSource,
+  );
 
   return withUserScope(
     userId,
@@ -273,10 +261,11 @@ export async function importTransactions(
         const merchantText = row.merchantName ?? row.description;
 
         // The ILS figure this row is booked at — frozen here, with the
-        // rate it was converted at, never recomputed (AGENTS.md §3k). For
-        // an ILS account `convertNativeAmountToAgorot` is the identity
-        // and never reads the rate (`rate` is null there).
-        const amountAgorot = convertNativeAmountToAgorot(row.nativeAmount, currency, rate ?? 1);
+        // rate of its own day, never recomputed (AGENTS.md §3k, §3www).
+        // Exact integer math, so the stored rate × the stored native amount
+        // reproduces the stored agorot. An ILS row is booked as stated.
+        const locked = rates?.get(utcDayKey(row.occurredAt)) ?? null;
+        const amountAgorot = agorot(locked ? convertNativeToAgorotExact(row.nativeAmount, locked.micros) : row.nativeAmount);
 
         // Tier 0: user-defined deterministic rules, evaluated BEFORE the
         // cascade below. Rename/flag actions always apply regardless of
@@ -347,7 +336,7 @@ export async function importTransactions(
               currency,
               nativeAmount: BigInt(row.nativeAmount),
               amount: BigInt(amountAgorot),
-              exchangeRateAtEntry: rate === null ? null : rate.toString(),
+              exchangeRateAtEntry: locked ? locked.rate : null,
               description: row.description,
               // A Tier 0 `rename` action overrides the imported merchant
               // name; otherwise unchanged.

@@ -3,16 +3,21 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
+import { CURRENCY_SYMBOLS, formatNativeAmount, isSupportedCurrency, nativeAmount } from "../../../../lib/currency";
 import { formatAgorot, agorot } from "../../../../lib/money";
 
 type LedgerCommitView = {
   id: string;
-  action: "CREATE" | "UPDATE";
+  action: "CREATE" | "UPDATE" | "DELETE" | "RESTORE";
   previousHash: string | null;
   currentHash: string;
   patchData: {
     categoryName: string;
     amountAgorot: string;
+    currency?: string;
+    nativeAmount?: string;
+    /** Present on a foreign-currency commit written since rates were hashed (§3www). */
+    exchangeRate?: string;
     description: string;
     merchantName: string | null;
     occurredAtIso: string;
@@ -24,6 +29,16 @@ type LedgerResponse = {
   commits: LedgerCommitView[];
   chainValid: boolean;
   brokenAtCommitId: string | null;
+  /** Money fields where the transaction differs from its latest recorded change. */
+  mismatchedFields?: string[];
+};
+
+const FIELD_LABELS: Record<string, string> = {
+  amountAgorot: "shekel amount",
+  currency: "currency",
+  nativeAmount: "entered amount",
+  occurredAtIso: "date",
+  exchangeRate: "exchange rate",
 };
 
 type Stage = "idle" | "loading" | "ready" | "error";
@@ -57,6 +72,16 @@ function formatTimestamp(iso: string): string {
  * matching this app's own established precedent for this exact shape of
  * dialog (`MobileNav`'s drawer took the same approach).
  */
+/** " (entered as -$49.90 at ₪3.037667 per $1)" for a foreign-currency commit, else nothing. */
+function enteredAmountNote(patch: LedgerCommitView["patchData"]): string | null {
+  const currency = patch.currency;
+  if (!currency || currency === "ILS" || !isSupportedCurrency(currency) || patch.nativeAmount === undefined) return null;
+  const entered = formatNativeAmount(nativeAmount(Number(patch.nativeAmount)), currency);
+  return patch.exchangeRate
+    ? ` (entered as ${entered} at ₪${patch.exchangeRate} per ${CURRENCY_SYMBOLS[currency]}1)`
+    : ` (entered as ${entered})`;
+}
+
 export function LedgerHistoryModal({ transactionId, label }: { transactionId: string; label: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [stage, setStage] = useState<Stage>("idle");
@@ -133,7 +158,7 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className="fixed inset-0 z-40 flex items-center justify-center whitespace-normal text-left p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             aria-label="Close"
@@ -182,10 +207,17 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
                     </Badge>
                   )}
                 </div>
-                {!data.chainValid && (
+                {!data.chainValid && (data.mismatchedFields?.length ?? 0) === 0 && (
                   <p className="text-xs text-negative">
                     A recorded change no longer matches its own cryptographic hash — this history may have been
                     altered outside the normal application flow.
+                  </p>
+                )}
+                {!data.chainValid && (data.mismatchedFields?.length ?? 0) > 0 && (
+                  <p className="text-xs text-negative">
+                    The transaction&apos;s{" "}
+                    {data.mismatchedFields!.map((field) => FIELD_LABELS[field] ?? field).join(", ")} no longer matches its
+                    latest recorded change: it was edited outside the normal application flow.
                   </p>
                 )}
                 <p className="text-xs text-muted">
@@ -214,6 +246,7 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
                           <span className="font-tabular-figures tracking-tight">
                             {formatAgorot(agorot(Number(commit.patchData.amountAgorot)))}
                           </span>
+                          {enteredAmountNote(commit.patchData)}
                         </p>
                         <p className="mt-1 font-mono text-[11px] text-muted">
                           {shortHash(commit.previousHash)} → {shortHash(commit.currentHash)}

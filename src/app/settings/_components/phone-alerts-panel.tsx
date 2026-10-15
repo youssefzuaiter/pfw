@@ -3,6 +3,7 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
 import { NTFY_ORIGIN, TOPIC_RULE, parseNtfyTopic } from "../../../lib/ntfy-topic";
+import { ShekelEquivalentHint } from "../../../components/currency/shekel-equivalent-hint";
 
 export type PhoneAlertSettingsView = { topicHint: string; largeExpenseAgorot: number; includeDetails: boolean };
 
@@ -195,6 +196,7 @@ export function PhoneAlertsPanel({ initial }: { initial: PhoneAlertSettingsView 
               inputMode="decimal"
               className={`${INPUT} w-40`}
             />
+            <ShekelEquivalentHint value={threshold} />
             <label className="flex items-center gap-2 text-xs text-fg">
               <input
                 type="checkbox"

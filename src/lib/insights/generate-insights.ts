@@ -5,7 +5,7 @@ import { generateCashFlowRiskInsights, type CashFlowRiskThresholds } from "./cas
 import { type GoalPaceInput, generateGoalPaceInsights } from "./goal-pace";
 import { type HoldingValue, generatePortfolioConcentrationInsights } from "./portfolio-concentration";
 import { generateRecurringChargeInsights } from "./recurring-charges";
-import { type CategorySpendHistory, generateSpendingSpikeInsights } from "./spending-spikes";
+import { type CategorySpendHistory, type MinorUnitsFormatter, generateSpendingSpikeInsights } from "./spending-spikes";
 import { generateTransactionReviewInsights } from "./transaction-review-queue";
 import { formatAgorot } from "../money";
 import { rankInsights, type Insight, type MoneyFormatter } from "./types";
@@ -22,6 +22,8 @@ export type GenerateInsightsInput = {
   needsReviewCount: number;
   /** Defaults to `formatAgorot`; the dashboard passes the reporting-currency formatter (AGENTS.md §3nnn). */
   formatMoney?: MoneyFormatter;
+  /** Formats a figure already in the reporting currency (the spike text's per-transaction totals, AGENTS.md §3vvv). */
+  formatMinor?: MinorUnitsFormatter;
 };
 
 /**
@@ -34,7 +36,7 @@ export function generateInsights(input: GenerateInsightsInput): Insight[] {
   const formatMoney = input.formatMoney ?? formatAgorot;
   const all: Insight[] = [
     ...generateBudgetBreachInsights(input.envelopes, formatMoney),
-    ...generateSpendingSpikeInsights(input.spendHistories, formatMoney),
+    ...generateSpendingSpikeInsights(input.spendHistories, formatMoney, input.formatMinor),
     ...generateCashFlowRiskInsights(input.cashFlowForecast, input.cashFlowRiskThresholds, formatMoney),
     ...generateGoalPaceInsights(input.goals, formatMoney),
     ...generatePortfolioConcentrationInsights(input.holdings),

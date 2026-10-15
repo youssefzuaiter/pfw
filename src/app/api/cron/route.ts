@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { getCronSecret } from "../../../server/env";
-import { syncExchangeRates } from "../../../server/currency/rate-sync";
+import { syncExchangeRates, syncRateHistory } from "../../../server/currency/rate-sync";
 import { syncCryptoPrices } from "../../../server/crypto/price-sync";
 import { syncEquityQuotes } from "../../../server/market-data/quote-sync";
 import { recordDailyNetWorthSnapshots } from "../../../server/net-worth/snapshot-job";
@@ -117,6 +117,14 @@ export async function GET(request: NextRequest) {
 
   try {
     const fxRateSync = await runJob("fx-rate-sync", syncExchangeRates);
+    // The date-aware conversion's history (AGENTS.md §3vvv): the whole
+    // window the first time, then the last two weeks, so a missed night is
+    // filled in. Stored days are never rewritten.
+    const fxRateHistory = await runJob("fx-rate-history", async () => {
+      const result = await syncRateHistory();
+      if (result.ok) console.log(`cron: fx-rate-history ok — ${result.from}..${result.to} fetched=${result.fetched} added=${result.added}`);
+      return result;
+    });
     const cryptoPriceSync = await runJob("crypto-price-sync", syncCryptoPrices);
     // Latest market price for every trader-booked ticker the mock feed
     // can't price (AGENTS.md §3xx), via the agent's signed /control/quotes.
@@ -230,6 +238,7 @@ export async function GET(request: NextRequest) {
 
     const results = {
       fxRateSync,
+      fxRateHistory,
       cryptoPriceSync,
       equityQuoteSync,
       netWorthSnapshots,

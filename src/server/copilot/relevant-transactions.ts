@@ -1,6 +1,6 @@
 import "server-only";
-import { agorot } from "../../lib/money";
-import { getReportingFormatter } from "../reporting/reporting-context";
+import { formatReportingFlow } from "../../lib/reporting-currency";
+import { getReportingContext } from "../reporting/reporting-context";
 import { listTransactionsByIds } from "../dal/transactions";
 import type { OllamaMessage } from "./ollama-client";
 
@@ -39,13 +39,14 @@ export async function buildRelevantTransactionsMessage(
   const rows = await listTransactionsByIds(userId, transactionIds.slice(0, MAX_RELEVANT_TRANSACTIONS));
   if (rows.length === 0) return null;
 
-  const formatMoney = await getReportingFormatter(userId);
+  const reporting = await getReportingContext(userId);
   const transactions = rows.map((row) => ({
     date: row.occurredAt.toISOString().slice(0, 10),
     merchantName: row.merchantName,
     description: row.description,
     category: row.category.name,
-    amount: formatMoney(agorot(Number(row.amount))),
+    // At the rate of the transaction's own day, or exact in its own currency (AGENTS.md §3vvv).
+    amount: formatReportingFlow(row, reporting),
   }));
 
   return {

@@ -1,4 +1,5 @@
-import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
+import { ReportingFlowAmount } from "../../../../components/currency/reporting-currency-provider";
+import type { CurrencyCode } from "../../../../lib/currency";
 import type { Agorot } from "../../../../lib/money";
 import { CategorySelect } from "./category-select";
 import { LedgerHistoryModal } from "./ledger-history-modal";
@@ -15,14 +16,18 @@ export type TransactionRow = {
   needsReview: boolean;
   /** Money between the user's own accounts — shown, but left out of earned/spent figures. */
   isTransfer: boolean;
+  /** The currency the transaction happened in, and its amount there (minor units). */
+  currency: CurrencyCode;
+  nativeAmount: number;
 };
 
 type Category = { id: string; name: string };
 
-function AmountCell({ amount }: { amount: Agorot }) {
+/** At the rate of the transaction's own day (AGENTS.md §3vvv), or exact when it happened in the reporting currency. */
+function AmountCell({ row }: { row: TransactionRow }) {
   return (
-    <span className={`font-tabular-figures font-medium tracking-tight ${amount < 0 ? "text-fg" : "text-positive"}`}>
-      <ReportingAmount value={amount} />
+    <span className={`font-tabular-figures font-medium tracking-tight ${row.amount < 0 ? "text-fg" : "text-positive"}`}>
+      <ReportingFlowAmount amount={row.amount} occurredAt={row.occurredAt} currency={row.currency} nativeAmount={row.nativeAmount} />
     </span>
   );
 }
@@ -80,7 +85,7 @@ export function TransactionsTable({
                   />
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
-                  <AmountCell amount={row.amount} />
+                  <AmountCell row={row} />
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
                   <span className="inline-flex items-center gap-1">
@@ -105,7 +110,7 @@ export function TransactionsTable({
                   {row.occurredAt.toISOString().slice(0, 10)}
                 </p>
               </div>
-              <AmountCell amount={row.amount} />
+              <AmountCell row={row} />
             </div>
             {row.needsReview && <p className="mt-1 text-xs text-signature">Needs review</p>}
             <div className="mt-2 flex items-center justify-between gap-2">
