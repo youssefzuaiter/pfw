@@ -9369,6 +9369,97 @@ for imports.
   numbers, not text, so it needs a small change first); a rate that moves
   between preview and submit costs one extra click, by design.
 
+## 3xxx. Split transactions (ad hoc)
+
+One transaction's amount divided across categories: a Migros receipt that
+is part groceries, part household. Audited first; the request's own framing
+was corrected before building (the ledger chain is per transaction, not
+across rows; no "safe-to-spend" feature exists; account balances are stored,
+never summed from transactions, so a split cannot move one).
+
+- **Design: allocations, not child rows.** `NotableTransaction` stays the
+  only row that holds money. `TransactionSplit` (migration
+  `20261015150000_transaction_splits`) says how it divides: category, signed
+  agorot, signed native amount, unique per (transaction, category), RLS
+  `tenant_isolation`, both grants stated. Child money rows were rejected:
+  every existing sum would count them twice, and they would collide with
+  import dedupe, the transfer flag, soft delete and the export.
+- **The sum rule, twice.** `planSplits` (`src/lib/transaction-splits.ts`,
+  pure) takes UNSIGNED amounts typed in the transaction's own currency and
+  refuses anything not equal to its amount exactly (one agorah off is
+  `sum_mismatch`, never absorbed), fewer than two parts, a repeated
+  category, or a zero part. A shekel part's agorot is its typed amount; a
+  foreign row's stored agorot are divided in proportion to the typed amounts
+  by `allocateProportionally` (largest remainder, earlier part on a tie), so
+  they add up to the stored figure exactly. The database enforces the same
+  rule with a DEFERRED constraint trigger (`pfw_check_transaction_splits`):
+  at commit, a transaction has no splits or at least two, each with its
+  sign and its owner, adding up in both units. Deferred because replacing
+  splits deletes then inserts.
+- **One reader.** `categoryParts(row)` turns a row into (category, amount)
+  parts: its splits, or the whole amount in its own category. Every total by
+  category goes through it: `getSpendByCategoryInRange` (no longer a
+  `groupBy`), `listRealMoneyFlowsInRange` (one flow per part, so a month in
+  another reporting currency still equals the sum of its categories),
+  envelopes, and the anomaly detector's category buckets (still one
+  transaction for its count and burst features). `listTransactions` and
+  semantic search list a split row under every category it has a part in.
+  `tests/guards/category-totals-read-splits.test.ts` fails on any
+  `notableTransaction.groupBy` by `categoryId`.
+- **The row's own `categoryId`** becomes its largest part, so anything that
+  shows one category still shows something true; lists show
+  `categoryLabel` ("Split: Groceries, Household").
+- **Ledger.** `LedgerCommitState.splits` (sorted by category id; present
+  only while split, so every unsplit state and every older commit hashes as
+  before; canonicalization now sorts nested keys, identical for the old
+  scalar-only states). `setTransactionSplits`
+  (`src/server/dal/transaction-splits.ts`) appends an UPDATE commit per real
+  change and none for a no-op. Every other path that commits (delete,
+  restore, batch delete, rules) now loads splits (`SPLIT_STATE_SELECT`) so
+  it doesn't record a split row as unsplit. `verifyLedgerChain` compares the
+  live splits with the latest commit (categories and amounts, not names)
+  and reports `splits`.
+- **Behaviour.** Setting one category on a split row is refused
+  (`TransactionIsSplitError`, 409); AI suggestions skip such a row; rules
+  leave its category alone (it counts as hand-categorised) but can still
+  rename it or flag it as a transfer. A transfer can't be split. Archived
+  categories and Uncategorized can't hold a part. Delete and restore keep
+  the splits; they drop out of totals with the row. A category holding part
+  of a split can't be deleted (409, "edit those splits first"); the
+  foreign key is NO ACTION so deleting a whole account still cascades.
+  Imports never create splits. The data export includes them;
+  `CROSS_TENANT_FOREIGN_KEYS` lists the two new links.
+- **API and UI.** `PUT /api/transactions/[id]/splits`
+  `{ splits: [{ categoryId, amount: "12.50" }] }` (empty removes), behind
+  `guardMutation`, in the route sweep. On `/transactions` a row has a Split
+  button; a split row shows its categories and "Edit split". The editor
+  shows what is left to assign, keeps Save off until it is exactly zero, has
+  "Rest here", and on phones gives each category its own line. The change
+  history lists each commit's split.
+- **Fixed on the way**: the transactions list kept its own copy of the
+  rows, so a split, delete or transfer saved on the page didn't show until
+  a reload (`transactions-explorer.tsx` now shows the server's rows unless a
+  search is typed).
+- **Verified**: `npm run check` 2,223 passed / 4 skipped with the DB live;
+  unit tests for allocation (2,000 random cases add up), planning, labels
+  and the split hash; `tests/integration/transaction-splits.test.ts` (10,
+  real Postgres): one agorah short or over refused with nothing written; the
+  database refusing an unbalanced, single, wrong-signed, native-only or
+  cross-user set; commits through split, change, no-op, three-way, removal,
+  delete, restore and rename all verifying; a balanced direct edit (one
+  agorah moved, or a category swapped) reported as `splits`; and category
+  totals equal to the transactions in shekels, in USD, in envelopes and in
+  listings, with account balances unchanged. The account-deletion test
+  profile now includes a split. 7 mutations, each caught. Playwright: a new
+  `transaction-splits.spec.ts` (axe on the editor, Save off one agorah
+  short, saved split on the row and in the ledger, removal); the keyboard
+  test's Tab cap rose to 800 for the extra button per row. In the browser:
+  splits saved, edited to three parts and removed; the database refused an
+  unbalanced edit; a balanced one showed "Tampering detected … split".
+- **Not built**: splitting from Add transaction or the receipt scanner
+  (split after saving); splits on the recently-deleted list's labels;
+  per-part notes or merchants.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

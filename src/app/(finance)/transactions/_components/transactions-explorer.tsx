@@ -20,6 +20,7 @@ type ApiRow = {
   isTransfer: boolean;
   currency: TransactionRow["currency"];
   nativeAmount: number;
+  splits: TransactionRow["splits"];
 };
 
 type SearchResponse = { mode: "semantic" | "substring"; results: ApiRow[] };
@@ -41,6 +42,7 @@ function toTransactionRow(row: ApiRow): TransactionRow {
     isTransfer: row.isTransfer,
     currency: row.currency,
     nativeAmount: row.nativeAmount,
+    splits: row.splits,
   };
 }
 
@@ -184,7 +186,11 @@ export function TransactionsExplorer({
         <p className="text-xs text-negative">Search failed — showing your last results. Try again in a moment.</p>
       )}
 
-      <TransactionsTable rows={rows} categories={categories} />
+      {/* With no search typed, show the server's rows as they are now: a
+          change saved on this page (a split, a delete, a transfer) calls
+          router.refresh(), which updates initialRows, and a copy kept in
+          state would go on showing the old ones until a reload. */}
+      <TransactionsTable rows={query.trim() === "" ? initialRows : rows} categories={categories} />
     </div>
   );
 }

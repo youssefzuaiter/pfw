@@ -47,6 +47,7 @@ type SearchRow = {
   isTransfer: boolean;
   currency: string;
   nativeAmount: bigint;
+  splits: { categoryId: string; amount: bigint; nativeAmount: bigint; category: { name: string } }[];
 };
 
 function serializeRow(row: SearchRow) {
@@ -66,6 +67,12 @@ function serializeRow(row: SearchRow) {
     isTransfer: row.isTransfer,
     currency: row.currency,
     nativeAmount: Number(row.nativeAmount),
+    splits: row.splits.map((split) => ({
+      categoryId: split.categoryId,
+      categoryName: split.category.name,
+      amountAgorot: Number(split.amount),
+      nativeAmount: Number(split.nativeAmount),
+    })),
   };
 }
 

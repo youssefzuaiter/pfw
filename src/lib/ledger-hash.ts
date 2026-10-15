@@ -55,6 +55,22 @@ export type LedgerCommitState = {
    * before this field existed hashes exactly as it did.
    */
   exchangeRate?: string;
+  /**
+   * How the amount divides across categories (AGENTS.md §3xxx), sorted by
+   * category id. Present only while the transaction is split, so every
+   * unsplit row's state, and every commit written before splits existed,
+   * hashes exactly as it did.
+   */
+  splits?: LedgerSplitState[];
+};
+
+/** One category's share in a commit; amounts are signed decimal strings. */
+export type LedgerSplitState = {
+  categoryId: string;
+  /** Frozen as it was at the commit, like `categoryName` above. */
+  categoryName: string;
+  amountAgorot: string;
+  nativeAmount: string;
 };
 
 /**
@@ -64,9 +80,22 @@ export type LedgerCommitState = {
  * never depend on an incidental engine behavior; sorting explicitly
  * makes "canonical" actually mean something.
  */
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value !== null && typeof value === "object") {
+    const sortedEntries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+    return Object.fromEntries(sortedEntries.map(([key, inner]) => [key, sortKeysDeep(inner)]));
+  }
+  return value;
+}
+
+/**
+ * Nested objects (the `splits` entries) are sorted too. Every field before
+ * splits was a scalar, so for those states this is byte-for-byte the
+ * top-level sort it replaced, and their hashes are unchanged.
+ */
 function canonicalize(state: LedgerCommitState): string {
-  const sortedEntries = Object.entries(state).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(Object.fromEntries(sortedEntries));
+  return JSON.stringify(sortKeysDeep(state));
 }
 
 /**

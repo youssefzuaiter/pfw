@@ -68,6 +68,13 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
   try {
     const result = await deleteCategoryWithReassignment(user.id, id);
+    if (!result.ok && result.error === "in_split") {
+      const noun = result.splitCount === 1 ? "split transaction" : "split transactions";
+      return NextResponse.json(
+        { error: `This category holds part of ${result.splitCount} ${noun}. Edit those splits first, then delete it.`, code: "in_split" },
+        { status: 409 },
+      );
+    }
     if (!result.ok) {
       // "is_uncategorized" is also reported as 404 — the permanent
       // Uncategorized category isn't a resource that can not-exist from

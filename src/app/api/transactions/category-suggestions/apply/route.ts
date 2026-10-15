@@ -4,7 +4,7 @@ import { guardMutation } from "../../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonServerError } from "../../../../../server/api/responses";
 import { recordAuditLog } from "../../../../../server/dal/audit-log";
 import { createRulesFromSuggestions } from "../../../../../server/dal/transaction-rules";
-import { updateTransactionCategory } from "../../../../../server/dal/transactions";
+import { updateTransactionCategory, TransactionIsSplitError } from "../../../../../server/dal/transactions";
 
 const BodySchema = z.object({
   choices: z
@@ -56,7 +56,11 @@ export async function POST(request: NextRequest) {
   try {
     let updated = 0;
     for (const { transactionId, categoryId } of parsed.data.choices) {
-      const row = await updateTransactionCategory(user.id, transactionId, categoryId);
+      // A row split since the suggestions were made is skipped, not re-filed.
+      const row = await updateTransactionCategory(user.id, transactionId, categoryId).catch((error: unknown) => {
+        if (error instanceof TransactionIsSplitError) return null;
+        throw error;
+      });
       if (row) updated += 1;
     }
     const skipped = parsed.data.choices.length - updated;

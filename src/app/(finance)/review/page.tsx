@@ -8,6 +8,7 @@ import { getCurrentUser } from "../../../server/auth/current-user";
 import { formatReportingFlow, formatReportingMinorUnits } from "../../../lib/reporting-currency";
 import { getReportingContext } from "../../../server/reporting/reporting-context";
 import { buildMonthlyReview } from "../../../server/reports/monthly-review";
+import { categoryLabel } from "../../../lib/transaction-splits";
 
 // Per-user financial data, never prerendered or cached across requests (AGENTS.md §3c).
 export const instant = false;
@@ -147,7 +148,7 @@ export default async function MonthlyReviewPage({
                     <div className="min-w-0">
                       <p className="truncate text-fg">{expense.merchantName ?? expense.description}</p>
                       <p className="text-xs text-muted">
-                        {expense.occurredAt.toISOString().slice(0, 10)} · {expense.category.name}
+                        {expense.occurredAt.toISOString().slice(0, 10)} · {categoryLabel(expense)}
                       </p>
                     </div>
                     <div className="shrink-0 text-right">

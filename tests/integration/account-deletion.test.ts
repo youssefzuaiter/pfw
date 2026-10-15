@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAdminClient } from "../../src/server/db/admin-client";
 import { CROSS_TENANT_FOREIGN_KEYS, deleteAccount } from "../../src/server/account/delete-account";
 import { createTransaction, updateTransactionCategory } from "../../src/server/dal/transactions";
+import { setTransactionSplits } from "../../src/server/dal/transaction-splits";
 import { recordAuditLog } from "../../src/server/dal/audit-log";
 import { enablePhoneAlerts } from "../../src/server/dal/phone-alerts";
 import { getOrCreateUserSettings } from "../../src/server/dal/user-settings";
@@ -85,6 +86,14 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("acc
     }
     // A second commit on one chain, so a broken link would be visible.
     await updateTransactionCategory(user.id, transactionsOf[key][0], groceries.id);
+    // A split across two of this user's categories (AGENTS.md §3xxx): the
+    // account's categories and splits go in one cascade.
+    const household = await admin.category.create({ data: { userId: user.id, slug: "household", name: "Household" } });
+    const split = await setTransactionSplits(user.id, transactionsOf[key][1], [
+      { categoryId: groceries.id, nativeAmount: 1_500n },
+      { categoryId: household.id, nativeAmount: 500n },
+    ]);
+    expect(split.ok).toBe(true);
 
     await recordAuditLog(user.id, { entityType: "Test", entityId: user.id, action: "CREATE", afterData: { email: user.email } });
     await admin.envelopeAllocation.create({ data: { userId: user.id, categoryId: groceries.id, month: "2026-10", amountAgorot: 10_000n } });
@@ -163,7 +172,9 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("acc
     expect(aCiphertexts.filter((value) => /^v[12]:/.test(value))).toHaveLength(5);
     for (const id of transactionsOf.a) expect((await verifyLedgerChain(users.a.id, id)).valid).toBe(true);
     const counts = await rowCountsFor(users.a.id);
-    expect(counts.LedgerCommit).toBe(3);
+    // Two CREATEs, the recategorisation and the split.
+    expect(counts.LedgerCommit).toBe(4);
+    expect(counts.TransactionSplit).toBe(2);
     expect(counts.AuditLog).toBeGreaterThanOrEqual(1);
     expect(counts.GroupMember).toBe(1);
   });

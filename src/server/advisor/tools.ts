@@ -20,6 +20,7 @@ import { listManualAssets } from "../dal/manual-assets";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
 import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../dal/portfolio";
 import { getSpendByCategoryInRange, listRealMoneyFlowsInRange, listTransactions } from "../dal/transactions";
+import { categoryLabel } from "../../lib/transaction-splits";
 
 /**
  * The advisor's complete tool surface (Section 6: "10 read-only sandboxed
@@ -198,7 +199,7 @@ const listRecentTransactions = defineTool({
       date: row.occurredAt.toISOString().slice(0, 10),
       merchantName: row.merchantName,
       description: row.description,
-      category: row.category.name,
+      category: categoryLabel(row),
       // At the rate of the transaction's own day, or exact in its own currency (AGENTS.md §3vvv).
       amount: formatReportingFlow(row, reporting),
     }));
