@@ -69,6 +69,11 @@ export function CategoryRowActions({ category }: { category: Category }) {
     setError(null);
     try {
       const response = await fetch(`/api/categories/${category.id}`, { method: "DELETE" });
+      if (response.status === 409) {
+        const body = (await response.json().catch(() => ({}))) as { error?: unknown };
+        setError(typeof body.error === "string" ? body.error : "This category is part of a split.");
+        return;
+      }
       if (!response.ok) throw new Error("Request failed");
       router.refresh();
     } catch {

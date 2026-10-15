@@ -1,4 +1,5 @@
-import { REAL_MONEY } from "./transactions";
+import { categoryParts } from "../../lib/transaction-splits";
+import { REAL_MONEY, SPLIT_PARTS_SELECT } from "./transactions";
 import "server-only";
 import { monthKeyToExclusiveEndDate } from "../../lib/date-month";
 import { computeAvailableToBudget, computeRollingBalance, type MonthlyEnvelopeActivity } from "../../lib/envelope-math";
@@ -82,7 +83,7 @@ export async function getEnvelopeBalances(userId: string, month: string): Promis
       }),
       tx.notableTransaction.findMany({
         where: { userId, occurredAt: { lt: cutoff }, amount: { lt: 0n }, ...REAL_MONEY },
-        select: { categoryId: true, occurredAt: true, amount: true },
+        select: { categoryId: true, occurredAt: true, amount: true, nativeAmount: true, splits: SPLIT_PARTS_SELECT },
       }),
     ]);
 
@@ -113,7 +114,8 @@ export async function getEnvelopeBalances(userId: string, month: string): Promis
     }
     for (const row of transactionRows) {
       const monthKey = row.occurredAt.toISOString().slice(0, 7);
-      bucket(row.categoryId, monthKey).spent += Number(-row.amount);
+      // A split row spends from each of its envelopes (AGENTS.md §3xxx).
+      for (const part of categoryParts(row)) bucket(part.categoryId, monthKey).spent += Number(-part.amount);
     }
 
     return categories.map((category) => {

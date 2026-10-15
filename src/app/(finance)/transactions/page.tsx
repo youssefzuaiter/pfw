@@ -45,7 +45,7 @@ export default async function TransactionsPage({
     listBankAccounts(user.id),
   ]);
 
-  const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
+  const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name, isUncategorized: c.isUncategorized }));
   const accountOptions = bankAccounts.map((account) => ({
     id: account.id,
     label: account.nickname
@@ -76,6 +76,12 @@ export default async function TransactionsPage({
     isTransfer: t.isTransfer,
     currency: t.currency,
     nativeAmount: Number(t.nativeAmount),
+    splits: t.splits.map((split) => ({
+      categoryId: split.categoryId,
+      categoryName: split.category.name,
+      amountAgorot: Number(split.amount),
+      nativeAmount: Number(split.nativeAmount),
+    })),
   }));
 
   return (

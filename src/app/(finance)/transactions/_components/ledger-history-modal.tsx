@@ -18,6 +18,8 @@ type LedgerCommitView = {
     nativeAmount?: string;
     /** Present on a foreign-currency commit written since rates were hashed (§3www). */
     exchangeRate?: string;
+    /** Present while the transaction was split (§3xxx). */
+    splits?: { categoryId: string; categoryName: string; amountAgorot: string; nativeAmount: string }[];
     description: string;
     merchantName: string | null;
     occurredAtIso: string;
@@ -39,6 +41,7 @@ const FIELD_LABELS: Record<string, string> = {
   nativeAmount: "entered amount",
   occurredAtIso: "date",
   exchangeRate: "exchange rate",
+  splits: "split",
 };
 
 type Stage = "idle" | "loading" | "ready" | "error";
@@ -248,6 +251,14 @@ export function LedgerHistoryModal({ transactionId, label }: { transactionId: st
                           </span>
                           {enteredAmountNote(commit.patchData)}
                         </p>
+                        {commit.patchData.splits && commit.patchData.splits.length > 0 && (
+                          <p className="mt-1 text-xs text-muted">
+                            Split:{" "}
+                            {commit.patchData.splits
+                              .map((split) => `${split.categoryName} ${formatAgorot(agorot(Number(split.amountAgorot)))}`)
+                              .join(", ")}
+                          </p>
+                        )}
                         <p className="mt-1 font-mono text-[11px] text-muted">
                           {shortHash(commit.previousHash)} → {shortHash(commit.currentHash)}
                         </p>

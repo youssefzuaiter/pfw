@@ -14,8 +14,9 @@ const ROUTES = PRIMARY_NAV_ITEMS.map((item) => item.href);
 // focusable category <select> per ledger row (63 seeded rows) plus its
 // filter bar, well past a small fixed cap — this is real content, not a
 // bug, so the cap has to accommodate it rather than the test asserting
-// an arbitrary small ceiling.
-const MAX_TAB_PRESSES = 500;
+// an arbitrary small ceiling. Raised from 500 when each row gained a
+// Split button (AGENTS.md §3xxx): about 70 rows of six stops each.
+const MAX_TAB_PRESSES = 800;
 
 for (const route of ROUTES) {
   test(`${route}: repeated Tab always lands on a visible element, never gets stuck on <body>`, async ({ page }) => {

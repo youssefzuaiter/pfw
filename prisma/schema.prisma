@@ -326,6 +326,7 @@ model User {
   bankAccounts             BankAccount[]
   categories               Category[]
   transactions             NotableTransaction[]
+  transactionSplits        TransactionSplit[]
   transactionRules         TransactionRule[]
   envelopeAllocations      EnvelopeAllocation[]
   goals                    Goal[]
@@ -725,6 +726,7 @@ model Category {
   transactions        NotableTransaction[]
   envelopeAllocations EnvelopeAllocation[]
   merchantEmbeddings  MerchantEmbedding[]
+  transactionSplits   TransactionSplit[]
 
   @@unique([userId, slug])
   @@index([userId])
@@ -872,6 +874,9 @@ model NotableTransaction {
   /// explicitly rather than silently introduced.
   searchEmbedding       Unsupported("vector(384)")?
   ledgerCommits         LedgerCommit[]
+  /// Present only when the amount is divided across categories (AGENTS.md
+  /// §3xxx); see TransactionSplit.
+  splits                TransactionSplit[]
 
   @@unique([userId, providerTransactionId])
   @@index([userId, occurredAt])
@@ -2040,4 +2045,43 @@ model RecoveryCode {
   createdAt DateTime @default(now())
 
   @@index([userId, used])
+}
+
+/// One category's share of a transaction whose amount is divided across
+/// several categories (AGENTS.md §3xxx): a Migros receipt that is part
+/// groceries, part household.
+///
+/// The NotableTransaction stays the only row that holds the money; these
+/// rows only say how it divides, so nothing that counts transactions or
+/// sums amounts counts a split twice. A transaction has either no splits or
+/// at least two, every one with the transaction's sign, and their `amount`
+/// and `nativeAmount` add up to the transaction's exactly. A deferred
+/// constraint trigger checks that at commit time (see the migration), and
+/// the DAL checks it first so the user gets a clear error.
+///
+/// Splits are covered by the transaction's own ledger chain: every change
+/// appends a commit whose state lists them, and verification compares the
+/// live rows with the latest commit.
+model TransactionSplit {
+  id            String             @id @default(cuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactionId String
+  transaction   NotableTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  categoryId    String
+  /// NoAction: a category that still holds part of a split can't be
+  /// deleted until the split is edited (the DAL says so before trying).
+  /// Checked at the end of the statement rather than immediately, so
+  /// deleting a whole account, which removes the categories and their
+  /// splits in one cascade, doesn't depend on the order they go in.
+  category      Category           @relation(fields: [categoryId], references: [id], onDelete: NoAction)
+  /// ILS agorot, signed like the transaction's `amount`.
+  amount        BigInt
+  /// Minor units of the transaction's own currency, signed like `nativeAmount`.
+  nativeAmount  BigInt
+  createdAt     DateTime           @default(now())
+
+  @@unique([transactionId, categoryId])
+  @@index([userId, categoryId])
+  @@index([userId, transactionId])
 }

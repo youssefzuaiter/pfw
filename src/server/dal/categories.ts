@@ -88,7 +88,10 @@ export async function unarchiveCategory(userId: string, id: string) {
   });
 }
 
-export type DeleteCategoryResult = { ok: true; reassignedCount: number } | { ok: false; error: "not_found" | "is_uncategorized" };
+export type DeleteCategoryResult =
+  | { ok: true; reassignedCount: number }
+  | { ok: false; error: "not_found" | "is_uncategorized" }
+  | { ok: false; error: "in_split"; splitCount: number };
 
 /**
  * Safe-delete: every transaction in this category is reassigned to the
@@ -104,6 +107,12 @@ export async function deleteCategoryWithReassignment(userId: string, id: string)
     const existing = await tx.category.findFirst({ where: { id, userId } });
     if (!existing) return { ok: false, error: "not_found" };
     if (existing.isUncategorized) return { ok: false, error: "is_uncategorized" };
+
+    // A category holding part of a split can't be deleted out from under
+    // it: moving that part to Uncategorized would turn a decision into a
+    // guess, so the split is edited first (AGENTS.md §3xxx).
+    const splitCount = await tx.transactionSplit.count({ where: { userId, categoryId: id } });
+    if (splitCount > 0) return { ok: false, error: "in_split", splitCount };
 
     const uncategorized = await getOrCreateUncategorizedCategory(tx, userId);
 
