@@ -86,4 +86,28 @@ describe("computeLedgerCommitHash", () => {
       expect(computeLedgerCommitHash(null, { ...USD_STATE, exchangeRate: "3.037667" })).toBe(locked);
     });
   });
+
+  describe("splits (AGENTS.md §3xxx)", () => {
+    const SPLITS = [
+      { categoryId: "cat_1", categoryName: "Groceries", amountAgorot: "-3000", nativeAmount: "-3000" },
+      { categoryId: "cat_2", categoryName: "Household", amountAgorot: "-1500", nativeAmount: "-1500" },
+    ];
+
+    it("covers every split amount: moving one agorah between parts changes the hash", () => {
+      const split = computeLedgerCommitHash(null, { ...BASE_STATE, splits: SPLITS });
+      expect(split).not.toBe(computeLedgerCommitHash(null, BASE_STATE));
+      const moved = [
+        { ...SPLITS[0], amountAgorot: "-2999", nativeAmount: "-2999" },
+        { ...SPLITS[1], amountAgorot: "-1501", nativeAmount: "-1501" },
+      ];
+      expect(computeLedgerCommitHash(null, { ...BASE_STATE, splits: moved })).not.toBe(split);
+    });
+
+    it("is canonical inside each split: the order a split's keys were written in doesn't matter", () => {
+      const reordered = SPLITS.map((s) => ({ nativeAmount: s.nativeAmount, amountAgorot: s.amountAgorot, categoryName: s.categoryName, categoryId: s.categoryId }));
+      expect(computeLedgerCommitHash(null, { ...BASE_STATE, splits: reordered })).toBe(
+        computeLedgerCommitHash(null, { ...BASE_STATE, splits: SPLITS }),
+      );
+    });
+  });
 });

@@ -101,6 +101,8 @@ export type RawSpendingTransaction = {
   /** Positive magnitude of an EXPENSE, in agorot — the caller filters out income before this module ever sees a row. */
   amountAgorot: number;
   categorySlug: string;
+  /** A split row's category shares (AGENTS.md §3xxx), adding up to `amountAgorot`; absent otherwise. */
+  categoryParts?: { categorySlug: string; amountAgorot: number }[];
 };
 
 export type AnomalyCheckRequest = {
@@ -187,7 +189,11 @@ export function buildDailyFeatureMatrix(transactions: readonly RawSpendingTransa
     bucket.totalAgorot += txn.amountAgorot;
     bucket.count += 1;
     bucket.minutes.push(occurredAt.getUTCHours() * 60 + occurredAt.getUTCMinutes());
-    bucket.categoryTotals[bucketForCategorySlug(txn.categorySlug)] += txn.amountAgorot;
+    // One transaction for the count and burst features above; its money
+    // goes to each category it was split across.
+    for (const part of txn.categoryParts ?? [{ categorySlug: txn.categorySlug, amountAgorot: txn.amountAgorot }]) {
+      bucket.categoryTotals[bucketForCategorySlug(part.categorySlug)] += part.amountAgorot;
+    }
   }
 
   return dayBuckets.map((bucket) => [

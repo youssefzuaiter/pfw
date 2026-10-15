@@ -59,6 +59,7 @@ export async function gatherUserExport(userId: string): Promise<UserExport | nul
         bankConnections: await tx.bankConnection.findMany({ where: { userId }, omit: { accessToken: true }, ...byId }),
         categories: await tx.category.findMany({ where: { userId }, ...byId }),
         transactions: await tx.notableTransaction.findMany({ where: { userId }, ...byId }),
+        transactionSplits: await tx.transactionSplit.findMany({ where: { userId }, ...byId }),
         transactionRules: await tx.transactionRule.findMany({ where: { userId }, ...byId }),
         envelopeAllocations: await tx.envelopeAllocation.findMany({ where: { userId }, ...byId }),
         goals: await tx.goal.findMany({ where: { userId }, ...byId }),

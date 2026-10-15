@@ -9,11 +9,12 @@ import { CURRENT_EMBEDDING_MODEL_ID } from "../../lib/embeddings/embedding-model
 import { BASE_CURRENCY, type CurrencyCode } from "../../lib/currency";
 import { convertNativeToAgorotExact, rateMicrosFromDecimal } from "../../lib/fx-history";
 import { agorot } from "../../lib/money";
+import { categoryParts } from "../../lib/transaction-splits";
 import { normalizeMerchantKey } from "../../lib/text-matching";
 import { parsePgVectorLiteral, toPgVectorLiteral } from "../../lib/vector-math";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 import { getOrCreateUncategorizedCategory } from "./categories";
-import { appendLedgerCommit, buildLedgerState } from "./ledger-commits";
+import { appendLedgerCommit, buildLedgerState, SPLIT_STATE_SELECT } from "./ledger-commits";
 import { BankAccountNotFoundError } from "./transaction-import";
 import { fetchActiveRulesForEvaluation } from "./transaction-rules";
 
@@ -35,6 +36,19 @@ import { fetchActiveRulesForEvaluation } from "./transaction-rules";
  * from the user's own history would be a different lie.
  */
 export const LIVE = { deletedAt: null } as const;
+
+/**
+ * The `select` that gives `categoryParts` a row's splits (AGENTS.md §3xxx).
+ * Any read that totals money BY CATEGORY selects this and goes through
+ * `categoryParts`; reading `categoryId` alone would put a split row's whole
+ * amount in its largest category.
+ */
+export const SPLIT_PARTS_SELECT = { select: { categoryId: true, amount: true, nativeAmount: true } } as const;
+
+/** A row's splits with their category names, for the screens that show them. */
+export const SPLIT_DISPLAY_INCLUDE = {
+  select: { categoryId: true, amount: true, nativeAmount: true, category: { select: { name: true } } },
+} as const;
 export const REAL_MONEY = { deletedAt: null, isTransfer: false } as const;
 
 export async function getTransactionById(userId: string, id: string) {
@@ -85,7 +99,8 @@ export type TransactionFilters = {
  */
 export async function listTransactions(userId: string, filters: TransactionFilters = {}) {
   const where: Prisma.NotableTransactionWhereInput = { userId, ...LIVE };
-  if (filters.categoryId) where.categoryId = filters.categoryId;
+  // A split row is listed under every category it has a part in.
+  if (filters.categoryId) where.OR = [{ categoryId: filters.categoryId }, { splits: { some: { categoryId: filters.categoryId } } }];
   if (filters.dateFrom || filters.dateTo) {
     where.occurredAt = {
       ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
@@ -97,7 +112,7 @@ export async function listTransactions(userId: string, filters: TransactionFilte
     tx.notableTransaction.findMany({
       where,
       orderBy: ORDER_BY[filters.sort ?? "date_desc"],
-      include: { category: true, bankAccount: true },
+      include: { category: true, bankAccount: true, splits: SPLIT_DISPLAY_INCLUDE },
     }),
   );
 
@@ -154,7 +169,12 @@ export async function searchTransactionsSemantic(
       Prisma.sql`"searchEmbedding" IS NOT NULL`,
       Prisma.sql`"searchEmbedding" <=> ${vectorLiteral}::vector <= ${MAX_COSINE_DISTANCE}`,
     ];
-    if (filters.categoryId) conditions.push(Prisma.sql`"categoryId" = ${filters.categoryId}`);
+    if (filters.categoryId) {
+      // As in listTransactions, a split row matches every category it has a part in.
+      conditions.push(
+        Prisma.sql`("categoryId" = ${filters.categoryId} OR EXISTS (SELECT 1 FROM "TransactionSplit" s WHERE s."transactionId" = "NotableTransaction"."id" AND s."categoryId" = ${filters.categoryId}))`,
+      );
+    }
     if (filters.dateFrom) conditions.push(Prisma.sql`"occurredAt" >= ${filters.dateFrom}`);
     if (filters.dateTo) conditions.push(Prisma.sql`"occurredAt" <= ${filters.dateTo}`);
 
@@ -177,7 +197,7 @@ export async function searchTransactionsSemantic(
 
     const rows = await tx.notableTransaction.findMany({
       where: { id: { in: ranked.map((r) => r.id) }, userId, ...LIVE },
-      include: { category: true, bankAccount: true },
+      include: { category: true, bankAccount: true, splits: SPLIT_DISPLAY_INCLUDE },
     });
 
     // findMany's `id: { in: [...] }` does NOT preserve the IN-list's
@@ -260,6 +280,15 @@ export type UpdateTransactionCategoryResult = Awaited<ReturnType<typeof getTrans
  * (older/non-JS clients, or a browser where the local model failed to
  * load) — the category update itself never depends on it.
  */
+/** Thrown when a single category is set on a transaction divided across several. */
+export class TransactionIsSplitError extends Error {
+  readonly code = "transaction_is_split";
+  constructor() {
+    super("This transaction is split across categories. Edit the split to change them.");
+    this.name = "TransactionIsSplitError";
+  }
+}
+
 export async function updateTransactionCategory(
   userId: string,
   id: string,
@@ -267,8 +296,11 @@ export async function updateTransactionCategory(
   embedding?: readonly number[],
 ): Promise<UpdateTransactionCategoryResult> {
   return withUserScope(userId, async (tx) => {
-    const existing = await tx.notableTransaction.findFirst({ where: { id, userId } });
+    const existing = await tx.notableTransaction.findFirst({ where: { id, userId }, include: { _count: { select: { splits: true } } } });
     if (!existing) return null;
+    // A split row has several categories; one category for it is a change
+    // to the split, made in the split editor (AGENTS.md §3xxx).
+    if (existing._count.splits > 0) throw new TransactionIsSplitError();
 
     const category = await tx.category.findFirst({ where: { id: categoryId, userId } });
     if (!category) return null;
@@ -519,17 +551,19 @@ export type CategorySpend = {
 
 /** Sum of transaction amounts per category within [from, to) — used for budget utilization and the category-spend donut. Only negative (expense) amounts are summed, as a positive magnitude. */
 export async function getSpendByCategoryInRange(userId: string, from: Date, to: Date): Promise<CategorySpend[]> {
-  return withUserScope(userId, async (tx) => {
-    const grouped = await tx.notableTransaction.groupBy({
-      by: ["categoryId"],
+  // Not a groupBy on `categoryId`: a split row's money is in several
+  // categories, so every row is read as its parts (AGENTS.md §3xxx).
+  const rows = await withUserScope(userId, (tx) =>
+    tx.notableTransaction.findMany({
       where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n }, ...REAL_MONEY },
-      _sum: { amount: true },
-    });
-    return grouped.map((g) => ({
-      categoryId: g.categoryId,
-      totalAgorot: -(g._sum.amount ?? 0n),
-    }));
-  });
+      select: { categoryId: true, amount: true, nativeAmount: true, splits: SPLIT_PARTS_SELECT },
+    }),
+  );
+  const totals = new Map<string, bigint>();
+  for (const row of rows) {
+    for (const part of categoryParts(row)) totals.set(part.categoryId, (totals.get(part.categoryId) ?? 0n) - part.amount);
+  }
+  return [...totals].map(([categoryId, totalAgorot]) => ({ categoryId, totalAgorot }));
 }
 
 /**
@@ -540,11 +574,26 @@ export async function getSpendByCategoryInRange(userId: string, from: Date, to: 
  * the reporting-currency figures, which must sum per transaction.
  */
 export async function listRealMoneyFlowsInRange(userId: string, from: Date, to: Date) {
-  return withUserScope(userId, (tx) =>
+  const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
       where: { userId, occurredAt: { gte: from, lt: to }, ...REAL_MONEY },
-      select: { amount: true, nativeAmount: true, currency: true, occurredAt: true, categoryId: true },
+      select: { amount: true, nativeAmount: true, currency: true, occurredAt: true, categoryId: true, splits: SPLIT_PARTS_SELECT },
     }),
+  );
+  // One flow per category part (AGENTS.md §3xxx): a split row becomes its
+  // parts, each converted on the row's own day. Totals add the same parts as
+  // the per-category figures, so a month still equals the sum of its
+  // categories in any reporting currency. A part's native amount is in the
+  // row's own currency, so the "exact when it happened in the reporting
+  // currency" rule still holds part by part.
+  return rows.flatMap((row) =>
+    categoryParts(row).map((part) => ({
+      amount: part.amount,
+      nativeAmount: part.nativeAmount,
+      currency: row.currency,
+      occurredAt: row.occurredAt,
+      categoryId: part.categoryId,
+    })),
   );
 }
 
@@ -575,6 +624,7 @@ export async function listLargestExpensesInRange(userId: string, from: Date, to:
         nativeAmount: true,
         currency: true,
         category: { select: { name: true } },
+        splits: { select: { amount: true, category: { select: { name: true } } }, orderBy: { amount: "asc" } },
       },
     }),
   );
@@ -659,6 +709,8 @@ export type SpendingAnomalyTransactionRow = {
   /** Positive magnitude of an EXPENSE, in agorot. */
   amountAgorot: number;
   categorySlug: string;
+  /** Present for a split row: its category shares, positive magnitudes adding up to `amountAgorot`. */
+  categoryParts?: { categorySlug: string; amountAgorot: number }[];
 };
 
 /**
@@ -688,7 +740,12 @@ export async function getRecentExpenseTransactionsForAnomalyDetection(
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
       where: { userId, occurredAt: { gte: from, lt: to }, amount: { lt: 0n }, ...REAL_MONEY },
-      select: { occurredAt: true, amount: true, category: { select: { slug: true } } },
+      select: {
+        occurredAt: true,
+        amount: true,
+        category: { select: { slug: true } },
+        splits: { select: { amount: true, category: { select: { slug: true } } } },
+      },
     }),
   );
 
@@ -696,6 +753,11 @@ export async function getRecentExpenseTransactionsForAnomalyDetection(
     occurredAtIso: row.occurredAt.toISOString(),
     amountAgorot: Number(-row.amount),
     categorySlug: row.category.slug,
+    // Still one transaction for the count and burst features; only the
+    // category totals use the parts (AGENTS.md §3xxx).
+    ...(row.splits.length > 0
+      ? { categoryParts: row.splits.map((split) => ({ categorySlug: split.category.slug, amountAgorot: Number(-split.amount) })) }
+      : {}),
   }));
 }
 
@@ -773,7 +835,7 @@ export async function softDeleteTransaction(
   return withUserScope(userId, async (tx) => {
     const row = await tx.notableTransaction.findFirst({
       where: { id, userId, ...LIVE },
-      include: { category: true },
+      include: { category: true, splits: SPLIT_STATE_SELECT },
     });
     if (!row) return { ok: false, error: "not_found" };
 
@@ -812,7 +874,7 @@ export async function restoreTransaction(
   return withUserScope(userId, async (tx) => {
     const row = await tx.notableTransaction.findFirst({
       where: { id, userId, deletedAt: { not: null } },
-      include: { category: true },
+      include: { category: true, splits: SPLIT_STATE_SELECT },
     });
     if (!row) return { ok: false, error: "not_found" };
 
@@ -821,7 +883,7 @@ export async function restoreTransaction(
   });
 }
 
-type SoftDeletedRow = Prisma.NotableTransactionGetPayload<{ include: { category: true } }>;
+type SoftDeletedRow = Prisma.NotableTransactionGetPayload<{ include: { category: true; splits: typeof SPLIT_STATE_SELECT } }>;
 
 /**
  * The restore itself, shared by the single-row and whole-import paths so
@@ -870,7 +932,7 @@ export async function restoreImportBatch(
     async (tx) => {
       const rows = await tx.notableTransaction.findMany({
         where: { userId, importBatchId, deletedAt: { not: null } },
-        include: { category: true },
+        include: { category: true, splits: SPLIT_STATE_SELECT },
         orderBy: { occurredAt: "asc" },
       });
       if (rows.length === 0) return { ok: false, error: "not_found" as const };
@@ -950,7 +1012,7 @@ export async function softDeleteImportBatch(
     async (tx) => {
       const rows = await tx.notableTransaction.findMany({
         where: { userId, importBatchId, ...LIVE },
-        include: { category: true },
+        include: { category: true, splits: SPLIT_STATE_SELECT },
       });
       if (rows.length === 0) return { ok: false, error: "not_found" as const };
 
@@ -1138,7 +1200,7 @@ export async function applyRulesToExistingTransactions(
         if (applyCategory || wantsRename) {
           const after = await tx.notableTransaction.findUnique({
             where: { id: row.id },
-            include: { category: true },
+            include: { category: true, splits: SPLIT_STATE_SELECT },
           });
           if (after) {
             await appendLedgerCommit(tx, userId, {

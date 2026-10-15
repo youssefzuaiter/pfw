@@ -5,7 +5,7 @@ import { EmbeddingSchema } from "../../../../server/api/embedding-validation";
 import { guardMutation } from "../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonNotFound, jsonServerError } from "../../../../server/api/responses";
 import { recordAuditLog } from "../../../../server/dal/audit-log";
-import { getTransactionById, updateTransactionCategory } from "../../../../server/dal/transactions";
+import { getTransactionById, updateTransactionCategory, TransactionIsSplitError } from "../../../../server/dal/transactions";
 
 const PatchBodySchema = z.object({
   categoryId: z.string().min(1, "categoryId is required"),
@@ -77,6 +77,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     return NextResponse.json(responseBody);
   } catch (error) {
+    if (error instanceof TransactionIsSplitError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
+    }
     console.error("PATCH /api/transactions/[id] failed", error);
     return jsonServerError();
   }

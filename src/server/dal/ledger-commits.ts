@@ -1,6 +1,6 @@
 import "server-only";
 import type { LedgerCommitAction, Prisma } from "../../generated/prisma/client";
-import { computeLedgerCommitHash, type LedgerCommitState } from "../../lib/ledger-hash";
+import { computeLedgerCommitHash, type LedgerCommitState, type LedgerSplitState } from "../../lib/ledger-hash";
 
 export type { LedgerCommitState } from "../../lib/ledger-hash";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
@@ -23,7 +23,31 @@ export type LedgerableTransaction = {
   merchantName: string | null;
   /** A Prisma `Decimal(12,6)`; null for a shekel row. */
   exchangeRateAtEntry?: { toFixed(digits: number): string } | null;
+  /**
+   * The row's splits (AGENTS.md §3xxx), with each category's current name.
+   * Every path that appends a commit for a row that may be split must pass
+   * them, or the commit would record the row as unsplit and verification
+   * would then report the live splits as tampering. `SPLIT_STATE_SELECT`
+   * reads exactly this shape.
+   */
+  splits?: readonly { categoryId: string; amount: bigint; nativeAmount: bigint; category: { name: string } }[];
 };
+
+/** The `include` that gives `buildLedgerState` a row's splits. */
+export const SPLIT_STATE_SELECT = {
+  select: { categoryId: true, amount: true, nativeAmount: true, category: { select: { name: true } } },
+} as const;
+
+function splitStates(splits: NonNullable<LedgerableTransaction["splits"]>): LedgerSplitState[] {
+  return [...splits]
+    .sort((a, b) => (a.categoryId < b.categoryId ? -1 : a.categoryId > b.categoryId ? 1 : 0))
+    .map((split) => ({
+      categoryId: split.categoryId,
+      categoryName: split.category.name,
+      amountAgorot: split.amount.toString(),
+      nativeAmount: split.nativeAmount.toString(),
+    }));
+}
 
 export function buildLedgerState(row: LedgerableTransaction): LedgerCommitState {
   const state: LedgerCommitState = {
@@ -43,6 +67,8 @@ export function buildLedgerState(row: LedgerableTransaction): LedgerCommitState 
   if (row.currency !== "ILS" && row.exchangeRateAtEntry) {
     state.exchangeRate = row.exchangeRateAtEntry.toFixed(6);
   }
+  // Only a split row carries splits, so an unsplit row's state is unchanged.
+  if (row.splits && row.splits.length > 0) state.splits = splitStates(row.splits);
   return state;
 }
 
@@ -160,7 +186,7 @@ const IMMUTABLE_MONEY_FIELDS = ["amountAgorot", "currency", "nativeAmount", "occ
  *
  * Then it compares the LIVE row with the latest commit (AGENTS.md §3www):
  * amount, currency, native amount, date, and the exchange rate when that
- * commit recorded one. An intact chain alone proves only that the history
+ * commit recorded one, and the splits (§3xxx). An intact chain alone proves only that the history
  * is unaltered; without this check, editing the transaction row itself
  * (its amount, or the rate it was converted at) would go unnoticed.
  */
@@ -185,7 +211,14 @@ export async function verifyLedgerChain(userId: string, transactionId: string): 
   const row = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findFirst({
       where: { id: transactionId, userId },
-      select: { amount: true, currency: true, nativeAmount: true, occurredAt: true, exchangeRateAtEntry: true },
+      select: {
+        amount: true,
+        currency: true,
+        nativeAmount: true,
+        occurredAt: true,
+        exchangeRateAtEntry: true,
+        splits: { select: { categoryId: true, amount: true, nativeAmount: true } },
+      },
     }),
   );
   if (!row) return { valid: true, brokenAtCommitId: null, mismatchedFields: [] };
@@ -202,6 +235,15 @@ export async function verifyLedgerChain(userId: string, transactionId: string): 
   if ("exchangeRate" in head.patchData && head.patchData.exchangeRate !== (row.exchangeRateAtEntry?.toFixed(6) ?? undefined)) {
     mismatchedFields.push("exchangeRate");
   }
+  // The live splits must be exactly the ones the latest commit recorded
+  // (AGENTS.md §3xxx): same categories, same amounts in both units. The
+  // category NAME is left out, as for the row itself, because a rename
+  // appends no commit.
+  const recordedSplits = (head.patchData.splits ?? []).map((split) => `${split.categoryId}:${split.amountAgorot}:${split.nativeAmount}`);
+  const liveSplits = [...row.splits]
+    .sort((a, b) => (a.categoryId < b.categoryId ? -1 : a.categoryId > b.categoryId ? 1 : 0))
+    .map((split) => `${split.categoryId}:${split.amount}:${split.nativeAmount}`);
+  if (recordedSplits.join("|") !== liveSplits.join("|")) mismatchedFields.push("splits");
 
   return mismatchedFields.length > 0
     ? { valid: false, brokenAtCommitId: head.id, mismatchedFields }
