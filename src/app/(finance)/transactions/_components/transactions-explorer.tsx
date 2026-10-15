@@ -18,6 +18,8 @@ type ApiRow = {
   categoryName: string;
   needsReview: boolean;
   isTransfer: boolean;
+  currency: TransactionRow["currency"];
+  nativeAmount: number;
 };
 
 type SearchResponse = { mode: "semantic" | "substring"; results: ApiRow[] };
@@ -37,6 +39,8 @@ function toTransactionRow(row: ApiRow): TransactionRow {
     categoryName: row.categoryName,
     needsReview: row.needsReview,
     isTransfer: row.isTransfer,
+    currency: row.currency,
+    nativeAmount: row.nativeAmount,
   };
 }
 

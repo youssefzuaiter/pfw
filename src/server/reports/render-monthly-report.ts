@@ -1,5 +1,4 @@
-import { agorot } from "../../lib/money";
-import { ILS_REPORTING, describeReportingRate, formatReportingAmount, type ReportingContext } from "../../lib/reporting-currency";
+import { ILS_REPORTING, describeReportingRate, describeReportingRateRule, formatReportingMinorUnits, type ReportingContext } from "../../lib/reporting-currency";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { monthKeyToStartDate } from "../../lib/date-month";
 import type { MonthlyReportData } from "./monthly-report";
@@ -19,9 +18,13 @@ function monthLabel(monthKey: string): string {
   return monthKeyToStartDate(monthKey).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-/** An ILS agorot figure in the user's reporting currency (AGENTS.md §3nnn); ILS when none is given. */
-function money(value: bigint, reporting: ReportingContext, signed = false): string {
-  return formatReportingAmount(agorot(Number(value)), reporting, { showPositiveSign: signed });
+/**
+ * A figure already in the reporting currency's minor units (AGENTS.md
+ * §3vvv: totals summed per transaction on its own day, snapshots at their
+ * own day's rate); ILS when no reporting context is given.
+ */
+function money(minorUnits: number, reporting: ReportingContext, signed = false): string {
+  return formatReportingMinorUnits(minorUnits, reporting, { showPositiveSign: signed });
 }
 
 function dollars(cents: number, signed = false): string {
@@ -37,14 +40,14 @@ type Line = [label: string | null, value: string];
 
 function sections(data: MonthlyReportData): { title: string; lines: Line[] }[] {
   const reporting = data.reporting ?? ILS_REPORTING;
-  const amount = (value: bigint, signed = false) => money(value, reporting, signed);
-  const net = data.incomeAgorot - data.expenseAgorot;
+  const amount = (minorUnits: number, signed = false) => money(minorUnits, reporting, signed);
+  const net = data.incomeShown - data.expenseShown;
   const result = [
     {
       title: "Money in and out",
       lines: [
-        ["Income", amount(data.incomeAgorot)],
-        ["Spending", amount(data.expenseAgorot)],
+        ["Income", amount(data.incomeShown)],
+        ["Spending", amount(data.expenseShown)],
         ["Net", amount(net, true)],
       ] as Line[],
     },
@@ -53,15 +56,15 @@ function sections(data: MonthlyReportData): { title: string; lines: Line[] }[] {
       lines:
         data.topCategories.length === 0
           ? ([[null, "No spending recorded this month."]] as Line[])
-          : data.topCategories.map((category): Line => [category.name, amount(category.spentAgorot)]),
+          : data.topCategories.map((category): Line => [category.name, amount(category.spentShown)]),
     },
     {
       title: "Net worth",
       lines: data.netWorth
         ? ([
-            ["Start of month", amount(data.netWorth.startAgorot)],
-            ["End of month", amount(data.netWorth.endAgorot)],
-            ["Change", amount(data.netWorth.endAgorot - data.netWorth.startAgorot, true)],
+            ["Start of month", amount(data.netWorth.startShown)],
+            ["End of month", amount(data.netWorth.endShown)],
+            ["Change", amount(data.netWorth.endShown - data.netWorth.startShown, true)],
           ] as Line[])
         : ([[null, "Not enough history yet: net worth is recorded nightly, so the next report will show the change."]] as Line[]),
     },
@@ -90,7 +93,9 @@ export function renderMonthlyReport(data: MonthlyReportData, appUrl: string): Re
   // The month's full review page (AGENTS.md §3ppp): every category, the largest expenses.
   const reviewUrl = `${appUrl.replace(/\/$/, "")}/review?month=${data.monthKey}`;
   const rate = describeReportingRate(data.reporting ?? ILS_REPORTING);
-  const rateNote = rate ? `Totals converted at ${rate}. Amounts are recorded in shekels.` : null;
+  const rateNote = rate
+    ? `Today's rate is ${rate}. ${describeReportingRateRule(data.reporting ?? ILS_REPORTING)} Amounts are recorded in shekels.`
+    : null;
 
   const text = [
     subject,

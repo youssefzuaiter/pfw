@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ReportingAmount } from "../../../../components/currency/reporting-currency-provider";
+import { ReportingFlowAmount } from "../../../../components/currency/reporting-currency-provider";
 import { agorot } from "../../../../lib/money";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { DELETED_LIST_LIMIT, listDeletedTransactions } from "../../../../server/dal/transactions";
@@ -93,7 +93,7 @@ export default async function RecentlyDeletedPage() {
                   <span
                     className={`font-tabular-figures font-medium tracking-tight ${amount < 0 ? "text-fg" : "text-positive"}`}
                   >
-                    <ReportingAmount value={amount} />
+                    <ReportingFlowAmount amount={amount} occurredAt={row.occurredAt} currency={row.currency} nativeAmount={Number(row.nativeAmount)} />
                   </span>
                   <RestoreButton path={`/api/transactions/${row.id}/delete`} body={{ deleted: false }} label="Restore" />
                 </li>

@@ -124,7 +124,7 @@ export default async function DashboardPage() {
           <h2 id="category-spend-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
             Category spending — this month
           </h2>
-          <CategoryDonut breakdown={data.categorySpendBreakdown.map((c) => ({ categoryName: c.categoryName, amount: c.amount }))} />
+          <CategoryDonut breakdown={data.categorySpendBreakdown.map((c) => ({ categoryName: c.categoryName, amount: c.amountReporting }))} />
         </section>
 
         <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="income-expense-heading">

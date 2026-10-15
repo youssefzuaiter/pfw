@@ -7,6 +7,7 @@ import {
   type CurrencyCode,
 } from "../../lib/currency";
 import { FALLBACK_RATES, IDENTITY_RATE } from "../../lib/exchange-rate";
+import { rateMicrosFromDecimal, sortRateHistory, type RatePoint } from "../../lib/fx-history";
 
 /**
  * The one DAL module that deliberately does NOT go through
@@ -101,6 +102,22 @@ export async function getLatestRate(
   return row ? { rate: Number(row.rate), asOfDate: row.asOfDate } : null;
 }
 
+/**
+ * Every stored rate for one currency, oldest first, as exact micros
+ * (AGENTS.md §3vvv) — the date-aware conversion's whole history. A few
+ * hundred rows a year; read once per request by the reporting context.
+ * Read through the Decimal's fixed-point text, never a float.
+ */
+export async function listRatePoints(currency: CurrencyCode): Promise<RatePoint[]> {
+  if (currency === BASE_CURRENCY) return [];
+  const rows = await prisma.exchangeRate.findMany({
+    where: { currency },
+    orderBy: { asOfDate: "asc" },
+    select: { rate: true, asOfDate: true },
+  });
+  return sortRateHistory(rows.map((row) => ({ day: row.asOfDate.toISOString().slice(0, 10), micros: rateMicrosFromDecimal(row.rate.toFixed(6)) })));
+}
+
 /** The stored rate history for one currency, oldest first — backs a rate-trend view. */
 export async function listRateHistory(currency: CurrencyCode, days: number) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -152,4 +169,31 @@ export async function upsertRate(input: UpsertRateInput) {
 /** Every non-base currency the sync service is expected to fetch. */
 export function currenciesToSync(): CurrencyCode[] {
   return SUPPORTED_CURRENCIES.filter((c) => c !== BASE_CURRENCY);
+}
+
+/**
+ * Adds rates for days not stored yet and leaves every stored day as it is
+ * (AGENTS.md §3vvv) — the backfill's write: one statement, however many
+ * days, which matters for a three-year first run inside the nightly cron.
+ * A day's published ECB rate does not change, so "skip what exists" loses
+ * nothing. Returns how many rows were added.
+ */
+export async function insertMissingRates(rows: readonly UpsertRateInput[]): Promise<number> {
+  const usable = rows.filter((row) => row.currency !== BASE_CURRENCY && Number.isFinite(row.rate) && row.rate > 0);
+  if (usable.length === 0) return 0;
+  const result = await prisma.exchangeRate.createMany({
+    data: usable.map((row) => ({ currency: row.currency, rate: row.rate, asOfDate: row.asOfDate, source: row.source })),
+    skipDuplicates: true,
+  });
+  return result.count;
+}
+
+/** The earliest stored day per currency; a currency never synced is absent. */
+export async function getEarliestRateDays(): Promise<Map<CurrencyCode, Date>> {
+  const rows = await prisma.exchangeRate.groupBy({ by: ["currency"], _min: { asOfDate: true } });
+  const earliest = new Map<CurrencyCode, Date>();
+  for (const row of rows) {
+    if (row._min.asOfDate && isSupportedCurrency(row.currency)) earliest.set(row.currency, row._min.asOfDate);
+  }
+  return earliest;
 }

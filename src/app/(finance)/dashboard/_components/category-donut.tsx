@@ -2,8 +2,8 @@
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
-import { agorot } from "../../../../lib/money";
 
+/** `amount` is already in the reporting currency's minor units: each transaction converted on its own day (AGENTS.md §3vvv). */
 type Slice = { categoryName: string; amount: number };
 
 const SLICE_FILL_CLASSES = ["fill-accent", "fill-positive", "fill-signature", "fill-negative", "fill-muted"];
@@ -17,7 +17,7 @@ function DonutTooltip({ active, payload }: { active?: boolean; payload?: Array<{
     <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs shadow-lg">
       <p className="text-fg">{payload[0].name}</p>
       <p className="font-tabular-figures font-medium tracking-tight text-fg">
-        {money.format(agorot(Math.round(payload[0].value)))}
+        {money.formatMinor(payload[0].value)}
       </p>
     </div>
   );

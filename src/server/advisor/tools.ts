@@ -6,7 +6,8 @@ import { computeMonthProgress, computeProrationStatus } from "../../lib/budget-p
 import { monthKeyFor } from "../../lib/date-month";
 import { summarizeGoalProgress } from "../../lib/goal-progress";
 import { agorot, formatAgorot } from "../../lib/money";
-import { getReportingFormatter } from "../reporting/reporting-context";
+import { getReportingContext, getReportingFormatter } from "../reporting/reporting-context";
+import { formatReportingAmountOn, formatReportingFlow, formatReportingMinorUnits, spendByCategoryInReporting } from "../../lib/reporting-currency";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import { unrealizedPnl } from "../../lib/portfolio-math";
 import { deriveValuationFreshness } from "../../lib/valuation-freshness";
@@ -18,7 +19,7 @@ import { listGoals } from "../dal/goals";
 import { listManualAssets } from "../dal/manual-assets";
 import { computeLiveNetWorth, getNetWorthHistory } from "../dal/net-worth";
 import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../dal/portfolio";
-import { getSpendByCategoryInRange, listTransactions } from "../dal/transactions";
+import { getSpendByCategoryInRange, listRealMoneyFlowsInRange, listTransactions } from "../dal/transactions";
 
 /**
  * The advisor's complete tool surface (Section 6: "10 read-only sandboxed
@@ -114,11 +115,12 @@ const getNetWorthHistoryTool = defineTool({
   },
   schema: NetWorthHistorySchema,
   run: async (userId, input) => {
-    const formatMoney = await getReportingFormatter(userId);
+    const reporting = await getReportingContext(userId);
     const rows = await getNetWorthHistory(userId, input.days);
+    // Each snapshot at the rate of its own day (AGENTS.md §3vvv).
     return rows.map((row) => ({
       date: row.snapshotDate.toISOString().slice(0, 10),
-      netWorth: formatMoney(agorot(Number(row.netWorthAgorot))),
+      netWorth: formatReportingAmountOn(agorot(Number(row.netWorthAgorot)), row.snapshotDate, reporting),
     }));
   },
 });
@@ -136,17 +138,23 @@ const getSpendingByCategory = defineTool({
   },
   schema: SpendingByCategorySchema,
   run: async (userId, input) => {
-    const formatMoney = await getReportingFormatter(userId);
+    const reporting = await getReportingContext(userId);
     const to = new Date();
     const from = new Date(to.getTime() - input.daysBack * 24 * 60 * 60 * 1000);
-    const [rows, categories] = await Promise.all([
+    const [rows, categories, flows] = await Promise.all([
       getSpendByCategoryInRange(userId, from, to),
       listAllCategories(userId),
+      listRealMoneyFlowsInRange(userId, from, to),
     ]);
+    // Each transaction on its own day, then added (AGENTS.md §3vvv): the same figures the dashboard shows.
+    const shownByCategory = spendByCategoryInReporting(flows, reporting);
     const nameById = new Map(categories.map((c) => [c.id, c.name]));
     return [...rows]
       .sort((a, b) => (b.totalAgorot > a.totalAgorot ? 1 : b.totalAgorot < a.totalAgorot ? -1 : 0))
-      .map((row) => ({ categoryName: nameById.get(row.categoryId) ?? "Unknown", totalSpent: formatMoney(agorot(Number(row.totalAgorot))) }));
+      .map((row) => ({
+        categoryName: nameById.get(row.categoryId) ?? "Unknown",
+        totalSpent: formatReportingMinorUnits(shownByCategory.get(row.categoryId) ?? 0, reporting),
+      }));
   },
 });
 
@@ -170,7 +178,7 @@ const listRecentTransactions = defineTool({
   },
   schema: RecentTransactionsSchema,
   run: async (userId, input) => {
-    const formatMoney = await getReportingFormatter(userId);
+    const reporting = await getReportingContext(userId);
     let categoryId: string | undefined;
     if (input.categoryName) {
       const categories = await listAllCategories(userId);
@@ -191,7 +199,8 @@ const listRecentTransactions = defineTool({
       merchantName: row.merchantName,
       description: row.description,
       category: row.category.name,
-      amount: formatMoney(agorot(Number(row.amount))),
+      // At the rate of the transaction's own day, or exact in its own currency (AGENTS.md §3vvv).
+      amount: formatReportingFlow(row, reporting),
     }));
   },
 });

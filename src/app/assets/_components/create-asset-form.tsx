@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Spinner } from "../../../components/spinner/spinner";
 import { ToggleSwitch } from "../../../components/toggle/toggle-switch";
+import { ShekelEquivalentHint } from "../../../components/currency/shekel-equivalent-hint";
 
 const ASSET_TYPES = [
   { value: "PROPERTY", label: "Property" },
@@ -98,6 +99,7 @@ export function CreateAssetForm() {
           placeholder="500000.00"
           className="w-32 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
+        <ShekelEquivalentHint value={currentValue} />
       </div>
       <div className="pb-2">
         <ToggleSwitch id="asset-tax-advantaged" checked={taxAdvantaged} onChange={setTaxAdvantaged} label="Tax-advantaged" />

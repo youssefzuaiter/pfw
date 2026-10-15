@@ -8,6 +8,8 @@ const DATA: MonthlyReportData = {
   monthKey: "2026-09",
   incomeAgorot: 100n,
   expenseAgorot: 50n,
+  incomeShown: 100,
+  expenseShown: 50,
   topCategories: [],
   netWorth: null,
   core: null,

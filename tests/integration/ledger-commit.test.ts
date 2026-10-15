@@ -69,7 +69,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Cry
     expect(history[0].patchData.amountAgorot).toBe("-4500");
 
     const verification = await verifyLedgerChain(userA.id, created.id);
-    expect(verification).toEqual({ valid: true, brokenAtCommitId: null });
+    expect(verification).toEqual({ valid: true, brokenAtCommitId: null, mismatchedFields: [] });
   });
 
   it("chains an UPDATE commit's previousHash to the CREATE commit's currentHash", async () => {

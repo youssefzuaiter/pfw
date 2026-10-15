@@ -225,7 +225,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("acc
     expect(bAfter.GroupMember).toBe(0);
     expect({ ...bAfter, GroupMember: bBefore.GroupMember }).toEqual(bBefore);
     expect((await admin.category.findUniqueOrThrow({ where: { id: bCategoryId } })).sharedGroupId).toBeNull();
-    for (const id of transactionsOf.b) expect(await verifyLedgerChain(users.b.id, id)).toEqual({ valid: true, brokenAtCommitId: null });
+    for (const id of transactionsOf.b) expect(await verifyLedgerChain(users.b.id, id)).toEqual({ valid: true, brokenAtCommitId: null, mismatchedFields: [] });
     expect(await admin.rateLimitBucket.count({ where: { key: `notifications:get:${users.b.id}` } })).toBe(1);
   });
 
