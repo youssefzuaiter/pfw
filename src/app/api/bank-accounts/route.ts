@@ -23,6 +23,9 @@ const BodySchema = z.object({
   // net-worth.ts's own liability classification, not by the sign of what
   // gets typed in here).
   nativeBalance: z.string().min(1),
+  // The day the balance is true for. Optional: left out, it means "as of now",
+  // and transactions are rolled forward from the moment the account is made.
+  balanceAsOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "balanceAsOf must be a YYYY-MM-DD date").optional(),
 });
 
 /**
@@ -58,6 +61,15 @@ export async function POST(request: NextRequest) {
     return jsonBadRequest("Balance must not be negative");
   }
 
+  let balanceAsOf: Date | undefined;
+  if (parsed.data.balanceAsOf !== undefined) {
+    balanceAsOf = new Date(`${parsed.data.balanceAsOf}T00:00:00.000Z`);
+    if (Number.isNaN(balanceAsOf.getTime()) || balanceAsOf.toISOString().slice(0, 10) !== parsed.data.balanceAsOf) {
+      return jsonBadRequest("Invalid balanceAsOf date");
+    }
+    if (balanceAsOf.getTime() > Date.now()) return jsonBadRequest("balanceAsOf cannot be in the future");
+  }
+
   try {
     const account = await createBankAccount(user.id, {
       institutionName: parsed.data.institutionName,
@@ -66,6 +78,7 @@ export async function POST(request: NextRequest) {
       nickname: parsed.data.nickname,
       currency: parsed.data.currency,
       nativeBalance: BigInt(nativeBalance),
+      balanceAsOf,
     });
 
     await recordAuditLog(user.id, {

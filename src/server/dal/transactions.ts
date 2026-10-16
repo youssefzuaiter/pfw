@@ -774,6 +774,8 @@ export type MerchantOccurrenceRow = {
    * (recurring-detection.ts via build-dashboard-data.ts) only ever read `amount`. */
   currency: Currency;
   nativeAmount: bigint;
+  /** Added for Safe to Spend: lets a recurring bill be matched to the envelope of its category so the two are never both deducted. */
+  categoryId: string;
 };
 
 /**
@@ -789,7 +791,7 @@ export async function getTransactionOccurrencesSince(userId: string, since: Date
   const rows = await withUserScope(userId, (tx) =>
     tx.notableTransaction.findMany({
       where: { userId, occurredAt: { gte: since }, ...REAL_MONEY },
-      select: { merchantName: true, description: true, amount: true, occurredAt: true, currency: true, nativeAmount: true },
+      select: { merchantName: true, description: true, amount: true, occurredAt: true, currency: true, nativeAmount: true, categoryId: true },
     }),
   );
 
@@ -802,6 +804,7 @@ export async function getTransactionOccurrencesSince(userId: string, since: Date
       occurredAt: row.occurredAt,
       currency: row.currency,
       nativeAmount: row.nativeAmount,
+      categoryId: row.categoryId,
     };
   });
 }

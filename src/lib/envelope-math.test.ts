@@ -78,6 +78,38 @@ describe("computeRollingBalance()", () => {
   it("returns zero for no activity at all", () => {
     expect(computeRollingBalance([], "2026-01")).toBe(0);
   });
+
+  it("does not count spending from before the envelope existed as a deficit", () => {
+    // Six months of spending with no budget, then a first allocation in March.
+    const history = [
+      activity("2025-09", 0, 9_000),
+      activity("2025-10", 0, 9_000),
+      activity("2026-01", 0, 9_000),
+      activity("2026-03", 5_000, 1_000),
+    ];
+    // Only March onwards is drawn from the envelope: 5,000 - 1,000, not 5,000 - 28,000.
+    expect(computeRollingBalance(history, "2026-03")).toBe(4_000);
+  });
+
+  it("starts from the FIRST allocation month, and spending in that month counts", () => {
+    const history = [activity("2026-01", 0, 700), activity("2026-02", 3_000, 1_200)];
+    expect(computeRollingBalance(history, "2026-02")).toBe(1_800);
+  });
+
+  it("an envelope that has never been allocated to has no balance, however much was spent", () => {
+    expect(computeRollingBalance([activity("2026-01", 0, 50_000)], "2026-01")).toBe(0);
+  });
+
+  it("an allocation in a month AFTER the target does not start the envelope early", () => {
+    const history = [activity("2026-01", 0, 4_000), activity("2026-06", 10_000, 0)];
+    expect(computeRollingBalance(history, "2026-02")).toBe(0);
+    expect(computeRollingBalance(history, "2026-06")).toBe(10_000);
+  });
+
+  it("still carries a real deficit forward once the envelope exists", () => {
+    const history = [activity("2026-01", 0, 9_000), activity("2026-02", 2_000, 5_000), activity("2026-03", 0, 1_000)];
+    expect(computeRollingBalance(history, "2026-03")).toBe(-4_000);
+  });
 });
 
 describe("computeAvailableToBudget()", () => {

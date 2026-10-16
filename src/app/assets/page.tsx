@@ -14,6 +14,7 @@ import { listManualAssets } from "../../server/dal/manual-assets";
 import { AddWalletForm } from "./_components/add-wallet-form";
 import { CreateAssetForm } from "./_components/create-asset-form";
 import { CreateBankAccountForm } from "./_components/create-bank-account-form";
+import { ReconcileBalanceForm } from "./_components/reconcile-balance-form";
 import { DeleteAssetButton } from "./_components/delete-asset-button";
 import { UpdateValuationForm } from "./_components/update-valuation-form";
 import { WalletBalanceRow } from "./_components/wallet-balance-row";
@@ -119,6 +120,14 @@ export default async function AssetsPage() {
                       ({account.institutionName} ••{account.last4} — {BANK_ACCOUNT_TYPE_LABEL[account.accountType]})
                     </span>
                   </p>
+                  <p className="mt-1 text-xs text-muted">
+                    {account.balanceAsOf
+                      ? `Balance as of ${account.balanceAsOf.toISOString().slice(0, 10)}; later transactions are counted from the next day.`
+                      : "Balance as of when the account was added."}
+                  </p>
+                  <div className="mt-2">
+                    <ReconcileBalanceForm accountId={account.id} isCard={account.accountType === "CREDIT_CARD"} />
+                  </div>
                 </div>
                 <CurrencyAmount
                   agorotValue={account.agorotValue}

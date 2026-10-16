@@ -41,6 +41,8 @@ export async function createBankAccount(
     nickname?: string;
     currency?: Prisma.BankAccountCreateInput["currency"];
     nativeBalance: bigint;
+    /** The UTC day the balance is true for (see the schema column). Omit to mean "now". */
+    balanceAsOf?: Date;
   },
 ) {
   return withUserScope(userId, (tx) =>
@@ -53,7 +55,36 @@ export async function createBankAccount(
         nickname: input.nickname,
         currency: input.currency ?? "ILS",
         nativeBalance: input.nativeBalance,
+        balanceAsOf: input.balanceAsOf ?? null,
       },
     }),
   );
+}
+
+export type ReconcileBankAccountResult =
+  | { ok: true; id: string; nativeBalance: bigint; balanceAsOf: Date }
+  | { ok: false; error: "not_found" };
+
+/**
+ * Re-states what an account holds: "on this day the balance was this". The
+ * figure replaces the opening balance and the day becomes the point
+ * transactions are rolled forward from (Safe to Spend, AGENTS.md §3yyy), so
+ * it is the way to correct an account whose typed balance already included
+ * transactions the roll-forward would otherwise count a second time.
+ * Not found for another user's account, like every DAL lookup.
+ */
+export async function reconcileBankAccount(
+  userId: string,
+  id: string,
+  input: { nativeBalance: bigint; balanceAsOf: Date },
+): Promise<ReconcileBankAccountResult> {
+  return withUserScope(userId, async (tx) => {
+    const existing = await tx.bankAccount.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!existing) return { ok: false, error: "not_found" };
+    const updated = await tx.bankAccount.update({
+      where: { id },
+      data: { nativeBalance: input.nativeBalance, balanceAsOf: input.balanceAsOf },
+    });
+    return { ok: true, id, nativeBalance: updated.nativeBalance, balanceAsOf: input.balanceAsOf };
+  });
 }
