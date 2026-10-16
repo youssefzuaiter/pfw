@@ -508,6 +508,12 @@ model UserSettings {
   /// is converted at the latest synced rate when it becomes text.
   reportingCurrency Currency @default(ILS)
 
+  /// When the user finished (or skipped) the first-run setup wizard
+  /// (AGENTS.md §3zzz). Null = not yet. A user is only sent to the wizard while
+  /// this is null AND the app is still empty for them (no account, or no
+  /// transactions), so nobody who already uses the app is ever redirected.
+  onboardingCompletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

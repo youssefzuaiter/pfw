@@ -9460,6 +9460,49 @@ never summed from transactions, so a split cannot move one).
   (split after saving); splits on the recently-deleted list's labels;
   per-part notes or merchants.
 
+## 3zzz. First-run setup wizard (ad hoc)
+
+A new user used to land on an empty dashboard. Now they are sent to a
+three-step setup instead: (1) choose the currency totals show in, (2) add the
+first account, (3) import a first statement, or enter transactions by hand.
+
+- **Who is sent**: `needsOnboarding` (`src/lib/onboarding.ts`, pure) is true
+  while the user has not finished or skipped setup AND their app is still
+  empty (no account, or no live transaction). The emptiness half is what keeps
+  existing users safe: anyone with an account and transactions is never
+  redirected, so no backfill was needed.
+- **Persisted state**: `UserSettings.onboardingCompletedAt` (migration
+  `20261016140000_onboarding_completed_at`, nullable). Finishing, skipping, or
+  entering by hand all record it through `POST /api/onboarding/complete`
+  (idempotent: a repeat keeps the first time). Once recorded, `/onboarding`
+  bounces to the dashboard and the dashboard never redirects again.
+- **Where the redirect happens**: the dashboard page calls
+  `userNeedsOnboarding` before loading anything else. A failed check counts as
+  "no", so a database hiccup can never trap someone on the wizard or take the
+  dashboard down. The redirect runs outside that try, since it works by throwing.
+- **Reuses the real forms, no copies**: step 1 is `ReportingCurrencySelect`
+  (extracted from Settings, so both lists come from `SUPPORTED_CURRENCIES`);
+  step 2 is the Assets page's `CreateBankAccountForm` (gained an `onCreated`
+  callback); step 3 is the Transactions page's `ImportCsvForm` (gained an
+  `onImported` callback). The wizard owns only order, the escape hatches and
+  recording completion. The import step lists the account the user just made
+  without a page refresh.
+- **Resuming**: someone who already added an account resumes at step 3, not
+  step 1, so reloading the page never replays the currency choice.
+- **Escape hatches**: "Skip setup" on every step, "I'll add an account later"
+  on step 2, and "Enter transactions by hand instead" on step 3. A failure to
+  save completion stays on the page with a message, rather than leaving the
+  user in a state the dashboard would bounce them back out of.
+- **Verified**: `onboarding.test.ts` (7 rule cases), 10 component tests
+  driving the real forms (order, escape hatches, failed saves, the new account
+  reaching step 3), 5 integration tests against real Postgres (who is sent,
+  that looking creates no settings row, a deleted transaction does not count,
+  first-finish time kept, per-user isolation), and 3 browser tests on the
+  production build (full walk including a real CSV import, skip remembered,
+  enter-by-hand). The first browser run exposed an append-only cleanup problem:
+  a user with audit rows cannot be hard-deleted, so the test removes its user
+  through the account-deletion path (purge flag set), the same way §3ttt does.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
