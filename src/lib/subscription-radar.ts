@@ -232,6 +232,8 @@ export type SubscriptionOccurrence = {
   /** Signed — negative for an expense. Callers must pass a single currency's occurrences per call. */
   nativeAmount: NativeAmount;
   occurredAt: Date;
+  /** The transaction's category, when the caller has it (Safe to Spend matches a bill to its envelope by this). Optional so every caller that only needs price/cadence analysis is unchanged. */
+  categoryId?: string | null;
 };
 
 export type PriceHike = {
@@ -256,6 +258,10 @@ export type SubscriptionAnalysis = {
   /** `lastSeenAt` + the average interval, only when `isRecurring`. */
   nextExpectedDate: Date | null;
   priceHike: PriceHike | null;
+  /** The category of the most recent charge, or `null` when the occurrences carried none. */
+  categoryId: string | null;
+  /** The average gap between charges in days, or `null` with fewer than two. Lets a caller step a weekly bill forward through a month. */
+  averageIntervalDays: number | null;
 };
 
 /** More than this many distinct price levels stops looking like "a subscription that
@@ -318,6 +324,8 @@ export function analyzeSubscription(occurrences: readonly SubscriptionOccurrence
     lastSeenAt,
     nextExpectedDate,
     priceHike,
+    categoryId: sorted[sorted.length - 1].categoryId ?? null,
+    averageIntervalDays,
   };
 }
 

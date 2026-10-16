@@ -119,6 +119,46 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
       expect(groceries?.balanceAgorot).toBe(120_000);
     });
 
+    it("does not count spending from before the first allocation as a deficit", async () => {
+      const transport = await admin.category.create({ data: { userId: userA.id, slug: "transport", name: "Transport" } });
+      const spend = (iso: string, amount: bigint) =>
+        admin.notableTransaction.create({
+          data: {
+            userId: userA.id, bankAccountId: accountA.id, categoryId: transport.id,
+            occurredAt: new Date(`${iso}T00:00:00.000Z`), amount: -amount, nativeAmount: -amount,
+            description: "Bus", isManual: true,
+          },
+        });
+      // Months of spending with no budget, then a first allocation in February.
+      await spend("2025-11-10", 90_000n);
+      await spend("2026-01-10", 110_000n);
+      await spend("2026-02-10", 10_000n);
+      await allocateToEnvelope(userA.id, transport.id, agorot(50_000), "2026-02");
+
+      const february = (await getEnvelopeBalances(userA.id, "2026-02")).find((b) => b.categoryId === transport.id);
+      expect(february?.balanceAgorot).toBe(40_000);
+      expect(february?.spentThisMonthAgorot).toBe(10_000);
+
+      // A real overspend after the envelope exists still shows, and carries forward.
+      await spend("2026-03-05", 70_000n);
+      const march = (await getEnvelopeBalances(userA.id, "2026-03")).find((b) => b.categoryId === transport.id);
+      expect(march?.balanceAgorot).toBe(-30_000);
+    });
+
+    it("a category with spending and no allocation at all is not overdrawn", async () => {
+      const hobby = await admin.category.create({ data: { userId: userA.id, slug: "hobby", name: "Hobby" } });
+      await admin.notableTransaction.create({
+        data: {
+          userId: userA.id, bankAccountId: accountA.id, categoryId: hobby.id,
+          occurredAt: new Date("2026-01-12T00:00:00.000Z"), amount: -60_000n, nativeAmount: -60_000n,
+          description: "Paint", isManual: true,
+        },
+      });
+      const entry = (await getEnvelopeBalances(userA.id, "2026-01")).find((b) => b.categoryId === hobby.id);
+      expect(entry?.balanceAgorot).toBe(0);
+      expect(entry?.spentThisMonthAgorot).toBe(60_000);
+    });
+
     it("cross-user IDOR: userB's query never returns userA's categories", async () => {
       const balances = await getEnvelopeBalances(userB.id, "2026-01");
       expect(balances).toEqual([]);

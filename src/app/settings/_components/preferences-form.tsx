@@ -22,6 +22,7 @@ export type PreferencesFormData = {
   defaultManualAssetLiquidityTier: LiquidityTier | null;
   preferredCurrencyDisplay: "NATIVE" | "ILS";
   monthlyReportEnabled: boolean;
+  safeToSpendCountSavings: boolean;
   reportingCurrency: CurrencyCode;
 };
 
@@ -106,6 +107,9 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
   function handleReportingCurrencyChange(event: ChangeEvent<HTMLSelectElement>) {
     if (isSupportedCurrency(event.target.value)) updateField("reportingCurrency", event.target.value);
   }
+  function handleSavingsChange(event: ChangeEvent<HTMLInputElement>) {
+    updateField("safeToSpendCountSavings", event.target.checked);
+  }
   function handleMonthlyReportChange(event: ChangeEvent<HTMLInputElement>) {
     updateField("monthlyReportEnabled", event.target.checked);
   }
@@ -133,6 +137,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
           defaultManualAssetLiquidityTier: form.defaultManualAssetLiquidityTier,
           preferredCurrencyDisplay: form.preferredCurrencyDisplay,
           monthlyReportEnabled: form.monthlyReportEnabled,
+          safeToSpendCountSavings: form.safeToSpendCountSavings,
           reportingCurrency: form.reportingCurrency,
         }),
       });
@@ -191,6 +196,25 @@ export function PreferencesForm({ initial }: { initial: PreferencesFormData }) {
             <option value="NATIVE">Native currency</option>
           </select>
         </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-fg">Safe to spend</h3>
+        <label className="mt-2 flex items-start gap-2 text-sm text-fg">
+          <input
+            type="checkbox"
+            checked={form.safeToSpendCountSavings}
+            onChange={handleSavingsChange}
+            className="mt-1 h-4 w-4 accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <span>
+            Count my savings accounts as money I can spend.
+            <span className="block text-xs text-muted">
+              Turn this off to treat savings as a reserve: they stay out of the dashboard&apos;s safe-to-spend figure,
+              which then starts from checking alone.
+            </span>
+          </span>
+        </label>
       </div>
 
       <div>

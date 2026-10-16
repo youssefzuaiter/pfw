@@ -3,6 +3,7 @@ import { getCurrentUser } from "../../../server/auth/current-user";
 import { buildLiquidityRunwayData } from "../../../server/analytics/build-liquidity-runway-data";
 import { buildOpenBankingSyncData } from "../../../server/analytics/build-open-banking-sync-data";
 import { buildRunwayForecastData } from "../../../server/analytics/build-runway-forecast-data";
+import { buildSafeToSpendData } from "../../../server/analytics/build-safe-to-spend-data";
 import { buildSpendingAnomalyData } from "../../../server/analytics/build-spending-anomaly-data";
 import { buildDashboardData } from "../../../server/dashboard/build-dashboard-data";
 import { getVaultStatus } from "../../../server/dal/dead-mans-switch";
@@ -19,6 +20,7 @@ import { NetWorthHero } from "./_components/net-worth-hero";
 import { OpenBankingSyncCard } from "./_components/open-banking-sync-card";
 import { QuickLinksGrid } from "./_components/quick-links-grid";
 import { RunwayForecastChart } from "./_components/runway-forecast-chart";
+import { SafeToSpendCard } from "./_components/safe-to-spend-card";
 import { SpendingAnomalyAlert } from "./_components/spending-anomaly-alert";
 
 // This screen is entirely live, per-user financial data — never a
@@ -29,7 +31,7 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
-  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast, spendingAnomaly, openBankingSync] = await Promise.all([
+  const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast, spendingAnomaly, openBankingSync, safeToSpend] = await Promise.all([
     buildDashboardData(user.id),
     listMyGroups(user.id),
     getVaultStatus(user.id),
@@ -37,6 +39,12 @@ export default async function DashboardPage() {
     buildRunwayForecastData(user.id),
     buildSpendingAnomalyData(user.id),
     buildOpenBankingSyncData(user.id),
+    // A fault in this one new figure must not take the whole dashboard down
+    // (one bad input already did once, AGENTS.md §3tt): log it and omit the card.
+    buildSafeToSpendData(user.id).catch((error: unknown) => {
+      console.error("Safe to Spend failed", error);
+      return null;
+    }),
   ]);
 
   const households = await Promise.all(
@@ -64,6 +72,8 @@ export default async function DashboardPage() {
       <QuickLinksGrid />
 
       <SpendingAnomalyAlert transactions={spendingAnomaly.transactions} windowEndDateKey={spendingAnomaly.windowEndDateKey} />
+
+      {safeToSpend ? <SafeToSpendCard {...safeToSpend} /> : null}
 
       {/*
         The Attention Feed's insight count varies a lot run to run (from
