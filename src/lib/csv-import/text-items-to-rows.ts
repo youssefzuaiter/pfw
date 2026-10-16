@@ -173,7 +173,7 @@ const MIN_CELLS_FOR_BAND_EVIDENCE = 3;
  * cannot define its columns.
  *
  * A real statement opens with full-width preamble — `Iban : TR00 0000
- * 1000 … Ad Soyad : …` — whose text spans every column at once. Letting
+ * 0000 … Ad Soyad : …` — whose text spans every column at once. Letting
  * it into the band merge fuses all the columns into one, and then every
  * row of the file comes back as a single cell, so no adapter can ever
  * match the header. A real QNB statement did exactly that.
@@ -507,7 +507,7 @@ function foldFragmentsIntoRows(
     if (used.size >= MIN_COLUMNS_FOR_OWN_ROW) return true;
 
     // One column is not enough on its own: a full-width preamble line
-    // ("Iban : TR44 … Ad Soyad : …") is a single fragment whose midpoint
+    // ("Iban : TR00 … Ad Soyad : …") is a single fragment whose midpoint
     // falls in one band, and folding THAT into a transaction would
     // corrupt it. A genuine wrapped cell also FITS inside its column.
     const band = bands[[...used][0]];

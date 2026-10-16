@@ -457,7 +457,7 @@ describe("a multi-page statement that repeats its preamble", () => {
 describe("preamble that spans the page", () => {
   it("does not let a full-width prose line collapse the table into one column", () => {
     // The real failure, from a real QNB statement: its header block
-    // ("Iban : TR44 … Ad Soyad : …") spans every column at once, so
+    // ("Iban : TR00 … Ad Soyad : …") spans every column at once, so
     // merging ranges across ALL lines fused the columns together and
     // every row came back as a single cell — no adapter could match.
     const items = [
