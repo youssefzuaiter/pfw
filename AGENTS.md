@@ -7842,7 +7842,7 @@ dedupe from a broken one before pressing a button that cannot be undone.
 
 **Result on the real file**: 211 rows, 0 rejected, descriptions whole,
 signs correct against the statement's own running balance, and the stored
-conversion exact (−45,000.00 TRY × 0.062267 = −2,802.02 ILS, frozen per
+conversion exact (e.g. −10,000.00 TRY × 0.062267 = −622.67 ILS, frozen per
 row). Re-previewing reports 0 new / 211 already imported. This app had
 never held a real transaction before.
 
@@ -9647,6 +9647,57 @@ Audited first; the audit changed the design, because of one fact below.
   counted as still due until a payment is recorded on the debt. Weekly bills
   are rare and stepped approximately; no per-day "safe to spend today"
   figure.
+
+## 3aaaa. Statements prove themselves against their own running balance (ad hoc)
+
+Asked for a "deterministic parser with a built-in reconciliation check" for the
+QNB PDF layout that took eight rounds to get right (§3bbb). The parser already
+read the real statement exactly (every row, 0 rejected), so the work
+was the PROOF, not a new parser: every import of a statement that prints a
+running balance must now agree with that balance on every row, or nothing is
+imported.
+
+- **`src/lib/csv-import/reconcile.ts`** (pure): each row's printed balance must
+  equal the previous balance plus its amount; the opening balance plus the
+  parsed total must equal the closing balance. A break names the line, the
+  arithmetic and the likely cause (a rejected line in the gap, an inverted sign,
+  an amount 100 times off, a duplicate, or "n minor units unaccounted for
+  between line A and B"), and continues from the printed balance so one bad row
+  is reported once. Oldest-first vs newest-first is decided by which order the
+  arithmetic agrees with, never by dates; with an opening balance only
+  oldest-first is considered. A file with no balance column is `not-checked`,
+  and the preview says so rather than claiming a check it did not do.
+- **Adapters gained an optional `balance` column** (QNB `Bakiye` moved from
+  ignored to read; `balance`/`running balance` on the generic layout, `יתרה` on
+  Leumi). The balance is read only to check, never stored (law #5). An
+  unreadable balance cell does not reject the transaction; it shows up as a
+  break at its own line. The opening balance is the first balance on a
+  dateless, amountless line before any transaction (QNB `DEVREDEN BAKİYE`).
+- **The pipeline refuses**: `parseStatementCsv` throws
+  `StatementReconciliationError` (`reconciliation_failed`, a client file error,
+  400) with the diff in the message and up to 20 mismatches in the JSON. A
+  rejected row on a balance-bearing statement therefore now fails the import
+  (before, the other rows went in): a statement known to be incomplete is not
+  half-imported. The preview shows "Matches the bank's balance on all N rows".
+- **A real reconstruction bug the check found on its first run**: folding a
+  one-column line into the "vertically nearest row" had no distance limit, so a
+  page footer that fit inside one column (`Sayfa: 1/2`, 490 units below the
+  table) joined the last row of the page and broke its balance cell. A fragment
+  now folds only within one typical row pitch (the median gap between rows,
+  measured on the document); anything further is page furniture.
+- **What a running balance cannot see** (pinned by a test, not hidden): rows
+  whose amounts cancel out (a charge and its same-day reversal), and a missing
+  END of the statement, since nothing comes after the last row to check it.
+  The reader always takes every page of the file it is given.
+- **Verified**: 15 unit tests for the check; an end-to-end test from text
+  fragments at the real statement's measured coordinates (made-up values) through
+  reconstruction, parsing and reconciliation, including a lost row (named at the
+  line after it, off by exactly its amount), a misread amount, a flipped sign,
+  a missing page top and a bad opening balance; `real-statement.test.ts`, opt-in
+  via `STATEMENT_PDF` (skips otherwise, never commits the file), which passed on
+  the real statement with its row count pinned. Mutations caught:
+  removing the fold distance limit (7 failures) and the refusal (5). `npm run
+  check` 2,372 passed / 5 skipped; Playwright 57 passed.
 
 ## 4. Design system (Phase 0)
 

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { formatNativeAmount, type CurrencyCode } from "../../../../lib/currency";
 import { DEFAULT_CSV_LIMITS } from "../../../../lib/csv-import/csv-parse";
-import { isClientFileError, parseStatementCsv } from "../../../../lib/csv-import/pipeline";
+import { isClientFileError, parseStatementCsv, StatementReconciliationError } from "../../../../lib/csv-import/pipeline";
 import { guardMutation } from "../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonNotFound, jsonServerError } from "../../../../server/api/responses";
 import { recordAuditLog } from "../../../../server/dal/audit-log";
@@ -107,7 +107,11 @@ export async function POST(request: NextRequest) {
       // Every client-file error carries a stable `code` (`unrecognized_format`,
       // `currency_mismatch`, the tokenizer's own codes) so the UI can react
       // to the kind of failure, not just show the message.
-      return NextResponse.json({ error: error.message, code: error.code }, { status: 400 });
+      // A statement that does not add up to its own running balance also
+      // carries the lines that disagree, so the form can list them.
+      const mismatches =
+        error instanceof StatementReconciliationError ? { mismatches: error.report.mismatches.slice(0, 20) } : {};
+      return NextResponse.json({ error: error.message, code: error.code, ...mismatches }, { status: 400 });
     }
     console.error("POST /api/transactions/import failed to parse", error);
     return jsonServerError();
@@ -150,6 +154,7 @@ export async function POST(request: NextRequest) {
         isExpense: row.nativeAmount < 0,
       })),
       rejectedRows: parsed.errors.slice(0, 20),
+      reconciliation: summarizeReconciliation(parsed.reconciliation),
     });
   }
 
@@ -189,6 +194,7 @@ export async function POST(request: NextRequest) {
       // errors, and neither the response nor the UI needs all of them.
       rejectedCount: parsed.errors.length,
       rejectedRows: parsed.errors.slice(0, 20),
+      reconciliation: summarizeReconciliation(parsed.reconciliation),
     });
   } catch (error) {
     if (error instanceof BankAccountNotFoundError) {
@@ -202,4 +208,10 @@ export async function POST(request: NextRequest) {
     console.error("POST /api/transactions/import failed", error);
     return jsonServerError();
   }
+}
+
+/** What the form shows about the balance check: whether it ran, and over how many rows. A mismatch never reaches here (it is refused above). */
+function summarizeReconciliation(report: ReturnType<typeof parseStatementCsv>["reconciliation"]) {
+  if (report.status === "not-checked") return { status: report.status, checkedRows: 0 };
+  return { status: report.status, checkedRows: report.checkedRows, order: report.order };
 }
