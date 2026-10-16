@@ -60,6 +60,7 @@ export const SWEPT_ROUTES = [
   "POST /api/mfa/confirm",
   "POST /api/mfa/disable",
   "POST /api/mfa/setup",
+  "POST /api/onboarding/complete",
   "POST /api/phone-alerts",
   "POST /api/trades",
   "POST /api/transaction-rules",

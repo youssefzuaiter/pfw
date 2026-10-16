@@ -33,6 +33,11 @@ test.describe("account deletion", () => {
       [email, passwordHash],
     );
     userId = rows[0].id;
+    // This test is about deleting an account, not about first-run setup: mark it finished so sign-in lands on the dashboard.
+    await db.query(
+      `INSERT INTO "UserSettings" ("id", "userId", "onboardingCompletedAt", "updatedAt") VALUES ('e2e_' || md5(random()::text), $1, now(), now())`,
+      [userId],
+    );
     await db.query(
       `INSERT INTO "Notification" ("id", "userId", "type", "message") VALUES ('e2e_' || md5(random()::text), $1, 'test', 'hello')`,
       [userId],
