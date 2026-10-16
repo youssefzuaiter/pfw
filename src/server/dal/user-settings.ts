@@ -28,7 +28,20 @@ export type UserSettingsData = {
   monthlyReportLastSentMonth: string | null;
   /** Display only — see the schema column (AGENTS.md §3nnn). */
   reportingCurrency: CurrencyCode;
+  /** Whether savings accounts count as spendable cash in Safe to Spend (AGENTS.md §3yyy). */
+  safeToSpendCountSavings: boolean;
 };
+
+/**
+ * Just the Safe to Spend savings preference, as a plain read (a dashboard
+ * view must not write). No row yet means the default: savings count.
+ */
+export async function getSafeToSpendCountSavings(userId: string): Promise<boolean> {
+  const row = await withUserScope(userId, (tx) =>
+    tx.userSettings.findUnique({ where: { userId }, select: { safeToSpendCountSavings: true } }),
+  );
+  return row?.safeToSpendCountSavings ?? true;
+}
 
 /**
  * Just the reporting currency, as a plain read: the root layout asks on

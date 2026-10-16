@@ -508,6 +508,10 @@ model UserSettings {
   /// is converted at the latest synced rate when it becomes text.
   reportingCurrency Currency @default(ILS)
 
+  /// Whether savings accounts count as spendable cash in Safe to Spend
+  /// (AGENTS.md §3yyy). On by default; turn it off to treat savings as a reserve.
+  safeToSpendCountSavings Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -764,6 +768,11 @@ model BankAccount {
   currency        Currency        @default(ILS)
   /// Minor units of `currency` (agorot if ILS, cents otherwise).
   nativeBalance   BigInt
+  /// The day (UTC, inclusive) `nativeBalance` was true for: it already includes
+  /// every transaction dated on or before it. Safe to Spend (§3yyy) rolls the
+  /// balance forward by transactions dated AFTER this day. Null means "when the
+  /// row was created" (`createdAt`), the behaviour before this column existed.
+  balanceAsOf     DateTime?       @db.Date
   sharedGroupId   String?
   sharedGroup     SharedGroup?    @relation(fields: [sharedGroupId], references: [id], onDelete: SetNull)
   createdAt       DateTime        @default(now())

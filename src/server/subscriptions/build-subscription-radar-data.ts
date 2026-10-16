@@ -78,6 +78,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     currency: row.currency,
     nativeAmount: nativeAmount(Number(row.nativeAmount)),
     occurredAt: row.occurredAt,
+    categoryId: row.categoryId,
   }));
 
   const radarResult = runSubscriptionRadar(occurrences, asOf);

@@ -21,6 +21,7 @@ export function CreateBankAccountForm() {
   const [nickname, setNickname] = useState("");
   const [currency, setCurrency] = useState<(typeof CURRENCIES)[number]>("ILS");
   const [nativeBalance, setNativeBalance] = useState("");
+  const [balanceAsOf, setBalanceAsOf] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +42,7 @@ export function CreateBankAccountForm() {
           nickname: nickname.trim() || undefined,
           currency,
           nativeBalance: nativeBalance.trim(),
+          balanceAsOf: balanceAsOf || undefined,
         }),
       });
       if (!response.ok) {
@@ -51,6 +53,7 @@ export function CreateBankAccountForm() {
       setLast4("");
       setNickname("");
       setNativeBalance("");
+      setBalanceAsOf("");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add bank account");
@@ -146,6 +149,24 @@ export function CreateBankAccountForm() {
           className="w-32 rounded-md border border-border bg-elevated px-3 py-2 font-tabular-figures tracking-tight text-sm text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>
+      <div className="flex flex-col gap-1">
+        <label htmlFor="bank-balance-as-of" className="text-xs font-medium text-muted">
+          Balance as of (optional)
+        </label>
+        <input
+          id="bank-balance-as-of"
+          type="date"
+          value={balanceAsOf}
+          max={new Date().toISOString().slice(0, 10)}
+          onChange={(event) => setBalanceAsOf(event.target.value)}
+          aria-describedby="bank-balance-as-of-help"
+          className="rounded-md border border-border bg-elevated px-3 py-2 text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      </div>
+      <p id="bank-balance-as-of-help" className="w-full text-xs text-muted">
+        If the balance is from an earlier day (a statement), enter that day: transactions up to and including it are
+        taken as already in the balance. Left empty, it means now.
+      </p>
       <button
         type="submit"
         disabled={isSubmitting}

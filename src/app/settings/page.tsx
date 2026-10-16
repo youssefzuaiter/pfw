@@ -60,6 +60,7 @@ export default async function SettingsPage() {
     defaultManualAssetLiquidityTier: settings.defaultManualAssetLiquidityTier,
     preferredCurrencyDisplay: settings.preferredCurrencyDisplay,
     monthlyReportEnabled: settings.monthlyReportEnabled,
+    safeToSpendCountSavings: settings.safeToSpendCountSavings,
     reportingCurrency: settings.reportingCurrency,
   };
 
