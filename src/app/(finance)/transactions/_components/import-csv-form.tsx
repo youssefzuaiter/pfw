@@ -51,7 +51,14 @@ type ImportSuccess = {
  * the check; a whole month imported with every sign inverted is the
  * failure it prevents.
  */
-export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAccountOption[] }) {
+export function ImportCsvForm({
+  bankAccounts,
+  onImported,
+}: {
+  bankAccounts: readonly BankAccountOption[];
+  /** Called after a real (not preview) import finishes; the first-run wizard uses it to offer "finish". */
+  onImported?: (result: { importedCount: number }) => void;
+}) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -151,6 +158,7 @@ export function ImportCsvForm({ bankAccounts }: { bankAccounts: readonly BankAcc
       setFileName(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       router.refresh();
+      onImported?.({ importedCount: body.importedCount });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed");
     } finally {

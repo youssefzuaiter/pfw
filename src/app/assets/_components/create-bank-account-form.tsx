@@ -13,7 +13,15 @@ const ACCOUNT_TYPES = [
 
 const CURRENCIES = SUPPORTED_CURRENCIES;
 
-export function CreateBankAccountForm() {
+export type CreatedBankAccount = {
+  id: string;
+  institutionName: string;
+  nickname: string | null;
+  accountType: string;
+  currency: string;
+};
+
+export function CreateBankAccountForm({ onCreated }: { onCreated?: (account: CreatedBankAccount) => void } = {}) {
   const router = useRouter();
   const [institutionName, setInstitutionName] = useState("");
   const [last4, setLast4] = useState("");
@@ -49,12 +57,14 @@ export function CreateBankAccountForm() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to add bank account");
       }
+      const created = await response.json().catch(() => ({}));
       setInstitutionName("");
       setLast4("");
       setNickname("");
       setNativeBalance("");
       setBalanceAsOf("");
       router.refresh();
+      if (created.account) onCreated?.(created.account as CreatedBankAccount);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add bank account");
     } finally {

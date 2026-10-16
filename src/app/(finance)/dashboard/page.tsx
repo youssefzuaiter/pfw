@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { ReportingRateNote } from "../../../components/currency/reporting-currency-provider";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { buildLiquidityRunwayData } from "../../../server/analytics/build-liquidity-runway-data";
@@ -7,6 +8,7 @@ import { buildSafeToSpendData } from "../../../server/analytics/build-safe-to-sp
 import { buildSpendingAnomalyData } from "../../../server/analytics/build-spending-anomaly-data";
 import { buildDashboardData } from "../../../server/dashboard/build-dashboard-data";
 import { getVaultStatus } from "../../../server/dal/dead-mans-switch";
+import { userNeedsOnboarding } from "../../../server/dal/onboarding";
 import { getSharedGroupData, listMyGroups } from "../../../server/dal/shared-groups";
 import { AttentionFeed } from "./_components/attention-feed";
 import { BackendStatusBadge } from "./_components/backend-status-badge";
@@ -31,6 +33,16 @@ export const instant = false;
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
+
+  // A new user lands in the first-run setup instead of an empty dashboard. A failed
+  // check must never take the dashboard down, so it counts as "no", and the
+  // redirect itself happens outside the try (it works by throwing).
+  const sendToSetup = await userNeedsOnboarding(user.id).catch((error) => {
+    console.error("Onboarding check failed", error);
+    return false;
+  });
+  if (sendToSetup) redirect("/onboarding");
+
   const [data, myGroups, vaultStatus, liquidityRunway, runwayForecast, spendingAnomaly, openBankingSync, safeToSpend] = await Promise.all([
     buildDashboardData(user.id),
     listMyGroups(user.id),
