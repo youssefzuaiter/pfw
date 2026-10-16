@@ -1,3 +1,4 @@
+import type { ReconciliationReport } from "./reconcile";
 import type { CurrencyCode, NativeAmount } from "../currency";
 
 /** A single successfully-parsed statement line, in this app's canonical shape. */
@@ -37,6 +38,12 @@ export type CanonicalImportRow = {
    * pipeline.ts.
    */
   dedupeKeySource: string;
+  /**
+   * The running balance the statement prints after this row, when it prints
+   * one. Read only to prove the parse exact (`reconcileStatement`); never
+   * stored, since a live balance is derived from transactions, not copied.
+   */
+  printedBalance?: NativeAmount | null;
 };
 
 /** A row that could not be parsed. Non-fatal: the import continues and reports these alongside what succeeded. */
@@ -52,4 +59,6 @@ export type ImportParseResult = {
   currency: CurrencyCode;
   rows: CanonicalImportRow[];
   errors: RowError[];
+  /** Whether the parsed rows add up to the statement's own running balance (see reconcile.ts). */
+  reconciliation: ReconciliationReport;
 };

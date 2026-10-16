@@ -1,3 +1,4 @@
+import { describeMismatches, reconcileStatement, type MismatchReport } from "./reconcile";
 import { BASE_CURRENCY, type CurrencyCode } from "../currency";
 import {
   adapterAcceptsCurrency,
@@ -30,6 +31,24 @@ const ERROR_SAMPLE_ROWS = 12;
  * contents.
  */
 const ERROR_SAMPLE_ROW_CHARS = 110;
+
+/**
+ * The parsed rows do not add up to the statement's own running balance: a
+ * row was dropped, split, duplicated, mis-signed or misread somewhere. Thrown
+ * rather than returned so no caller can import a statement that is known to
+ * be wrong; the message names each line and by how much it is off.
+ */
+export class StatementReconciliationError extends Error {
+  readonly code = "reconciliation_failed";
+
+  constructor(readonly report: MismatchReport) {
+    super(
+      `This statement does not add up to its own running balance, so nothing was imported. ` +
+        `${report.mismatches.length} line(s) disagree:\n${describeMismatches(report)}`,
+    );
+    this.name = "StatementReconciliationError";
+  }
+}
 
 export class UnrecognizedFormatError extends Error {
   readonly code = "unrecognized_format";
@@ -147,17 +166,29 @@ export function parseStatementCsv(bytes: Uint8Array, options: ParseStatementOpti
   const headerKey = headers.join("\u0000");
   const records = table.slice(index + 1).filter((row) => row.join("\u0000") !== headerKey);
 
-  const { rows: parsedRows, errors } = applyAdapter(adapter, headers, records, expectedCurrency);
+  const { rows: parsedRows, errors, openingBalance } = applyAdapter(adapter, headers, records, expectedCurrency);
   const rows: CanonicalImportRow[] = assignDedupeKeys(parsedRows);
 
-  return { adapterId: adapter.id, adapterLabel: adapter.label, currency: expectedCurrency, rows, errors };
+  // A statement that prints a running balance has already checked itself;
+  // the parse must agree with it on every row, or nothing is imported.
+  const reconciliation = reconcileStatement(
+    rows.map((row) => ({ lineNumber: row.lineNumber, nativeAmount: row.nativeAmount, printedBalance: row.printedBalance ?? null })),
+    openingBalance,
+    errors,
+  );
+  if (reconciliation.status === "mismatch") throw new StatementReconciliationError(reconciliation);
+
+  return { adapterId: adapter.id, adapterLabel: adapter.label, currency: expectedCurrency, rows, errors, reconciliation };
 }
 
 /** Narrow type guard so route handlers can distinguish "bad file" (400) from an unexpected server fault (500). */
 export function isClientFileError(
   error: unknown,
-): error is CsvParseError | UnrecognizedFormatError | CurrencyMismatchError {
+): error is CsvParseError | UnrecognizedFormatError | CurrencyMismatchError | StatementReconciliationError {
   return (
-    error instanceof CsvParseError || error instanceof UnrecognizedFormatError || error instanceof CurrencyMismatchError
+    error instanceof CsvParseError ||
+    error instanceof UnrecognizedFormatError ||
+    error instanceof CurrencyMismatchError ||
+    error instanceof StatementReconciliationError
   );
 }

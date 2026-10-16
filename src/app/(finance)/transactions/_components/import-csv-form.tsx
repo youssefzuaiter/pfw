@@ -28,6 +28,8 @@ type Preview = {
   totals: { count: number; rejected: number; alreadyImported: number; newRows: number };
   rows: PreviewRow[];
   rejectedRows: RejectedRow[];
+  /** Whether every row was checked against the bank's own running balance. A mismatch never gets this far: the server refuses it. */
+  reconciliation: { status: "reconciled" | "not-checked"; checkedRows: number };
 };
 
 type ImportSuccess = {
@@ -142,6 +144,7 @@ export function ImportCsvForm({
           totals: body.totals,
           rows: body.rows ?? [],
           rejectedRows: body.rejectedRows ?? [],
+          reconciliation: body.reconciliation ?? { status: "not-checked", checkedRows: 0 },
         });
         return;
       }
@@ -299,6 +302,11 @@ export function ImportCsvForm({
                 <Badge variant="positive">{preview.totals.alreadyImported} already imported</Badge>
               )}
               {preview.totals.rejected > 0 && <Badge variant="warning">{preview.totals.rejected} rows rejected</Badge>}
+              {preview.reconciliation.status === "reconciled" ? (
+                <Badge variant="positive">Matches the bank&apos;s balance on all {preview.reconciliation.checkedRows} rows</Badge>
+              ) : (
+                <span className="text-xs text-muted">No running balance in this file, so it could not be checked against one.</span>
+              )}
               <span className="text-xs text-muted">
                 Detected format: {preview.adapterLabel} · amounts in {preview.currency}
               </span>

@@ -471,6 +471,27 @@ const MIN_COLUMNS_FOR_OWN_ROW = 2;
 const FRAGMENT_FIT_TOLERANCE = 4;
 
 /**
+ * The typical vertical distance between two consecutive real rows: the
+ * median gap, so a page break or one tall wrapped row does not skew it.
+ * Measured on the document itself, never a constant, because a PDF's units
+ * depend on how it was produced. Infinity when there are too few rows to
+ * measure, which keeps the old behaviour for a one-row statement.
+ */
+function typicalRowPitch(lines: readonly (readonly PositionedTextItem[])[], isRow: readonly boolean[]): number {
+  const gaps: number[] = [];
+  let previous: PositionedTextItem | null = null;
+  lines.forEach((line, index) => {
+    if (!isRow[index] || line.length === 0) return;
+    const first = line[0];
+    if (previous && (previous.page ?? 1) === (first.page ?? 1)) gaps.push(Math.abs(previous.y - first.y));
+    previous = first;
+  });
+  if (gaps.length === 0) return Number.POSITIVE_INFINITY;
+  const sorted = gaps.sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
  * Folds a wrapped cell's overflow lines back into the row they belong
  * to.
  *
@@ -488,6 +509,13 @@ const FRAGMENT_FIT_TOLERANCE = 4;
  * joins the VERTICALLY NEAREST real row on its own page, which is what
  * makes the sandwich work: a description's second line is nearer the row
  * it belongs to than to the next transaction, in both directions.
+ *
+ * Only a line within one typical row pitch of its row is a fragment of it.
+ * Without that limit a page number or a footer that happens to fit inside
+ * one column joined whatever row was nearest, however far down the page:
+ * found by the balance check (reconcile.ts), on a page whose `Sayfa: 1/2`
+ * footer, 490 units below the table, landed in the last row's balance cell.
+ * A line further away than that is page furniture and is left out.
  */
 function foldFragmentsIntoRows(
   itemLines: readonly (readonly PositionedTextItem[])[],
@@ -521,6 +549,7 @@ function foldFragmentsIntoRows(
   if (!isRow.some(Boolean)) return itemLines.map((line) => [...line]);
 
   const rows = itemLines.map((line) => [...line]);
+  const maxFragmentDistance = typicalRowPitch(itemLines, isRow);
 
   itemLines.forEach((line, index) => {
     if (isRow[index] || line.length === 0) return;
@@ -537,7 +566,7 @@ function foldFragmentsIntoRows(
       }
     });
 
-    if (nearest !== -1) rows[nearest].push(...line);
+    if (nearest !== -1 && bestDistance <= maxFragmentDistance) rows[nearest].push(...line);
   });
 
   // Reading order within the merged row: down the page, then across, so

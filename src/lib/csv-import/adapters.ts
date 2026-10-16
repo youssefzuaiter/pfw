@@ -59,6 +59,12 @@ type ColumnAliases = {
   debit?: readonly string[];
   credit?: readonly string[];
   currency?: readonly string[];
+  /**
+   * The running balance AFTER each row, when the statement prints one. Not
+   * stored: it is read only so `reconcileStatement` can prove every row was
+   * read exactly (see reconcile.ts).
+   */
+  balance?: readonly string[];
 };
 
 export type BankAdapter = {
@@ -106,6 +112,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       reference: ["reference", "transaction id", "id", "reference number"],
       amount: ["amount", "value"],
       currency: ["currency", "ccy"],
+      balance: ["balance", "running balance"],
     },
   },
   {
@@ -121,6 +128,7 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       reference: ["אסמכתא", "reference", "מספר אסמכתא"],
       debit: ["חובה", "debit", "חיוב"],
       credit: ["זכות", "credit", "זיכוי"],
+      balance: ["יתרה", "balance"],
       currency: ["מטבע", "currency"],
     },
   },
@@ -173,8 +181,9 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       debit: ["borç", "çıkan", "debit"],
       credit: ["alacak", "giren", "credit"],
       currency: ["para birimi", "currency"],
+      balance: ["bakiye", "balance"],
     },
-    ignoredColumns: ["kanal", "işlem kanalı", "channel", "bakiye", "balance"],
+    ignoredColumns: ["kanal", "işlem kanalı", "channel"],
   },
   {
     id: "turkish-signed-amount",
@@ -188,8 +197,9 @@ export const BANK_ADAPTERS: readonly BankAdapter[] = [
       description: ["açıklama", "işlem açıklaması", "description", "details"],
       amount: ["tutar", "işlem tutarı", "amount"],
       currency: ["para birimi", "currency"],
+      balance: ["bakiye", "balance"],
     },
-    ignoredColumns: ["kanal", "işlem kanalı", "channel", "bakiye", "balance"],
+    ignoredColumns: ["kanal", "işlem kanalı", "channel"],
   },
 ];
 
@@ -277,6 +287,7 @@ type ResolvedColumns = {
   debit: number;
   credit: number;
   currency: number;
+  balance: number;
 };
 
 function resolveAdapterColumns(adapter: BankAdapter, headers: string[]): ResolvedColumns {
@@ -289,6 +300,7 @@ function resolveAdapterColumns(adapter: BankAdapter, headers: string[]): Resolve
     debit: resolveColumns(headers, adapter.columns.debit),
     credit: resolveColumns(headers, adapter.columns.credit),
     currency: resolveColumns(headers, adapter.columns.currency),
+    balance: resolveColumns(headers, adapter.columns.balance),
   };
 }
 
@@ -572,7 +584,29 @@ function isStatementFurniture(adapter: BankAdapter, record: string[], columns: R
 export type AdapterParseOutcome = {
   rows: Omit<CanonicalImportRow, "dedupeKeySource">[];
   errors: RowError[];
+  /**
+   * The balance printed on a dateless, amountless line before the first
+   * transaction (QNB's `DEVREDEN BAKİYE`, "balance brought forward"), or null.
+   */
+  openingBalance: NativeAmount | null;
 };
+
+/**
+ * The printed running balance on a row, or null when the layout has no
+ * balance column or this row's cell is empty or unreadable. Never throws: a
+ * transaction is not rejected over its balance cell; an unreadable one shows
+ * up instead as a gap in the reconciliation, at its own line.
+ */
+function readBalance(adapter: BankAdapter, record: string[], columns: ResolvedColumns, currency: CurrencyCode): NativeAmount | null {
+  if (columns.balance === -1) return null;
+  const raw = cell(record, columns.balance);
+  if (raw === "") return null;
+  try {
+    return parseAmountCell(raw, currency, adapter.numberFormat ?? "dot-decimal");
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Maps tokenized CSV records (header row excluded) into canonical rows
@@ -590,11 +624,20 @@ export function applyAdapter(
   const columns = resolveAdapterColumns(adapter, headers);
   const rows: Omit<CanonicalImportRow, "dedupeKeySource">[] = [];
   const errors: RowError[] = [];
+  let openingBalance: NativeAmount | null = null;
 
   records.forEach((record, recordIndex) => {
     // +2: the header occupies line 1, and lineNumber is 1-based.
     const lineNumber = recordIndex + 2;
-    if (isStatementFurniture(adapter, record, columns)) return;
+    if (isStatementFurniture(adapter, record, columns)) {
+      // The first balance printed before any transaction is where the
+      // statement starts from. Furniture after that (a footer, a repeated
+      // header) carries no balance worth trusting.
+      if (rows.length === 0 && errors.length === 0 && openingBalance === null) {
+        openingBalance = readBalance(adapter, record, columns, expectedCurrency);
+      }
+      return;
+    }
     try {
       assertRowCurrency(record, columns.currency, expectedCurrency);
 
@@ -625,6 +668,7 @@ export function applyAdapter(
         description,
         merchantName,
         providerReference: reference === "" ? null : reference,
+        printedBalance: readBalance(adapter, record, columns, expectedCurrency),
       });
     } catch (error) {
       // Quote the row back. "date \"Γ\" is not in DD/MM/YYYY format" alone
@@ -640,5 +684,5 @@ export function applyAdapter(
     }
   });
 
-  return { rows, errors };
+  return { rows, errors, openingBalance };
 }
