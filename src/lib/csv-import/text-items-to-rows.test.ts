@@ -412,7 +412,7 @@ describe("a multi-page statement that repeats its preamble", () => {
     const on = (str: string, x: number, y: number, width: number) => ({ str, x, y, width, page: pageNumber });
     return [
       // Full-width preamble, repeated on every page.
-      on("Iban : TR44 0011 1000 0000 0131 9725 81 Ad Soyad : YOUSEF", 17, 760, 540),
+      on("Iban : TR00 0000 0000 0000 0000 0000 00 Ad Soyad : TEST USER", 17, 760, 540),
       on("Tarih Aralığı : 01/08/2026 - 31/08/2026", 17, 748, 480),
       // Header, repeated on every page.
       on("İşlem Tarihi", 16.8, 730, 41.3),
@@ -457,12 +457,12 @@ describe("a multi-page statement that repeats its preamble", () => {
 describe("preamble that spans the page", () => {
   it("does not let a full-width prose line collapse the table into one column", () => {
     // The real failure, from a real QNB statement: its header block
-    // ("Iban : TR44 … Ad Soyad : …") spans every column at once, so
+    // ("Iban : TR00 … Ad Soyad : …") spans every column at once, so
     // merging ranges across ALL lines fused the columns together and
     // every row came back as a single cell — no adapter could match.
     const items = [
       // One long preamble run covering the whole width of the table.
-      item("Iban : TR44 0011 1000 0000 0131 9725 81 Ad Soyad : YOUSEF", COL.date, 740, 520),
+      item("Iban : TR00 0000 0000 0000 0000 0000 00 Ad Soyad : TEST USER", COL.date, 740, 520),
       ...row(700, "İşlem Tarihi", "Kanal", "İşlem Açıklaması", "Tutar", "Bakiye"),
       ...row(688, "06/08/2026", "POS", "Kart İşlemleri", "-1,450.00", "222.09"),
       ...row(676, "14/08/2026", "POS", "Kart İşlemleri", "-3,500.00", "611.65"),
