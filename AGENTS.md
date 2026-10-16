@@ -4942,7 +4942,7 @@ verification of the color change itself.
   Semgrep (`1.174.0`) re-run locally against the full changed tree —
   Semgrep 0 findings across 379 files; every Gitleaks finding confirmed
   (via `git check-ignore`) confined to `.env`/`.next/`, both gitignored.
-  `demo@pfw.local` confirmed unclaimed and `youssef.zuaiter2005@gmail.com`
+  `demo@pfw.local` confirmed unclaimed and `the owner's real account`
   untouched after a full e2e run, via direct `psql` query — zero residue.
 - **Known limitations, left as such**: the e2e suite still isn't wired
   into `.github/workflows/ci.yml` (§3z/§3aa's pinned Gitleaks/Semgrep
@@ -4984,7 +4984,7 @@ verification of the color change itself.
   muted-on-border-as-fill case that caught real bugs in the green pass —
   verified again via the full `npm run test:e2e` suite this same section
   built: **41/41 passing**, `demo@pfw.local` confirmed unclaimed and
-  `youssef.zuaiter2005@gmail.com` untouched afterward. Dark mode
+  `the owner's real account` untouched afterward. Dark mode
   (`prefers-color-scheme: dark` / `data-theme="dark"`) is completely
   unchanged by any of this — still the deep money-green from earlier in
   this same session.
@@ -6034,7 +6034,10 @@ question and became a running-balance question.
   separate code paths; both fall out of the same running total (a month
   that spent more than it was allocated simply contributes a negative
   delta, which the next month's balance inherits exactly like a
-  positive delta would). `computeAvailableToBudget` — real income
+  positive delta would). **Amended in §3yyy:** the expenses
+  counted start at the envelope's FIRST allocation month, so spending a
+  category had before it had a budget is no longer a deficit against it, and a
+  never-allocated category has a balance of 0. `computeAvailableToBudget` — real income
   received up to and including a month, minus every allocation made up
   to and including that month, across every envelope — is the "ready to
   assign" figure the Zero-Sum Rule is checked against.
@@ -6278,7 +6281,7 @@ pass: getting the paper trader running for the first time this session.
   `demopassword123` while the seed created that row with no password, so
   it failed "Invalid email or password" on every database it was ever
   tried on; (7) 10 leftover test accounts (`*@example.com`,
-  `youssef.zuaiter2005+tag@gmail.com`), each holding a full copy of the
+  `the owner's plus-tagged address`), each holding a full copy of the
   seeded ledger from prior sessions' claims.
 - **Durable rate limiting** (`RateLimitBucket`, migration
   `20260916160000_rate_limit_buckets_and_metrics_idempotency`, generated
@@ -6409,7 +6412,7 @@ pass: getting the paper trader running for the first time this session.
   triggers back to `O`, the two real accounts' transaction counts
   identical before and after (68 / 67), then `npm run db:seed` — 5
   users remain (demo, dana, avi, josephzuaiter, youssef.zuaiter2005).
-  `.env` now binds `PAPER_TRADING_USER_EMAIL="josephzuaiter@gmail.com"`.
+  `.env` now binds `PAPER_TRADING_USER_EMAIL="<the paper-trading account's email>"`.
 - **Trader side (`~/paper-trader`, separate repo)**: new `outbox.py` —
   a JSONL queue (`outbox/pending.jsonl`, gitignored) with atomic
   rewrites under an `asyncio.Lock`, replayed every 30s with capped
@@ -6504,7 +6507,7 @@ pass: getting the paper trader running for the first time this session.
   23s later found all 12 already booked. `tests/test_reconcile.py`
   (4 cases: selection guards, tallies + callback, broker outage is a
   no-op, lookback plumbing); trader pytest 12/12. After this,
-  `josephzuaiter@gmail.com` has 13/13 real trades `SETTLED`, zero
+  `the paper-trading account` has 13/13 real trades `SETTLED`, zero
   pending.
 - **Known limitations, left as such**: the reconciliation window is 24h
   and hourly — a fill lost for longer than a day (PFW down for a full
@@ -6643,7 +6646,7 @@ token vocabulary, so the target was established, not invented.
 ## 3ww. Holdings the mock feed can't price (ad hoc)
 
 Found by the user, not a test: signed in as the paper-trading account
-(`josephzuaiter@gmail.com`) on `npm run dev`, `/dashboard` showed the
+(`the paper-trading account`) on `npm run dev`, `/dashboard` showed the
 §3tt error boundary on every load with the same digest each time
 ("why does it always say the same thing?"). The dev log had the answer:
 `RangeError: Unknown mock symbol: TSLA` out of `getMockPriceUsdCents`,
@@ -9502,6 +9505,148 @@ first account, (3) import a first statement, or enter transactions by hand.
   enter-by-hand). The first browser run exposed an append-only cleanup problem:
   a user with audit rows cannot be hard-deleted, so the test removes its user
   through the account-deletion path (purge flag set), the same way §3ttt does.
+
+## 3yyy. Safe to Spend (ad hoc)
+
+One number on the dashboard: what is genuinely left to spend this month after
+the money already spoken for, with a breakdown that shows how it was reached.
+Audited first; the audit changed the design, because of one fact below.
+
+- **The fact that decided it:** `BankAccount.nativeBalance` is only ever the
+  opening balance entered when the account was created (`createBankAccount`);
+  nothing updates it as transactions arrive. A cash figure built on it alone
+  never falls when you spend, and spending INSIDE an envelope would then raise
+  Safe to Spend (the envelope shrinks, the cash does not). So each account's
+  balance is rolled forward by the live transactions dated after the day that
+  balance was true for (`listAccountsWithFlowSinceCreation`,
+  `src/server/dal/account-balances.ts`): `BankAccount.balanceAsOf`, a UTC day
+  that is inclusive (the balance already holds everything dated on or before
+  it), or, when none was given, the moment the account was created. Rows
+  before that point are already in the typed balance. The day is given when
+  adding an account ("Balance as of") and can be corrected later with
+  "Update balance" on `/assets` (`PATCH /api/bank-accounts/[id]`, which
+  re-states the balance and the day together; a future day is refused).
+- **The formula** (`src/lib/safe-to-spend.ts`, pure; every figure ILS agorot,
+  "this month" is the UTC calendar month):
+  `Safe = Cash − CardOwed − EnvelopeReserve − BillsNotCovered − DebtDue − GoalDue`.
+  - **Cash**: checking + savings (savings only while
+    `UserSettings.safeToSpendCountSavings` is on, the default; turn it off in
+    Settings → Safe to spend to treat savings as a reserve, and the card then
+    reports "Cash in checking" and the savings it left out), opening balance +
+    net flow. **Transfers are
+    in the flow**, because they really move an account's balance (a one-legged
+    transfer such as funding from the user's own USD account adds cash; both
+    legs of an internal move cancel). Soft-deleted rows are not.
+  - **CardOwed**: each card's opening owed minus its flow (a charge raises it,
+    a payment lowers it), floored at 0 per card: an overpaid card is a credit,
+    not spendable cash. This is also why paying a card from checking leaves
+    the figure unchanged.
+  - **EnvelopeReserve**: Σ max(0, rolling balance), the same balances the
+    Budgets page shows. An envelope begins the month it is first given money
+    (`computeRollingBalance`): spending a category had before that is not a
+    deficit against it, and a category never allocated to has no envelope
+    (balance 0; its spending is still spending, just not an overdraft). This
+    changed the Budgets page, the Attention Feed and the advisor along with
+    Safe to Spend, which all read the same balances.
+  - **DebtDue**: per debt, the minimum payment (capped at what is still owed)
+    minus the payments recorded against it this month, never below 0. `Debt`
+    has no due day, so the whole minimum counts from the 1st. A debt whose
+    name appears, as a whole word, in the name of a recurring bill (paid or
+    pending, not cancelled), or the bill's name in the debt's, is left to
+    that bill and owes 0 here, so a repayment that is also a recurring
+    transaction is not counted twice (`computeDebtsDue`; names under 3
+    characters never link). The guess errs towards counting a debt twice,
+    never towards dropping one; the card names the bill it was left to.
+  - **BillsNotCovered**: recurring bills still to be charged this month, from
+    the subscription radar (expenses only, cancelled ones skipped), minus what
+    the bill's own category envelope holds. A bill sitting in a category with an
+    envelope is paid FROM that envelope, so deducting both would double count;
+    only the part the envelope cannot hold is deducted again. Two bills in one
+    category share its envelope, soonest first. `SubscriptionAnalysis` gained
+    `categoryId` and `averageIntervalDays` for this; `getTransactionOccurrencesSince`
+    gained `categoryId`.
+  - **GoalDue**: per dated, unreached, not-yet-due goal, the remaining amount
+    at the START of the month spread evenly over the calendar months left
+    (this one included, rounded up), minus what has been contributed this
+    month, never below 0 or above what the goal still needs.
+- **Edge cases, each pinned by a test:**
+  - **Paid vs pending.** Monthly/quarterly/annual bills are placed by calendar
+    month, not by adding an average interval (a 31-day average from Jan 30
+    lands on Mar 2 and would skip February). Pending only when this month is
+    exactly one cadence step after the last charge; already charged this month
+    means paid; a bill that skipped a whole cycle has stopped. A bill whose
+    usual day passed without a charge stays pending and is flagged overdue:
+    late is not paid. A weekly bill is stepped by its average interval (only
+    the next charge may be late; quiet for over two intervals means stopped).
+  - **Overspent envelopes.** A negative balance contributes 0, never a
+    negative number: subtracting a negative would ADD money back. The overspend
+    already reduced Cash when it was spent, so it lowers the figure through
+    Cash; the clamp is what stops the envelope giving it back. Spending 130 of
+    a 100 envelope lowers the figure by exactly the 30 over; spending 100 of it
+    leaves the figure unchanged. Every negative envelope is listed for context
+    (the same set the Attention Feed calls overdrawn).
+  - **Transfers.** Counted in account balances (above), excluded from envelope
+    spend and bill detection (those read `REAL_MONEY`), so a transfer is
+    neither income nor spending. Checked with a transfer filed under groceries:
+    the groceries envelope does not move.
+  - **Negative result.** Not clamped. More promised than available shows as a
+    negative figure with an "Over-committed" badge.
+- **Income not yet received is reported, not counted.** A paycheck that has not
+  arrived would make the headline optimistic, so recurring deposits still to
+  come this month are found the way bills are (the radar, fed deposits as if
+  they were charges; transfers excluded) and shown beside the figure: "Not
+  counted: X of income still expected… If it arrives, you would have Y"
+  (`expectedIncomeAgorot`, `safeToSpendWithExpectedIncomeAgorot`). A deposit
+  that varies by more than the radar's price tolerance is not recognised as
+  recurring. Foreign-currency accounts convert
+  their opening balance at the latest rate while their flow is each row's own
+  frozen ILS amount, a small stated approximation.
+- **Surfaces:** `buildSafeToSpendData` (`src/server/analytics/`, `cache()`-wrapped;
+  forwards an undefined `asOf` so it shares the radar's per-request cache with
+  the liquidity runway card) is the one selector. `GET /api/analytics/safe-to-spend`
+  returns it as JSON (session identity, 30/min, `no-store`, no parameters,
+  401 signed out). The dashboard's `SafeToSpendCard` sits above the card grid,
+  in the reporting currency, with a native `<details>` "How this is calculated"
+  (line-by-line sum, bills still to come with how much each envelope covers,
+  goals this month, over-budget envelopes, and what is left out). The page
+  catches a failure of this one figure, logs it and omits the card, so it cannot
+  take the dashboard down.
+- **Follow-ups (debt minimums, expected income, savings setting, balance-as-of,
+  envelope start) verified:** 55 engine unit tests, 13 integration tests against
+  real Postgres (savings both ways, debts with a payment and a matching bill, a
+  balance given as of a day, re-stating another user's account refused, recurring
+  income with transfers ignored), 12 for the new route, 6 for the envelope rule
+  in `envelope-math.test.ts` plus 2 integration, 10 component tests; 7 mutations
+  of the new rules each caught. `npm run check` 2,322 passed / 4 skipped;
+  Playwright 56 passed.
+- **Verified (original build):** 38 unit tests for the engine (accounts, bills, goals, the
+  formula), 8 integration tests against real Postgres (every number worked out
+  by hand beforehand, including paying an envelope-covered bill leaving the
+  figure unchanged and a one-legged transfer), 7 component tests, 3 Playwright
+  tests (open-breakdown accessibility scan, page vs endpoint agreement and the
+  formula on the wire, 401 signed out); the full suite is green (2,276 unit,
+  component and integration; 54 browser). Mutation-checked, each caught:
+  signed envelope balance, bill ignoring its envelope, paid bill still pending,
+  negative clamped to zero, goal contribution not credited, overpaid card as
+  cash, balance not rolled forward, deleted rows counted, history before
+  creation counted, transfers dropped from balances. In a production build the
+  demo account's breakdown (₪43,983 cash − ₪1,705 card − ₪290 envelopes) was
+  checked against the database, and the card has no horizontal overflow at 375px.
+- **Migration `20261016120000_safe_to_spend_settings_and_balance_as_of`**: two
+  additive columns (`BankAccount.balanceAsOf`, `UserSettings.safeToSpendCountSavings`).
+  Existing rows keep today's behaviour (no day = when it was created; savings
+  counted). Production needs `deploy-migrations.yml` (§3eee): until it runs,
+  the dashboard card fails to load and is omitted (the page catches it).
+- **Known limitations:** an account whose typed balance already holds
+  transactions dated AFTER the day given (or after it was created, with no
+  day) is still counted twice; the fix is to give the right day or re-state
+  the balance. Net worth still reads `nativeBalance` as-is and does not roll
+  it forward, so for an account with later transactions it and Safe to
+  Spend's cash differ (pre-existing; not changed here). A debt repayment
+  made as an ordinary transaction under a different name than the debt is
+  counted as still due until a payment is recorded on the debt. Weekly bills
+  are rare and stepped approximately; no per-day "safe to spend today"
+  figure.
 
 ## 4. Design system (Phase 0)
 

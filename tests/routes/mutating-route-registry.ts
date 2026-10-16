@@ -25,6 +25,7 @@ export const SWEPT_ROUTES = [
   "DELETE /api/groups/[id]/members/[memberUserId]",
   "DELETE /api/phone-alerts",
   "DELETE /api/transaction-rules/[id]",
+  "PATCH /api/bank-accounts/[id]",
   "PATCH /api/categories/[id]",
   "PATCH /api/envelopes/allocate",
   "PATCH /api/goals/contributions/[id]",

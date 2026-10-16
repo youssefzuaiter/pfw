@@ -22,7 +22,7 @@ describe("safeMessage", () => {
       "Dinner at \"Cafe Cafe\" for 125",
       "Invalid `prisma.notableTransaction.findMany()` invocation",
       "where: { description: 'Dinner out' }",
-      "owner josephzuaiter@gmail.com could not sign in",
+      "owner owner@example.com could not sign in",
       "first line\nsecond line",
     ]) {
       expect(safeMessage(text)).toBe("[redacted]");
@@ -49,7 +49,7 @@ describe("scrubSentryEvent", () => {
   it("removes user, extra, contexts, breadcrumbs and server name", () => {
     const scrubbed = scrubSentryEvent(
       eventWith({
-        user: { email: "josephzuaiter@gmail.com", ip_address: "1.2.3.4" },
+        user: { email: "owner@example.com", ip_address: "1.2.3.4" },
         extra: { transactionDescription: "Dinner out" },
         contexts: { state: { value: "Dinner out" } },
         breadcrumbs: [{ message: "fetch /api/transactions?search=rent" }],
@@ -108,7 +108,7 @@ describe("scrubSentryEvent", () => {
               type: "Error",
               value: "notableTransaction.updateMany is not supported by the field-encryption extension yet",
             },
-            { type: "Error", value: "could not send mail to josephzuaiter@gmail.com" },
+            { type: "Error", value: "could not send mail to owner@example.com" },
           ],
         },
       }),
