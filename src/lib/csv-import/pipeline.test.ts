@@ -258,3 +258,96 @@ describe("parseStatementCsv — Turkish statements & currency", () => {
     expect(explicit.rows).toEqual(implicit.rows);
   });
 });
+
+/**
+ * A QNB "Hesap Hareketleri" (account movements) statement, as the PDF
+ * reader hands it to the pipeline: one tab-separated row per movement,
+ * columns Date / Channel / Description / Amount / Balance. Every name,
+ * merchant and figure below is made up; what is real is the SHAPE, taken
+ * from a real statement that parsed with no rejected row and reconciled
+ * to the bank's own closing balance: dates as DD/MM/YYYY,
+ * thousands commas with a dot decimal, a signed amount, commas and a
+ * "10,00 USD alış, işlem kuru 48,0 TL" inside descriptions, an opening-
+ * balance line with no date, a charge reversed by an equal credit the same
+ * day, and several identical charges on one day.
+ */
+describe("parseStatementCsv — a QNB account-movements statement", () => {
+  const row = (...cells: string[]) => cells.join("\t");
+  const STATEMENT = [
+    row("İşlem Tarihi", "Kanal*", "İşlem Açıklaması", "Tutar", "Bakiye"),
+    row("", "", "DEVREDEN BAKİYE", "", "100.00"),
+    row("16/07/2026", "FEFT", "Transfer İşlemleri - Gönderen: AAA BBB - Trans", "1,500.00", "1,600.00"),
+    row("16/07/2026", "POS", "Kart İşlemleri - 1234567 -SHOP A ISTANBUL TR Pos satış.", "-640.00", "960.00"),
+    row("17/07/2026", "MB", "Yatırım İşlemleri - Mobil Bankacılık 10,00 USD alış, işlem kuru 48,000000 TL", "480.00", "1,440.00"),
+    row("17/07/2026", "POS", "Kart İşlemleri - WEBPOS SATIŞ 100-FOOD ISTANBULAVR TR.", "-30.00", "1,410.00"),
+    row("17/07/2026", "POS", "Kart İşlemleri - WEBPOS SATIŞ 100-FOOD ISTANBULAVR TR.", "-30.00", "1,380.00"),
+    row("20/07/2026", "POS", "Kart İşlemleri - WEBPOS SATIŞ 200-RIDE ISTANBUL TR.", "-1.00", "1,379.00"),
+    row("20/07/2026", "POS", "Kart İşlemleri - WEBPOS SATIŞ 200-RIDE ISTANBUL TR. İptali", "1.00", "1,380.00"),
+    row("21/07/2026", "MB", "Ödeme İşlemleri - 11111111 - SU İDARESİ tahsilatı. Mobil Bankacılık.", "-1,512.40", "-132.40"),
+  ].join("\n");
+  const parse = (text = STATEMENT) => parseStatementCsv(csv(text), { expectedCurrency: "TRY" });
+
+  it("recognises the layout for a lira account and rejects nothing", () => {
+    const result = parse();
+    expect(result.adapterId).toBe("turkish-signed-amount");
+    expect(result.currency).toBe("TRY");
+    expect(result.errors).toEqual([]);
+    // The opening-balance line has no date and no amount: it is furniture, not a transaction.
+    expect(result.rows).toHaveLength(8);
+    expect(result.rows.some((r) => r.description.includes("DEVREDEN"))).toBe(false);
+  });
+
+  it("reads DD/MM/YYYY as day-first, not month-first", () => {
+    const dates = parse().rows.map((r) => r.occurredAt.toISOString().slice(0, 10));
+    expect(dates).toEqual([
+      "2026-07-16", "2026-07-16", "2026-07-17", "2026-07-17", "2026-07-17", "2026-07-20", "2026-07-20", "2026-07-21",
+    ]);
+  });
+
+  it("keeps money in as positive and money out as negative, in kuruş, through thousands commas", () => {
+    expect(parse().rows.map((r) => r.nativeAmount)).toEqual([150000, -64000, 48000, -3000, -3000, -100, 100, -151240]);
+  });
+
+  it("nets a charge and its same-day reversal to zero", () => {
+    const [charge, reversal] = parse().rows.filter((r) => r.description.includes("200-RIDE"));
+    expect(charge.nativeAmount + reversal.nativeAmount).toBe(0);
+  });
+
+  it("keeps commas inside a description intact, and never splits a row on them", () => {
+    const usd = parse().rows.find((r) => r.description.includes("USD alış"));
+    expect(usd?.description).toContain("10,00 USD alış, işlem kuru 48,000000 TL");
+    expect(usd?.nativeAmount).toBe(48000);
+  });
+
+  it("reconciles to the statement's own running balance", () => {
+    // Opening 100.00 plus every imported amount must equal the last printed balance, -132.40.
+    const total = parse().rows.reduce((sum, r) => sum + Number(r.nativeAmount), 0);
+    expect(10000 + total).toBe(-13240);
+  });
+
+  it("gives every row its own duplicate key, even identical charges on the same day", () => {
+    const keys = parse().rows.map((r) => r.dedupeKeySource);
+    expect(new Set(keys).size).toBe(keys.length);
+    const foods = parse().rows.filter((r) => r.description.includes("100-FOOD"));
+    expect(foods).toHaveLength(2);
+    expect(foods[0].dedupeKeySource).not.toBe(foods[1].dedupeKeySource);
+  });
+
+  it("re-importing the same statement yields identical keys, so nothing is added twice", () => {
+    const first = parse().rows.map((r) => r.dedupeKeySource);
+    const second = parse().rows.map((r) => r.dedupeKeySource);
+    expect(second).toEqual(first);
+  });
+
+  it("keeps the earlier rows' keys when a later statement overlaps and adds new rows", () => {
+    const extended = `${STATEMENT}\n${row("22/07/2026", "POS", "Kart İşlemleri - 7654321 -SHOP B ISTANBUL TR Pos satış.", "-50.00", "-182.40")}`;
+    const original = parse().rows.map((r) => r.dedupeKeySource);
+    const longer = parse(extended).rows.map((r) => r.dedupeKeySource);
+    expect(longer.slice(0, original.length)).toEqual(original);
+    expect(longer).toHaveLength(original.length + 1);
+  });
+
+  it("refuses the layout for a shekel account rather than mis-reading it", () => {
+    expect(() => parseStatementCsv(csv(STATEMENT))).toThrow(UnrecognizedFormatError);
+  });
+});
