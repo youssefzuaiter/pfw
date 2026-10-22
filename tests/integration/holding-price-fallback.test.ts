@@ -10,6 +10,7 @@ import { nativeAmount } from "../../src/lib/currency";
 import { getLatestEquityQuotes, upsertEquityQuote } from "../../src/server/dal/equity-quotes";
 import { syncEquityQuotes } from "../../src/server/market-data/quote-sync";
 import { agorot, multiplyAgorot } from "../../src/lib/money";
+import { deleteTestUsersWithLedgerCommits } from "./ledger-commit-test-helpers";
 
 /**
  * The paper trader books REAL Alpaca fills for whatever ticker a headline
@@ -119,7 +120,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("hol
   afterAll(async () => {
     if (originalWebhookSecret === undefined) delete process.env.WEBHOOK_SECRET;
     else process.env.WEBHOOK_SECRET = originalWebhookSecret;
-    await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
+    await deleteTestUsersWithLedgerCommits(admin, [userA.id, userB.id]);
     // Only this suite's rows — a real TSLA quote synced by `npm run sync:quotes` stays.
     await admin.equityQuote.deleteMany({ where: { OR: [{ symbol: "TSLX", source: "test" }, { symbol: "NFLX" }] } });
     await admin.$disconnect();
