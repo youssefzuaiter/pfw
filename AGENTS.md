@@ -9757,6 +9757,60 @@ could disagree about the same account.
   sign, ignoring shekel rows on a dollar account, net worth reading the typed
   balance) were each caught. No migration.
 
+## 3cccc. Subscriptions and bills added by hand, with reminders (ad hoc)
+
+The radar (§3p) only finds what already appears in statements, so a new
+subscription, a bill paid from another account or a yearly charge was
+invisible to Safe to Spend and the cost totals until its first charge landed.
+You can now type them in, and get a phone reminder before one is due.
+
+- **A bill is a schedule, not a list of charges.** `RecurringBill` (migration
+  `20261022160000_recurring_bills`): name, amount in its own currency, cadence
+  (monthly, quarterly or annual only; no weekly), an anchor date and an optional
+  category. Every due date is derived from the anchor (`dueDateInMonth`, calendar
+  months, so the 31st becomes the 28th in February); nothing is stored per cycle,
+  so a schedule never goes stale. RLS `tenant_isolation`, both grants stated.
+  `PhoneAlertSubscription.remindedBillKeys` records which reminders were sent.
+- **It becomes a radar row** (`buildManualBillRows`, `src/lib/recurring-bills.ts`,
+  pure), merged in `buildSubscriptionRadarData`, so Safe to Spend, the cost
+  totals and the page need no separate path. Pending bills get `lastSeenAt` one
+  cadence step back and a `dueDay`; paid or not-due ones get today.
+- **Never counted twice**, two ways: (1) paid this cycle: a ledger expense with a
+  matching name, within 10 days before and 15 after the due date, and within 40%
+  of the amount when in the bill's own currency (`findPayment`); (2) detected:
+  once the radar finds the same subscription from statements, that row takes
+  over and the manual one is listed as "now detected as ...".
+- **Name matching is a heuristic** (`namesMatch`): near-identical after the radar's
+  normalization, or a shared distinctive word of 4+ letters that is not generic.
+  So a bill named "Gym" will not match a charge "GYM CLUB" (the shared word is 3
+  letters); a longer name ("Fitness") does. Pinned by the test fixtures; the
+  fix when a bill is not recognised as paid is a more distinctive name.
+- **Cancel and review reuse `SubscriptionTracking`** under the key `manual:<id>`;
+  deleting a bill deletes that row.
+- **Reminders** (`src/lib/bills-due-soon.ts`, `src/server/subscriptions/bills-due-soon.ts`):
+  bills due from today to 3 days ahead (`BILL_REMINDER_DAYS`), across a month
+  boundary (the radar is read for both months), once per bill per due date via
+  `remindedBillKeys` (`merchantKey|YYYY-MM-DD`). The phone alert is `bill_due`,
+  after overdrawn envelopes and before large expenses. Overdue bills are not
+  reminded.
+- **Routes**: `POST /api/recurring-bills`, `PATCH`/`DELETE /api/recurring-bills/[id]`,
+  all `guardMutation`, 404 for another user's bill, 400 for a category that is not
+  the caller's. Registered in the mutating-route inventory, the data export
+  (`recurringBills`) and account deletion (`RecurringBill.categoryId` in
+  `CROSS_TENANT_FOREIGN_KEYS`).
+- **UI**: `/transactions/subscriptions` gains "Coming up in the next 30 days", an
+  add form and an "Added by you" list with edit and an inline delete confirm.
+- **Verified**: 34 unit tests for the schedule, matching and rows, 7 for the
+  reminder window, 13 integration tests against real Postgres (CRUD and isolation,
+  radar, Safe to Spend by exactly the bill, paid and detected not double counted,
+  cancel and reactivate, quarterly months, reminders across a month boundary,
+  the phone-alert facts), full suite and 57 Playwright tests, and in the browser
+  (added a bill: cash drag +₪20.00, listed in "Coming up", then deleted).
+- **Not done**: the 60-day cash-flow forecast does not use manual bills (it reads
+  the separate recurring-detection engine); no weekly cadence; no "paid from this
+  tracked account" flag; production needs `deploy-migrations.yml` for
+  `20261022160000_recurring_bills` in the same sitting as the merge (§3eee).
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

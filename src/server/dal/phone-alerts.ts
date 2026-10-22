@@ -5,6 +5,7 @@ import { maskTopic } from "../../lib/ntfy-topic";
 import { LARGE_EXPENSES_LISTED, type PhoneAlertFacts, type PhoneAlertState } from "../../lib/phone-alerts";
 import { withUserScope } from "../db/with-user-scope";
 import { getReportingFormatter } from "../reporting/reporting-context";
+import { listBillsDueSoon } from "../subscriptions/bills-due-soon";
 import { getEnvelopeBalances } from "./envelopes";
 import { LIVE, REAL_MONEY } from "./transactions";
 
@@ -81,6 +82,7 @@ export async function getPhoneAlertDelivery(userId: string): Promise<PhoneAlertD
       lastCheckedAt: row.lastCheckedAt,
       overdrawnCategoryIds: row.overdrawnCategoryIds,
       importReminderSentAt: row.importReminderSentAt,
+      remindedBillKeys: row.remindedBillKeys ?? [],
     },
   };
 }
@@ -93,6 +95,7 @@ export async function savePhoneAlertState(userId: string, state: PhoneAlertState
         lastCheckedAt: state.lastCheckedAt,
         overdrawnCategoryIds: [...state.overdrawnCategoryIds],
         importReminderSentAt: state.importReminderSentAt,
+        remindedBillKeys: [...state.remindedBillKeys],
       },
     }),
   );
@@ -122,9 +125,10 @@ export async function gatherPhoneAlertFacts(
   const { since, now, largeExpenseAgorot } = options;
   const window = since ? { gt: since, lte: now } : null;
 
-  const [envelopes, format, recent] = await Promise.all([
+  const [envelopes, format, billsDue, recent] = await Promise.all([
     getEnvelopeBalances(userId, monthKeyFor(now)),
     getReportingFormatter(userId),
+    listBillsDueSoon(userId, now),
     withUserScope(userId, async (tx) => {
       const largeWhere = window
         ? { userId, ...REAL_MONEY, amount: { lte: BigInt(-largeExpenseAgorot) }, createdAt: window }
@@ -182,6 +186,7 @@ export async function gatherPhoneAlertFacts(
       amount: formatNativeAmount(nativeAmount(Number(row.nativeAmount)), row.currency),
       day: row.occurredAt.toISOString().slice(0, 10),
     })),
+    billsDue: billsDue.map((bill) => ({ key: bill.key, name: truncate(bill.name), amount: format(bill.amountAgorot), due: bill.due })),
     largeExpenseCount: recent.largeExpenseCount,
     lastImportAt: recent.lastImportAt,
   };

@@ -150,11 +150,12 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("pho
   });
 
   it("saves where the check left off, and turning alerts off removes everything", async () => {
-    await savePhoneAlertState(userA.id, { lastCheckedAt: NOW, overdrawnCategoryIds: [groceriesId], importReminderSentAt: NOW });
+    await savePhoneAlertState(userA.id, { lastCheckedAt: NOW, overdrawnCategoryIds: [groceriesId], importReminderSentAt: NOW, remindedBillKeys: ["manual:abc|2026-10-14"] });
     expect((await getPhoneAlertDelivery(userA.id))?.state).toEqual({
       lastCheckedAt: NOW,
       overdrawnCategoryIds: [groceriesId],
       importReminderSentAt: NOW,
+      remindedBillKeys: ["manual:abc|2026-10-14"],
     });
 
     expect(await disablePhoneAlerts(userA.id)).toBe(true);

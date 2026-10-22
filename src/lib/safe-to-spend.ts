@@ -122,7 +122,11 @@ export function settleAccounts(
 export type BillSource = Pick<
   SubscriptionAnalysis,
   "merchantKey" | "displayName" | "currency" | "currentNativeAmount" | "cadence" | "isRecurring" | "lastSeenAt" | "categoryId" | "averageIntervalDays"
-> & { status: "ACTIVE" | "REVIEWED" | "CANCELLED" };
+> & {
+  status: "ACTIVE" | "REVIEWED" | "CANCELLED";
+  /** The day of the month a bill the user typed in is due. Detected bills leave it out and are due on the day of their last charge. */
+  dueDay?: number | null;
+};
 
 export type PendingBill = {
   merchantKey: string;
@@ -211,7 +215,7 @@ export function findPendingBills(
     } else {
       const gap = MONTHS_BETWEEN_CHARGES[bill.cadence];
       if (monthIndex - utcMonthIndex(bill.lastSeenAt) !== gap) continue;
-      const day = Math.min(bill.lastSeenAt.getUTCDate(), daysInUtcMonth(year, month));
+      const day = Math.min(bill.dueDay ?? bill.lastSeenAt.getUTCDate(), daysInUtcMonth(year, month));
       dueDates.push(new Date(Date.UTC(year, month, day)));
     }
 

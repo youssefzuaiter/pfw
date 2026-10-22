@@ -17,13 +17,13 @@ function delivery(overrides: Partial<PhoneAlertDelivery> = {}): PhoneAlertDelive
     topic: "pfw-topic-abcdef",
     largeExpenseAgorot: 100_000,
     includeDetails: true,
-    state: { lastCheckedAt: YESTERDAY, overdrawnCategoryIds: [], importReminderSentAt: null },
+    state: { lastCheckedAt: YESTERDAY, overdrawnCategoryIds: [], importReminderSentAt: null, remindedBillKeys: [] },
     ...overrides,
   };
 }
 
 function facts(overrides: Partial<PhoneAlertFacts> = {}): PhoneAlertFacts {
-  return { now: NOW, notifications: [], overdrawn: [], largeExpenses: [], largeExpenseCount: 0, lastImportAt: null, ...overrides };
+  return { now: NOW, notifications: [], overdrawn: [], billsDue: [], largeExpenses: [], largeExpenseCount: 0, lastImportAt: null, ...overrides };
 }
 
 function deps(overrides: Record<string, unknown> = {}) {
@@ -51,7 +51,7 @@ describe("sendPhoneAlerts", () => {
 
     expect(d.gather).toHaveBeenCalledWith("user-1", { since: YESTERDAY, now: NOW, largeExpenseAgorot: 100_000 });
     expect(d.send).toHaveBeenCalledWith("pfw-topic-abcdef", expect.objectContaining({ message: "Dining is overdrawn: -₪50.00" }));
-    expect(d.saveState).toHaveBeenCalledWith("user-1", { lastCheckedAt: NOW, overdrawnCategoryIds: ["c1"], importReminderSentAt: null });
+    expect(d.saveState).toHaveBeenCalledWith("user-1", { lastCheckedAt: NOW, overdrawnCategoryIds: ["c1"], importReminderSentAt: null, remindedBillKeys: [] });
   });
 
   it("saves the new starting point without sending on a quiet night", async () => {
