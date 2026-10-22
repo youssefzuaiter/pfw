@@ -109,7 +109,7 @@ export function HouseholdSharedView({
           </ul>
         )}
         <p className="mt-3 text-xs text-muted">
-          Balances only — individual transactions on a shared account always stay in its owner&apos;s personal ledger
+          Balances only, as the owner last entered them — individual transactions on a shared account always stay in its owner&apos;s personal ledger
           (AGENTS.md §3s: personal asset vaults stay strictly isolated even when the account itself is shared).
         </p>
       </section>

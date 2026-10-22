@@ -70,28 +70,29 @@ function safe(input: Partial<Parameters<typeof computeSafeToSpend>[0]>) {
 describe("settleAccounts", () => {
   it("adds the flow since creation to a deposit account and sums checking and savings", () => {
     const settled = settleAccounts([
-      { accountType: "CHECKING", openingAgorot: a(1_000_000), flowSinceOpeningAgorot: a(-250_000) },
-      { accountType: "SAVINGS", openingAgorot: a(500_000), flowSinceOpeningAgorot: a(100_000) },
+      { accountType: "CHECKING", balanceAgorot: a(750_000) },
+      { accountType: "SAVINGS", balanceAgorot: a(600_000) },
     ]);
     expect(settled.cashAgorot).toBe(1_350_000);
     expect(settled.cardOwedAgorot).toBe(0);
   });
 
   it("raises what a card owes when it is charged and lowers it when it is paid", () => {
-    const base = { accountType: "CREDIT_CARD", openingAgorot: a(300_000) };
-    expect(settleAccounts([{ ...base, flowSinceOpeningAgorot: a(-120_000) }]).cardOwedAgorot).toBe(420_000);
-    expect(settleAccounts([{ ...base, flowSinceOpeningAgorot: a(100_000) }]).cardOwedAgorot).toBe(200_000);
+    // Typed 300,000 owed; a charge of 120,000 raises it, a payment of 100,000 lowers it.
+    const card = (balance: number) => settleAccounts([{ accountType: "CREDIT_CARD", balanceAgorot: a(balance) }]);
+    expect(card(300_000 + 120_000).cardOwedAgorot).toBe(420_000);
+    expect(card(300_000 - 100_000).cardOwedAgorot).toBe(200_000);
   });
 
   it("counts an overpaid card as owing nothing, not as spendable cash", () => {
-    const settled = settleAccounts([{ accountType: "CREDIT_CARD", openingAgorot: a(50_000), flowSinceOpeningAgorot: a(200_000) }]);
+    const settled = settleAccounts([{ accountType: "CREDIT_CARD", balanceAgorot: a(-150_000) }]);
     expect(settled).toMatchObject({ cashAgorot: 0, cardOwedAgorot: 0 });
   });
 
   it("counts savings as spendable cash by default, and reports them", () => {
     const settled = settleAccounts([
-      { accountType: "CHECKING", openingAgorot: a(100_000), flowSinceOpeningAgorot: a(0) },
-      { accountType: "SAVINGS", openingAgorot: a(500_000), flowSinceOpeningAgorot: a(50_000) },
+      { accountType: "CHECKING", balanceAgorot: a(100_000) },
+      { accountType: "SAVINGS", balanceAgorot: a(550_000) },
     ]);
     expect(settled).toMatchObject({ cashAgorot: 650_000, savingsAgorot: 550_000, savingsCounted: true });
   });
@@ -99,8 +100,8 @@ describe("settleAccounts", () => {
   it("leaves savings out of cash when they are kept as a reserve, but still reports them", () => {
     const settled = settleAccounts(
       [
-        { accountType: "CHECKING", openingAgorot: a(100_000), flowSinceOpeningAgorot: a(-20_000) },
-        { accountType: "SAVINGS", openingAgorot: a(500_000), flowSinceOpeningAgorot: a(50_000) },
+        { accountType: "CHECKING", balanceAgorot: a(80_000) },
+        { accountType: "SAVINGS", balanceAgorot: a(550_000) },
       ],
       { countSavings: false },
     );
@@ -111,8 +112,8 @@ describe("settleAccounts", () => {
     const accounts = (counted: boolean) =>
       settleAccounts(
         [
-          { accountType: "CHECKING", openingAgorot: a(100_000), flowSinceOpeningAgorot: a(-40_000) },
-          { accountType: "SAVINGS", openingAgorot: a(0), flowSinceOpeningAgorot: a(40_000) },
+          { accountType: "CHECKING", balanceAgorot: a(60_000) },
+          { accountType: "SAVINGS", balanceAgorot: a(40_000) },
         ],
         { countSavings: counted },
       ).cashAgorot;
@@ -121,7 +122,7 @@ describe("settleAccounts", () => {
   });
 
   it("keeps an overdraft negative", () => {
-    expect(settleAccounts([{ accountType: "CHECKING", openingAgorot: a(10_000), flowSinceOpeningAgorot: a(-60_000) }]).cashAgorot).toBe(-50_000);
+    expect(settleAccounts([{ accountType: "CHECKING", balanceAgorot: a(-50_000) }]).cashAgorot).toBe(-50_000);
   });
 });
 
@@ -443,20 +444,20 @@ describe("computeSafeToSpend", () => {
     });
 
     it("lowers Safe to Spend by exactly the overspend, because the money has left cash", () => {
-      // Opening 1,000,000 in checking; a 100,000 envelope allocated.
-      const account = { accountType: "CHECKING", openingAgorot: a(1_000_000) };
+      // 1,000,000 in checking; a 100,000 envelope allocated.
+      const checking = (balance: number) => settleAccounts([{ accountType: "CHECKING", balanceAgorot: a(balance) }]);
       const before = safe({
-        ...settleAccounts([{ ...account, flowSinceOpeningAgorot: a(0) }]),
+        ...checking(1_000_000),
         envelopes: [envelope("dining", 100_000)],
       });
       // Spend inside the envelope: the reserve shrinks as cash does, so nothing changes.
       const insideEnvelope = safe({
-        ...settleAccounts([{ ...account, flowSinceOpeningAgorot: a(-100_000) }]),
+        ...checking(1_000_000 - 100_000),
         envelopes: [envelope("dining", 0)],
       });
       // Spend 130,000: 30,000 more than was allocated.
       const overspent = safe({
-        ...settleAccounts([{ ...account, flowSinceOpeningAgorot: a(-130_000) }]),
+        ...checking(1_000_000 - 130_000),
         envelopes: [envelope("dining", -30_000)],
       });
       expect(insideEnvelope.safeToSpendAgorot).toBe(before.safeToSpendAgorot);
@@ -476,12 +477,12 @@ describe("computeSafeToSpend", () => {
     it("leave Safe to Spend unchanged when both legs are recorded", () => {
       // Paying the card from checking: checking −500,000 and the card's debt −500,000.
       const before = settleAccounts([
-        { accountType: "CHECKING", openingAgorot: a(2_000_000), flowSinceOpeningAgorot: a(0) },
-        { accountType: "CREDIT_CARD", openingAgorot: a(500_000), flowSinceOpeningAgorot: a(0) },
+        { accountType: "CHECKING", balanceAgorot: a(2_000_000) },
+        { accountType: "CREDIT_CARD", balanceAgorot: a(500_000) },
       ]);
       const after = settleAccounts([
-        { accountType: "CHECKING", openingAgorot: a(2_000_000), flowSinceOpeningAgorot: a(-500_000) },
-        { accountType: "CREDIT_CARD", openingAgorot: a(500_000), flowSinceOpeningAgorot: a(500_000) },
+        { accountType: "CHECKING", balanceAgorot: a(1_500_000) },
+        { accountType: "CREDIT_CARD", balanceAgorot: a(0) },
       ]);
       expect(safe(after).safeToSpendAgorot).toBe(safe(before).safeToSpendAgorot);
     });
@@ -489,8 +490,8 @@ describe("computeSafeToSpend", () => {
     it("leave Safe to Spend unchanged when moving money between checking and savings", () => {
       const settle = (checking: number, savings: number) =>
         settleAccounts([
-          { accountType: "CHECKING", openingAgorot: a(1_000_000), flowSinceOpeningAgorot: a(checking) },
-          { accountType: "SAVINGS", openingAgorot: a(1_000_000), flowSinceOpeningAgorot: a(savings) },
+          { accountType: "CHECKING", balanceAgorot: a(1_000_000 + checking) },
+          { accountType: "SAVINGS", balanceAgorot: a(1_000_000 + savings) },
         ]);
       expect(safe(settle(-300_000, 300_000)).safeToSpendAgorot).toBe(safe(settle(0, 0)).safeToSpendAgorot);
     });
