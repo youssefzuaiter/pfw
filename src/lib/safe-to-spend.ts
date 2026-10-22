@@ -1,6 +1,6 @@
 import { nativeAmount, type CurrencyCode } from "./currency";
 import { convertNativeAmountToAgorot } from "./exchange-rate";
-import { addAgorot, agorot, subtractAgorot, type Agorot } from "./money";
+import { addAgorot, agorot, type Agorot } from "./money";
 import type { SubscriptionAnalysis } from "./subscription-radar";
 import { containsWholeWord } from "./text-matching";
 
@@ -63,10 +63,8 @@ import { containsWholeWord } from "./text-matching";
 
 export type AccountInput = {
   accountType: string;
-  /** The balance the user entered, converted to ILS. For a card: money owed, positive. */
-  openingAgorot: Agorot;
-  /** Net signed ILS amount of live transactions on the account dated after the day that balance was true for (or after the account was created, when no such day was given). */
-  flowSinceOpeningAgorot: Agorot;
+  /** What the account holds NOW in ILS: the balance the user entered rolled forward by the transactions since (`src/lib/account-balance.ts`). For a card: money owed, positive. */
+  balanceAgorot: Agorot;
 };
 
 export type SettledAccounts = {
@@ -80,13 +78,13 @@ export type SettledAccounts = {
 };
 
 /**
- * Rolls each account's opening balance forward by the transactions made
- * since. `BankAccount.nativeBalance` is only ever the figure the user entered
- * (at creation, or when they last re-stated it); nothing updates it as
- * transactions arrive. Without this roll
- * forward, spending would never reduce Cash, and spending inside an
- * envelope would RAISE Safe to Spend (the envelope shrinks, the cash does
- * not).
+ * Sorts each account's balance now into cash, savings and card debt. The
+ * balance is already rolled forward by the transactions made since the figure
+ * was entered (`src/lib/account-balance.ts`, shared with net worth and the
+ * Assets page): `BankAccount.nativeBalance` is only ever what the user
+ * entered, and without the roll-forward spending would never reduce Cash, and
+ * spending inside an envelope would RAISE Safe to Spend (the envelope shrinks,
+ * the cash does not).
  *
  * A deposit account's cash can be negative (an overdraft is real). A
  * card's debt cannot: an overpaid card is a credit with the bank, not
@@ -102,13 +100,12 @@ export function settleAccounts(
   const owed: Agorot[] = [];
   for (const account of accounts) {
     if (account.accountType === "CREDIT_CARD") {
-      // Stored positive = owed; a charge is a negative amount and raises it.
-      const balance = subtractAgorot(account.openingAgorot, account.flowSinceOpeningAgorot);
-      owed.push(balance > 0 ? balance : agorot(0));
+      // Money owed, positive. An overpaid card is negative: a credit, not cash.
+      owed.push(account.balanceAgorot > 0 ? account.balanceAgorot : agorot(0));
     } else if (account.accountType === "SAVINGS") {
-      savings.push(addAgorot(account.openingAgorot, account.flowSinceOpeningAgorot));
+      savings.push(account.balanceAgorot);
     } else {
-      cash.push(addAgorot(account.openingAgorot, account.flowSinceOpeningAgorot));
+      cash.push(account.balanceAgorot);
     }
   }
   const savingsTotal = addAgorot(...savings);

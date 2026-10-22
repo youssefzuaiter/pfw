@@ -1,14 +1,13 @@
 import { Badge, type BadgeVariant } from "../../components/badge/badge";
 import { CurrencyAmount } from "../../components/currency/currency-amount";
 import { deriveValuationFreshness, type ValuationFreshness } from "../../lib/valuation-freshness";
-import { nativeAmount } from "../../lib/currency";
-import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
+import { currentBalanceAgorot, describeBalanceHistory, settleBalance } from "../../lib/account-balance";
 import { agorot } from "../../lib/money";
 import { buildWalletBalances } from "../../server/crypto/build-wallet-balances";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getReportingFormatter } from "../../server/reporting/reporting-context";
 import { ReportingRateNote } from "../../components/currency/reporting-currency-provider";
-import { listBankAccounts } from "../../server/dal/bank-accounts";
+import { listAccountBalanceParts } from "../../server/dal/account-balances";
 import { getLatestRateTable } from "../../server/dal/exchange-rates";
 import { listManualAssets } from "../../server/dal/manual-assets";
 import { AddWalletForm } from "./_components/add-wallet-form";
@@ -54,24 +53,33 @@ export default async function AssetsPage() {
   const [assets, walletBalances, bankAccounts, rateTable] = await Promise.all([
     listManualAssets(user.id),
     buildWalletBalances(user.id),
-    listBankAccounts(user.id),
+    listAccountBalanceParts(user.id),
     getLatestRateTable(),
   ]);
   const now = new Date();
 
   const totalValue = assets.reduce((sum, asset) => sum + asset.currentValue, 0n);
 
-  // Live conversion at the latest synced rate — never stored, per law #5
-  // (a live balance's ₪ equivalent moves with the rate), same pattern
-  // budgets/page.tsx uses for a shared bank account's native-vs-₪ pair.
-  const bankAccountsWithIls = bankAccounts.map((account) => ({
-    ...account,
-    agorotValue: convertNativeAmountToAgorot(
-      nativeAmount(Number(account.nativeBalance)),
-      account.currency,
-      rateTable[account.currency],
-    ),
-  }));
+  // What each account holds NOW: the balance the user typed, rolled forward by
+  // the transactions recorded since (`src/lib/account-balance.ts`, the same
+  // figure net worth and Safe to Spend use). The shekel equivalent is a live
+  // conversion at the latest synced rate, never stored (law #5).
+  const bankAccountsWithIls = bankAccounts.map(({ account, parts }) => {
+    const rate = rateTable[parts.currency];
+    const settled = settleBalance(parts, rate);
+    return {
+      ...account,
+      agorotValue: currentBalanceAgorot(parts, rate),
+      currentNative: settled.currentNative,
+      history: describeBalanceHistory({
+        accountType: account.accountType,
+        currency: account.currency,
+        typedNative: parts.typedNative,
+        changeNative: settled.changeNative,
+        balanceAsOf: account.balanceAsOf,
+      }),
+    };
+  });
   const bankAssetsTotal = bankAccountsWithIls
     .filter((a) => a.accountType !== "CREDIT_CARD")
     .reduce((sum, a) => sum + Number(a.agorotValue), 0);
@@ -90,8 +98,8 @@ export default async function AssetsPage() {
             Bank Accounts
           </h2>
           <p className="mt-1 text-sm text-muted">
-            Manually recorded — this is the balance you report, not a live bank connection (unless it came from
-            Settings → Open Banking).
+            Each balance is the figure you entered plus the transactions recorded since, not a live bank connection
+            (unless it came from Settings → Open Banking). Compare it with your bank, and use Update balance if it is off.
           </p>
         </div>
 
@@ -121,9 +129,7 @@ export default async function AssetsPage() {
                     </span>
                   </p>
                   <p className="mt-1 text-xs text-muted">
-                    {account.balanceAsOf
-                      ? `Balance as of ${account.balanceAsOf.toISOString().slice(0, 10)}; later transactions are counted from the next day.`
-                      : "Balance as of when the account was added."}
+                    {account.history}
                   </p>
                   <div className="mt-2">
                     <ReconcileBalanceForm accountId={account.id} isCard={account.accountType === "CREDIT_CARD"} />
@@ -131,7 +137,7 @@ export default async function AssetsPage() {
                 </div>
                 <CurrencyAmount
                   agorotValue={account.agorotValue}
-                  nativeValue={nativeAmount(Number(account.nativeBalance))}
+                  nativeValue={account.currentNative}
                   currency={account.currency}
                   primaryClassName="font-tabular-figures tracking-tight text-sm text-fg"
                   secondaryClassName="font-tabular-figures tracking-tight text-xs text-muted"

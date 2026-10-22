@@ -82,8 +82,20 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("Liq
   });
 
   it("a real recurring subscription raises the burn-rate floor and produces a finite runway", async () => {
+    // The typed 3,000.00 is true as of today, so it already includes the three
+    // charges below (every one is dated today or earlier). Without a balance day
+    // the charge dated "now" would count as after the account was created and
+    // move the balance, which is what an account's balance is supposed to do.
+    const today = new Date();
     const account = await admin.bankAccount.create({
-      data: { userId: userB.id, institutionName: "Test Bank", last4: "4444", accountType: "CHECKING", nativeBalance: 300_000n },
+      data: {
+        userId: userB.id,
+        institutionName: "Test Bank",
+        last4: "4444",
+        accountType: "CHECKING",
+        nativeBalance: 300_000n,
+        balanceAsOf: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())),
+      },
     });
     const category = await admin.category.create({ data: { userId: userB.id, slug: "entertainment", name: "Entertainment" } });
 

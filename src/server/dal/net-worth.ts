@@ -1,12 +1,12 @@
 import "server-only";
 import { addAgorot, agorot, multiplyAgorot, subtractAgorot, type Agorot } from "../../lib/money";
-import { nativeAmount } from "../../lib/currency";
-import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
+import { currentBalanceAgorot } from "../../lib/account-balance";
 import { classifyLiquidity, type LiquidityBreakdown } from "../../lib/liquidity-classification";
 import { findLastFillPricesInTransaction, findLatestQuotes, priceHoldingRows } from "./portfolio";
 import { buildWalletBalances } from "../crypto/build-wallet-balances";
 import { withUserScope } from "../db/with-user-scope";
 import { getLatestRateTable } from "./exchange-rates";
+import { loadAccountBalanceParts } from "./account-balances";
 
 export type LiveNetWorth = {
   totalAssets: Agorot;
@@ -53,7 +53,7 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
     getLatestRateTable(asOf),
     withUserScope(userId, async (tx) => {
       const [accounts, assets, holdings, debts] = await Promise.all([
-        tx.bankAccount.findMany({ where: { userId } }),
+        loadAccountBalanceParts(tx, userId),
         tx.manualAsset.findMany({ where: { userId } }),
         tx.portfolioHolding.findMany({ where: { userId } }),
         tx.debt.findMany({ where: { userId } }),
@@ -76,16 +76,17 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
     buildWalletBalances(userId),
   ]);
 
-  const toAgorot = (balance: bigint, currency: keyof typeof rateTable) =>
-    convertNativeAmountToAgorot(nativeAmount(Number(balance)), currency, rateTable[currency]);
-
+  // What each account holds NOW (the typed balance rolled forward by the
+  // transactions since, `src/lib/account-balance.ts`), the same figure Safe to
+  // Spend and the Assets page use. A card's figure is money owed; an overpaid
+  // card is negative, a real credit that lowers liabilities.
   const bankAssetRows = accounts
-    .filter((a) => a.accountType !== "CREDIT_CARD")
-    .map((a) => ({ accountType: a.accountType, valueAgorot: toAgorot(a.nativeBalance, a.currency) }));
+    .filter(({ parts }) => parts.accountType !== "CREDIT_CARD")
+    .map(({ parts }) => ({ accountType: parts.accountType, valueAgorot: currentBalanceAgorot(parts, rateTable[parts.currency]) }));
   const bankAssetAmounts = bankAssetRows.map((r) => r.valueAgorot);
   const bankLiabilityAmounts = accounts
-    .filter((a) => a.accountType === "CREDIT_CARD")
-    .map((a) => toAgorot(a.nativeBalance, a.currency));
+    .filter(({ parts }) => parts.accountType === "CREDIT_CARD")
+    .map(({ parts }) => currentBalanceAgorot(parts, rateTable[parts.currency]));
   const manualAssetAmounts = assets.map((a) => agorot(Number(a.currentValue)));
   // Stored market quotes for any non-seeded symbol (public data, no
   // scope) — a no-op query-wise when every holding is a seeded instrument.

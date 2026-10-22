@@ -9518,8 +9518,9 @@ Audited first; the audit changed the design, because of one fact below.
   never falls when you spend, and spending INSIDE an envelope would then raise
   Safe to Spend (the envelope shrinks, the cash does not). So each account's
   balance is rolled forward by the live transactions dated after the day that
-  balance was true for (`listAccountsWithFlowSinceCreation`,
-  `src/server/dal/account-balances.ts`): `BankAccount.balanceAsOf`, a UTC day
+  balance was true for (`loadAccountBalanceParts`,
+  `src/server/dal/account-balances.ts`; since §3bbbb net worth and the Assets
+  page read the same rule): `BankAccount.balanceAsOf`, a UTC day
   that is inclusive (the balance already holds everything dated on or before
   it), or, when none was given, the moment the account was created. Rows
   before that point are already in the typed balance. The day is given when
@@ -9640,9 +9641,8 @@ Audited first; the audit changed the design, because of one fact below.
 - **Known limitations:** an account whose typed balance already holds
   transactions dated AFTER the day given (or after it was created, with no
   day) is still counted twice; the fix is to give the right day or re-state
-  the balance. Net worth still reads `nativeBalance` as-is and does not roll
-  it forward, so for an account with later transactions it and Safe to
-  Spend's cash differ (pre-existing; not changed here). A debt repayment
+  the balance. (Net worth once read `nativeBalance` as-is and so differed from
+  Safe to Spend's cash; fixed in §3bbbb.) A debt repayment
   made as an ordinary transaction under a different name than the debt is
   counted as still due until a payment is recorded on the debt. Weekly bills
   are rare and stepped approximately; no per-day "safe to spend today"
@@ -9698,6 +9698,64 @@ imported.
   the real statement with its row count pinned. Mutations caught:
   removing the fold distance limit (7 failures) and the refusal (5). `npm run
   check` 2,372 passed / 5 skipped; Playwright 57 passed.
+
+## 3bbbb. One rule for what an account holds now (ad hoc)
+
+Found while ranking what to build next: Safe to Spend (§3yyy) rolled each
+account's typed balance forward by the transactions after it, but net worth, the
+Assets page and everything built on net worth read `BankAccount.nativeBalance`
+as typed. Importing a statement moved one figure and not the other, so the two
+could disagree about the same account.
+
+- **One pure rule, `src/lib/account-balance.ts`**: `settleBalance(parts, rate)`
+  returns the balance now and how far it moved since it was entered, and
+  `currentBalanceAgorot` converts it once. Net worth, Safe to Spend and the
+  Assets page all call it, so they cannot drift apart. `describeBalanceHistory`
+  writes the sentence the Assets page shows ("You entered ₪10,000.00 as of
+  2026-09-30. Transactions since: -₪250.00.") so a balance can be checked
+  against the bank's own figure.
+- **The data half** (`loadAccountBalanceParts(tx, userId)` in
+  `src/server/dal/account-balances.ts`, replacing
+  `listAccountsWithFlowSinceCreation`) runs inside the caller's transaction, so
+  net worth still reads accounts and holdings from one moment. The roll-forward
+  starts the day after `balanceAsOf` (inclusive of nothing earlier), or from the
+  moment the account was created when there is no such day, skips soft-deleted
+  rows and counts transfers, exactly as before.
+- **Foreign-currency accounts roll forward in their own currency.** Rows entered
+  in the account's own currency are summed by `nativeAmount`; rows entered in a
+  different currency (a manual entry in a third currency) are taken at their
+  frozen shekel amount and converted at the latest rate. The result is converted
+  to shekels ONCE at the latest rate, per law #3. The earlier approach converted
+  the opening figure at today's rate and every transaction at its own old rate,
+  so the two halves drifted apart; this removes that, and slightly changes Safe
+  to Spend for foreign accounts, in the direction of being more correct.
+- **A card stores money OWED, positive**, so a charge raises it and a payment
+  lowers it. Net worth lets an overpaid card go negative (a real credit that
+  lowers liabilities); Safe to Spend still counts an overpaid card as owing zero,
+  because a credit is not spendable cash (`settleAccounts` floors it).
+- **`settleAccounts` takes the balance now** (`AccountInput.balanceAgorot`)
+  instead of "opening plus movement"; the 14 tests that used the old shape were
+  converted with identical expected values.
+- **Shared household accounts keep the owner's typed balance**: other members
+  cannot read the owner's transactions by design (§3s), so the household view
+  says "as the owner last entered them".
+- **What you will see**: an account with transactions after its balance date now
+  shows a different net worth, and the Assets page says how it got there. The
+  nightly net-worth history is not rewritten, so the net-worth line takes a
+  one-time step. A typed balance that already included later transactions is now
+  counted twice; "Update balance" fixes it.
+- **A test fixture assumption this exposed**: `liquidity-runway.test.ts` made an
+  account and then a charge dated "now", which only looked unaffected because net
+  worth ignored the charge. Its typed balance now says it is true as of today.
+- **Verified**: 20 unit tests for the rule and the sentence, a 10-case
+  integration suite (`tests/integration/consistent-account-balances.test.ts`,
+  real Postgres: the balance day inclusive, deleted rows, transfers, a card, a
+  dollar account with a shekel row, net worth equals Safe to Spend's cash and
+  card debt, an overpaid card, another user sees nothing, a new transaction moves
+  net worth), the 55 existing Safe to Spend unit tests unchanged in meaning.
+  Five mutations (counting the balance day, counting deleted rows, a flipped card
+  sign, ignoring shekel rows on a dollar account, net worth reading the typed
+  balance) were each caught. No migration.
 
 ## 4. Design system (Phase 0)
 

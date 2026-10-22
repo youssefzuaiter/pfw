@@ -2,7 +2,6 @@ import "server-only";
 import { cache } from "react";
 import { nativeAmount } from "../../lib/currency";
 import { monthKeyFor, monthKeyToExclusiveEndDate, monthKeyToStartDate } from "../../lib/date-month";
-import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
 import { agorot } from "../../lib/money";
 import {
   computeDebtsDue,
@@ -14,7 +13,8 @@ import {
   type SafeToSpendResult,
 } from "../../lib/safe-to-spend";
 import { runSubscriptionRadar, type SubscriptionOccurrence } from "../../lib/subscription-radar";
-import { listAccountsWithFlowSinceCreation } from "../dal/account-balances";
+import { currentBalanceAgorot } from "../../lib/account-balance";
+import { listAccountBalanceParts } from "../dal/account-balances";
 import { getEnvelopeBalances } from "../dal/envelopes";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { listDebts } from "../dal/debts";
@@ -65,7 +65,7 @@ export const buildSafeToSpendData = cache(async function buildSafeToSpendData(
   const monthEnd = monthKeyToExclusiveEndDate(month);
 
   const [accountRows, rateTable, envelopes, radar, goals, debts, countSavings, occurrenceRows] = await Promise.all([
-    listAccountsWithFlowSinceCreation(userId),
+    listAccountBalanceParts(userId),
     getLatestRateTable(now),
     getEnvelopeBalances(userId, month),
     buildSubscriptionRadarData(userId, asOf),
@@ -76,10 +76,9 @@ export const buildSafeToSpendData = cache(async function buildSafeToSpendData(
   ]);
 
   const { cashAgorot, cardOwedAgorot, savingsAgorot, savingsCounted } = settleAccounts(
-    accountRows.map((row) => ({
-      accountType: row.accountType,
-      openingAgorot: convertNativeAmountToAgorot(nativeAmount(Number(row.nativeBalance)), row.currency, rateTable[row.currency]),
-      flowSinceOpeningAgorot: agorot(Number(row.flowSinceCreation)),
+    accountRows.map(({ parts }) => ({
+      accountType: parts.accountType,
+      balanceAgorot: currentBalanceAgorot(parts, rateTable[parts.currency]),
     })),
     { countSavings },
   );
