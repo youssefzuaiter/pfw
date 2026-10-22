@@ -82,6 +82,7 @@ export const CROSS_TENANT_FOREIGN_KEYS = [
   "BankConnection.bankAccountId",
   "TransactionSplit.transactionId",
   "TransactionSplit.categoryId",
+  "RecurringBill.categoryId",
 ] as const;
 
 export async function deleteAccount(userId: string): Promise<DeleteAccountResult> {

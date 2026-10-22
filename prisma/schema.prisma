@@ -345,6 +345,7 @@ model User {
   merchantEmbeddings       MerchantEmbedding[]
   dividends                Dividend[]
   subscriptionTracking     SubscriptionTracking[]
+  recurringBills           RecurringBill[]
   auditLogs                AuditLog[]
   ledgerCommits            LedgerCommit[]
   authenticators           Authenticator[]
@@ -555,6 +556,10 @@ model PhoneAlertSubscription {
   overdrawnCategoryIds String[]  @default([])
   /// When the "no statement imported lately" reminder last went out.
   importReminderSentAt DateTime?
+  /// Bills (one `<bill key>|<due day>` per cycle) already reminded about and
+  /// still inside the reminder window, so each bill alerts once per due date,
+  /// not every night until it is paid.
+  remindedBillKeys     String[]  @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -737,6 +742,7 @@ model Category {
   envelopeAllocations EnvelopeAllocation[]
   merchantEmbeddings  MerchantEmbedding[]
   transactionSplits   TransactionSplit[]
+  recurringBills      RecurringBill[]
 
   @@unique([userId, slug])
   @@index([userId])
@@ -1705,6 +1711,52 @@ model CryptoWallet {
   updatedAt            DateTime @updatedAt
 
   @@unique([userId, address, chainId])
+  @@index([userId])
+}
+
+enum BillCadence {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+/// A subscription or bill the user typed in themselves: Netflix, rent paid in
+/// cash, an annual insurance premium (AGENTS.md §3cccc). The radar only finds
+/// charges that already appear in imported statements, so a new subscription,
+/// a bill paid from outside the app and a yearly charge are all invisible to
+/// it until enough history exists. A row here is a SCHEDULE, never a
+/// transaction: `anchorDate` is any date the bill is (or was) due, and every
+/// later due date is derived from it and `cadence` (calendar months, so the
+/// 31st becomes the 28th in February). Nothing is stored per cycle, so a
+/// schedule cannot go stale; whether this month's charge has already landed is
+/// worked out from the ledger when needed.
+///
+/// A bill whose charges the radar has since detected from statements is
+/// superseded by the detected one (never counted twice); its row stays, so
+/// the user can see why. Cancelling reuses `SubscriptionTracking`, keyed by
+/// `manual:<id>`.
+model RecurringBill {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name String
+  /// What one charge costs, positive, in minor units of `currency`.
+  nativeAmount BigInt
+  currency     Currency @default(ILS)
+  cadence      BillCadence
+  /// A date the bill is or was due (UTC day). Later due dates are derived.
+  anchorDate   DateTime @db.Date
+
+  /// The category its charges fall in, so Safe to Spend can tell that the
+  /// bill is paid from an envelope that already holds the money. Optional;
+  /// deleting the category leaves the bill in place with none.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([userId])
 }
 

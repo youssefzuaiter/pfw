@@ -81,6 +81,7 @@ export async function gatherUserExport(userId: string): Promise<UserExport | nul
         coreRouterStatus: await tx.coreRouterStatus.findMany({ where: { userId }, ...byId }),
         netWorthSnapshots: await tx.netWorthSnapshot.findMany({ where: { userId }, ...byId }),
         subscriptionTracking: await tx.subscriptionTracking.findMany({ where: { userId }, ...byId }),
+        recurringBills: await tx.recurringBill.findMany({ where: { userId }, ...byId }),
         merchantEmbeddings: await tx.merchantEmbedding.findMany({ where: { userId }, omit: { embedding: true }, ...byId }),
         settings: await tx.userSettings.findMany({ where: { userId }, ...byId }),
         phoneAlertSubscription: await tx.phoneAlertSubscription.findMany({ where: { userId }, omit: { topic: true }, ...byId }),
