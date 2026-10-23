@@ -9888,6 +9888,48 @@ could add anything, and it added both kinds. Fixed so each page stands alone.
   stored as bills, including any that were really subscriptions. Delete and
   re-add them on the Subscriptions page; there is no "move" action, by design.
 
+## 3ffff. Month totals and an Add button on both pages (ad hoc)
+
+§3eeee made the two pages independent but showed each page's usual monthly
+COST, not what was spent. Each page now leads with what was actually charged
+this calendar month, and has its own Add button.
+
+- **Spent this month, per page** (`MonthTotals` in `build-subscription-radar-data.ts`):
+  the charges dated inside the current UTC month, read from the ledger by the
+  date the money left. The Subscriptions page counts the radar's detected
+  subscriptions (their own charges, found through `memberMerchantKeys`, which
+  the radar now reports for each detected subscription) plus the subscriptions
+  added by hand; the Bills page counts only bills added by hand. A hand-added
+  item's charges are the ledger expenses matching its name and amount
+  (`chargesInPeriod`), so a bill due on the 3rd and paid on September 28
+  counts in September. A subscription cancelled since is still counted for the
+  month it was charged in. Each charge is converted at its own day's rate into
+  the reporting currency (`sumFlowsInReporting`, §3vvv).
+- **Still to be charged this month**: the existing pending-bill logic Safe to
+  Spend uses (`findPendingBills`), run on only that page's rows.
+- **Usual cost** (`cashDrag` per page) stays as one small line under it.
+- **Add button** (`AddItemPanel`): "+ Add subscription" / "+ Add bill" opens the
+  form for that page's kind and closes it after saving. The form's own button
+  now says "Save subscription" / "Save bill". Items added by hand have Delete
+  (with a confirm) in the "Added by you" list on each page. Subscriptions found
+  in statements keep Mark reviewed and Cancel instead: they come from real
+  transactions, so deleting them is deliberately not offered (decided with the
+  user).
+- **What went wrong first, so it is not repeated**: PR #39 was merged while its
+  second commit (§3eeee) was still unpushed, so production briefly had only the
+  first split; the migration run that followed applied nothing. Recovered by
+  cherry-picking that commit onto a new branch. Check that the merged PR
+  contains the commits you expect, and that the migration run lists the
+  migration it applied, before saying a change is live.
+- **Verified**: integration tests against real Postgres (each page's spent total
+  counts only this month's charges for its own items and not last month's; a
+  detected subscription's charge counts; still-to-come per page), each broken
+  three ways to confirm it fails; the form and a browser spec on the production
+  build (Add button, form, Delete, the totals' headings, neither page showing
+  the other's items, accessibility scan).
+- **Production needs `deploy-migrations.yml`** for `20261023120000_recurring_bill_kind`
+  (from §3eeee), which has NOT been applied there yet.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

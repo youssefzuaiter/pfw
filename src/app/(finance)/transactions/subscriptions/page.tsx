@@ -5,10 +5,10 @@ import { minorUnitsToInputText } from "../../../../lib/recurring-bills";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { listCategories } from "../../../../server/dal/categories";
 import { buildSubscriptionRadarData } from "../../../../server/subscriptions/build-subscription-radar-data";
-import { CashDragCard } from "../_components/cash-drag-card";
+import { AddItemPanel } from "../_components/add-item-panel";
+import { MonthTotalsCard } from "../_components/month-totals-card";
 import { RecurringNav } from "../_components/recurring-nav";
 import { ManualBillList, type ManualBillItem } from "../bills/_components/manual-bill-list";
-import { RecurringBillForm } from "../bills/_components/recurring-bill-form";
 import { SubscriptionStatusToggle } from "./_components/subscription-status-toggle";
 
 export const instant = false;
@@ -86,11 +86,18 @@ export default async function SubscriptionsPage() {
       </p>
       <ReportingRateNote />
 
-      <CashDragCard
-        title="Your subscriptions, in total"
-        monthly={data.subscriptionsCashDrag.monthly}
-        annual={data.subscriptionsCashDrag.annual}
-        caption="Counts the subscriptions found in your statements and the ones you added, except cancelled ones."
+      <MonthTotalsCard
+        title="Spent on subscriptions"
+        noun="subscriptions"
+        totals={data.monthTotals.subscriptions}
+        usualMonthly={data.subscriptionsCashDrag.monthly}
+        usualAnnual={data.subscriptionsCashDrag.annual}
+      />
+
+      <AddItemPanel
+        kind="subscription"
+        categories={categories}
+        help="Add one that has not shown up in your statements yet, or that is paid from another account. You get a phone reminder three days before it is due if you turned on phone alerts."
       />
 
       <section aria-labelledby="coming-up-heading" className="rounded-lg border border-border bg-surface p-4">
@@ -114,25 +121,16 @@ export default async function SubscriptionsPage() {
         )}
       </section>
 
-      <section aria-labelledby="add-subscription-heading" className="rounded-lg border border-border bg-surface p-4">
-        <h2 id="add-subscription-heading" className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
-          Add a subscription
+      <section aria-labelledby="your-subscriptions-heading" className="rounded-lg border border-border bg-surface p-4">
+        <h2 id="your-subscriptions-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
+          Added by you ({manualItems.length})
         </h2>
-        <p className="mb-3 text-sm text-muted">
-          For one that has not shown up in your statements yet, or is paid from another account. It counts in Safe to
-          Spend, and you get a phone reminder three days before it is due if you turned on phone alerts.
-        </p>
-        <RecurringBillForm categories={categories} kind="subscription" />
-      </section>
-
-      {manualItems.length > 0 && (
-        <section aria-labelledby="your-subscriptions-heading" className="rounded-lg border border-border bg-surface p-4">
-          <h2 id="your-subscriptions-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
-            Added by you ({manualItems.length})
-          </h2>
+        {manualItems.length === 0 ? (
+          <p className="text-sm text-muted">You have not added any subscriptions yet. Use the Add button above.</p>
+        ) : (
           <ManualBillList items={manualItems} categories={categories} />
-        </section>
-      )}
+        )}
+      </section>
 
       {data.possibleFreeTrials.length > 0 && (
         <section className="rounded-lg border border-signature/30 bg-signature/10 p-4">

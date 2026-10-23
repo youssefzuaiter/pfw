@@ -10,8 +10,8 @@ export type ItemKind = "bill" | "subscription";
 
 /** The words each page uses, so neither page talks about the other's items. */
 export const KIND_WORDS: Record<ItemKind, { noun: string; namePlaceholder: string; addLabel: string }> = {
-  bill: { noun: "bill", namePlaceholder: "Electricity", addLabel: "Add bill" },
-  subscription: { noun: "subscription", namePlaceholder: "Netflix", addLabel: "Add subscription" },
+  bill: { noun: "bill", namePlaceholder: "Electricity", addLabel: "Save bill" },
+  subscription: { noun: "subscription", namePlaceholder: "Netflix", addLabel: "Save subscription" },
 };
 
 const CADENCES: readonly { value: CadenceValue; label: string }[] = [

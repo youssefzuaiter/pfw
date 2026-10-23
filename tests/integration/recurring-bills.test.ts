@@ -188,6 +188,43 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
       await removeAllBills();
     });
 
+    it("each page's total is what was actually charged this month for its own items", async () => {
+      await addBill({ kind: "bill", name: "Electricity Company", nativeAmount: 30_000 });
+      await addBill({ kind: "subscription", name: "Fitness Club", nativeAmount: 20_000 });
+      await charge("ELECTRICITY COMPANY", "2026-10-05", -30_000n);
+      await charge("FITNESS CLUB", "2026-10-13", -20_000n);
+      // Charged last month: not part of October's total.
+      await charge("FITNESS CLUB", "2026-09-13", -20_000n);
+      const data = await buildSubscriptionRadarData(owner.id, asOf());
+
+      expect(data.monthTotals.bills).toMatchObject({ monthLabel: "October 2026", spentCount: 1 });
+      expect(data.monthTotals.bills.spent).toContain("300.00");
+      expect(data.monthTotals.subscriptions).toMatchObject({ monthLabel: "October 2026", spentCount: 1 });
+      expect(data.monthTotals.subscriptions.spent).toContain("200.00");
+      expect(data.monthTotals.subscriptions.spent).not.toContain("400.00");
+      await removeAllBills();
+    });
+
+    it("counts a detected subscription's charge this month, and what is still to come", async () => {
+      await charge("Streamflix", "2026-07-20", -3_990n);
+      await charge("Streamflix", "2026-08-20", -3_990n);
+      await charge("Streamflix", "2026-09-20", -3_990n);
+      await addBill({ kind: "bill", name: "Water Company", nativeAmount: 8_000, anchorDate: day("2026-10-28") });
+      // Mid-October: the usual October Streamflix charge has not come yet, and the water bill is due on the 28th.
+      const before = await buildSubscriptionRadarData(owner.id, new Date("2026-10-16T09:00:00Z"));
+      expect(before.monthTotals.subscriptions.spentCount).toBe(0);
+      expect(before.monthTotals.subscriptions.stillDue).toContain("39.90");
+      expect(before.monthTotals.bills.stillDue).toContain("80.00");
+      expect(before.monthTotals.bills.spentCount).toBe(0);
+
+      await charge("Streamflix", "2026-10-20", -3_990n);
+      const after = await buildSubscriptionRadarData(owner.id, new Date("2026-10-21T09:00:00Z"));
+      expect(after.monthTotals.subscriptions.spentCount).toBe(1);
+      expect(after.monthTotals.subscriptions.spent).toContain("39.90");
+      expect(after.monthTotals.subscriptions.stillDue).toContain("0.00");
+      await removeAllBills();
+    });
+
     it("an item keeps its kind when edited, and a new one defaults to a bill", async () => {
       const subscription = await addBill({ kind: "subscription", name: "Streamflix Plus" });
       const updated = await updateRecurringBill(owner.id, subscription.id, {

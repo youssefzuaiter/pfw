@@ -4,10 +4,10 @@ import { minorUnitsToInputText } from "../../../../lib/recurring-bills";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { listCategories } from "../../../../server/dal/categories";
 import { buildSubscriptionRadarData } from "../../../../server/subscriptions/build-subscription-radar-data";
-import { CashDragCard } from "../_components/cash-drag-card";
+import { AddItemPanel } from "../_components/add-item-panel";
+import { MonthTotalsCard } from "../_components/month-totals-card";
 import { RecurringNav } from "../_components/recurring-nav";
 import { ManualBillList, type ManualBillItem } from "./_components/manual-bill-list";
-import { RecurringBillForm } from "./_components/recurring-bill-form";
 
 export const instant = false;
 
@@ -71,11 +71,18 @@ export default async function BillsPage() {
       </p>
       <ReportingRateNote />
 
-      <CashDragCard
-        title="Your bills, in total"
-        monthly={data.billsCashDrag.monthly}
-        annual={data.billsCashDrag.annual}
-        caption="What the bills below cost, counting the ones that are not cancelled."
+      <MonthTotalsCard
+        title="Spent on bills"
+        noun="bills"
+        totals={data.monthTotals.bills}
+        usualMonthly={data.billsCashDrag.monthly}
+        usualAnnual={data.billsCashDrag.annual}
+      />
+
+      <AddItemPanel
+        kind="bill"
+        categories={categories}
+        help="Add something paid on a schedule: rent, electricity, insurance. You get a phone reminder three days before it is due if you turned on phone alerts."
       />
 
       <section aria-labelledby="coming-up-heading" className="rounded-lg border border-border bg-surface p-4">
@@ -99,23 +106,12 @@ export default async function BillsPage() {
         )}
       </section>
 
-      <section aria-labelledby="add-bill-heading" className="rounded-lg border border-border bg-surface p-4">
-        <h2 id="add-bill-heading" className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
-          Add a bill
-        </h2>
-        <p className="mb-3 text-sm text-muted">
-          Something paid from another account, a yearly charge, or a bill that has not shown up in your statements yet.
-          You get a phone reminder three days before it is due if you turned on phone alerts.
-        </p>
-        <RecurringBillForm categories={categories} kind="bill" />
-      </section>
-
       <section aria-labelledby="your-bills-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="your-bills-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
           Added by you ({manualItems.length})
         </h2>
         {manualItems.length === 0 ? (
-          <p className="text-sm text-muted">You have not added any bills yet. Use the form above.</p>
+          <p className="text-sm text-muted">You have not added any bills yet. Use the Add button above.</p>
         ) : (
           <ManualBillList items={manualItems} categories={categories} />
         )}

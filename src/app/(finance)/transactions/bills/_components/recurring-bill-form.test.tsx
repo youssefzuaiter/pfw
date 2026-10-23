@@ -41,7 +41,7 @@ describe("RecurringBillForm", () => {
     const calls = installFetch();
     render(<RecurringBillForm categories={[]} kind="subscription" />);
     expect(screen.getByLabelText("Name")).toHaveAttribute("placeholder", "Netflix");
-    await fillAndSubmit("Add subscription");
+    await fillAndSubmit("Save subscription");
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toMatchObject({ url: "/api/recurring-bills", method: "POST", body: { kind: "subscription", name: "Something" } });
   });
@@ -49,8 +49,8 @@ describe("RecurringBillForm", () => {
   it("adds a bill on the Bills page's form, which is the default", async () => {
     const calls = installFetch();
     render(<RecurringBillForm categories={[]} kind="bill" />);
-    expect(screen.queryByRole("button", { name: "Add subscription" })).toBeNull();
-    await fillAndSubmit("Add bill");
+    expect(screen.queryByRole("button", { name: "Save subscription" })).toBeNull();
+    await fillAndSubmit("Save bill");
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0].body).toMatchObject({ kind: "bill" });
   });

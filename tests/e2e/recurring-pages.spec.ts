@@ -13,17 +13,22 @@ test.describe.configure({ mode: "serial" });
 const SUBSCRIPTION = "E2E Streamflix Test";
 const BILL = "E2E Electricity Test";
 
-async function add(page: import("@playwright/test").Page, name: string, addLabel: string) {
+async function add(page: import("@playwright/test").Page, name: string, addButton: string, saveButton: string) {
+  // The form is behind the page's Add button.
+  await expect(page.getByRole("button", { name: addButton, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: addButton, exact: true }).click();
   await page.getByLabel("Name", { exact: true }).first().fill(name);
   await page.getByLabel("Amount", { exact: true }).first().fill("12.50");
-  await page.getByRole("button", { name: addLabel, exact: true }).click();
+  await page.getByRole("button", { name: saveButton, exact: true }).click();
   await expect(page.getByText(name).first()).toBeVisible();
+  // What was added can be deleted from the list right there.
+  await expect(page.locator("li", { hasText: name }).getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 }
 
 async function removeIfPresent(page: import("@playwright/test").Page, url: string, name: string) {
   await page.goto(url);
   // The page streams in behind a loading skeleton: wait for the real content before counting rows.
-  await expect(page.getByRole("heading", { name: /^Add a / })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^\+ Add / })).toBeVisible();
   // Delete every row with this name (a failed earlier run may have left one more than expected).
   for (let attempt = 0; attempt < 5; attempt++) {
     // Only the rows that can be deleted: "Coming up" lists the same name without buttons.
@@ -48,17 +53,18 @@ test.afterAll(async ({ browser, baseURL }) => {
 
 test("a subscription is added on the Subscriptions page and stays off the Bills page", async ({ page }) => {
   await page.goto("/transactions/subscriptions");
-  await expect(page.getByRole("heading", { name: "Add a subscription" })).toBeVisible();
-  await add(page, SUBSCRIPTION, "Add subscription");
+  await expect(page.getByRole("heading", { name: /^Spent on subscriptions in / })).toBeVisible();
+  await add(page, SUBSCRIPTION, "+ Add subscription", "Save subscription");
 
   await page.goto("/transactions/bills");
-  await expect(page.getByRole("heading", { name: "Add a bill" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Spent on bills in / })).toBeVisible();
+  await expect(page.getByRole("button", { name: "+ Add bill", exact: true })).toBeVisible();
   await expect(page.getByText(SUBSCRIPTION)).toHaveCount(0);
 });
 
 test("a bill is added on the Bills page and stays off the Subscriptions page", async ({ page }) => {
   await page.goto("/transactions/bills");
-  await add(page, BILL, "Add bill");
+  await add(page, BILL, "+ Add bill", "Save bill");
 
   await page.goto("/transactions/subscriptions");
   await expect(page.getByText(BILL)).toHaveCount(0);
