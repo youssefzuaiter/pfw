@@ -4,10 +4,10 @@ import { minorUnitsToInputText } from "../../../../lib/recurring-bills";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { listCategories } from "../../../../server/dal/categories";
 import { buildSubscriptionRadarData } from "../../../../server/subscriptions/build-subscription-radar-data";
-import { CashDragCard } from "../_components/cash-drag-card";
+import { AddItemPanel } from "../_components/add-item-panel";
+import { MonthTotalsCard } from "../_components/month-totals-card";
 import { RecurringNav } from "../_components/recurring-nav";
 import { ManualBillList, type ManualBillItem } from "./_components/manual-bill-list";
-import { RecurringBillForm } from "./_components/recurring-bill-form";
 
 export const instant = false;
 
@@ -24,8 +24,10 @@ export default async function BillsPage() {
   const categories = allCategories.filter((category) => category.slug !== "uncategorized").map((category) => ({ id: category.id, name: category.name }));
   const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
 
-  const manualItems: ManualBillItem[] = data.manualBills.map((bill) => ({
+  // Only bills: subscriptions added by hand belong to the Subscriptions page.
+  const manualItems: ManualBillItem[] = data.manualBills.filter((bill) => bill.kind === "bill").map((bill) => ({
     id: bill.id,
+    kind: bill.kind,
     name: bill.name,
     amount: minorUnitsToInputText(bill.nativeAmount),
     currency: bill.currency,
@@ -43,7 +45,7 @@ export default async function BillsPage() {
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const upcoming = data.subscriptions
-    .filter((subscription) => subscription.manualBillId && subscription.status !== "CANCELLED" && subscription.isRecurring && subscription.nextExpectedDate)
+    .filter((subscription) => subscription.manualBillKind === "bill" && subscription.status !== "CANCELLED" && subscription.isRecurring && subscription.nextExpectedDate)
     .map((subscription) => ({ subscription, due: subscription.nextExpectedDate as Date }))
     .filter(({ due }) => {
       const day = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
@@ -64,12 +66,24 @@ export default async function BillsPage() {
       </div>
       <RecurringNav active="bills" />
       <p className="text-sm text-muted">
-        Bills and subscriptions you added yourself. They count in Safe to Spend and the cost total, and you can get a
-        phone reminder before one is due.
+        Bills you add yourself: rent, electricity, insurance, anything that comes round on a schedule. They count in Safe
+        to Spend, and you can get a phone reminder before one is due.
       </p>
       <ReportingRateNote />
 
-      <CashDragCard monthly={data.cashDrag.monthly} annual={data.cashDrag.annual} />
+      <MonthTotalsCard
+        title="Spent on bills"
+        noun="bills"
+        totals={data.monthTotals.bills}
+        usualMonthly={data.billsCashDrag.monthly}
+        usualAnnual={data.billsCashDrag.annual}
+      />
+
+      <AddItemPanel
+        kind="bill"
+        categories={categories}
+        help="Add something paid on a schedule: rent, electricity, insurance. You get a phone reminder three days before it is due if you turned on phone alerts."
+      />
 
       <section aria-labelledby="coming-up-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="coming-up-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
@@ -92,23 +106,12 @@ export default async function BillsPage() {
         )}
       </section>
 
-      <section aria-labelledby="add-bill-heading" className="rounded-lg border border-border bg-surface p-4">
-        <h2 id="add-bill-heading" className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
-          Add a bill or subscription
-        </h2>
-        <p className="mb-3 text-sm text-muted">
-          For one the radar cannot see yet: something new, a bill paid from another account, or a yearly charge. You get a
-          phone reminder three days before it is due if you turned on phone alerts.
-        </p>
-        <RecurringBillForm categories={categories} />
-      </section>
-
       <section aria-labelledby="your-bills-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="your-bills-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
           Added by you ({manualItems.length})
         </h2>
         {manualItems.length === 0 ? (
-          <p className="text-sm text-muted">You have not added any yet. Use the form above.</p>
+          <p className="text-sm text-muted">You have not added any bills yet. Use the Add button above.</p>
         ) : (
           <ManualBillList items={manualItems} categories={categories} />
         )}

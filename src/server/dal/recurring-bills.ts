@@ -1,6 +1,6 @@
 import "server-only";
 import type { CurrencyCode } from "../../lib/currency";
-import { manualBillKey, type RecurringBillInput } from "../../lib/recurring-bills";
+import { manualBillKey, type RecurringBillInput, type RecurringBillKind } from "../../lib/recurring-bills";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
 /**
@@ -15,8 +15,12 @@ export type BillCadenceName = RecurringBillInput["cadence"];
 const CADENCE_FROM_DB = { MONTHLY: "monthly", QUARTERLY: "quarterly", ANNUAL: "annual" } as const;
 const CADENCE_TO_DB = { monthly: "MONTHLY", quarterly: "QUARTERLY", annual: "ANNUAL" } as const;
 
+const KIND_FROM_DB = { BILL: "bill", SUBSCRIPTION: "subscription" } as const;
+const KIND_TO_DB = { bill: "BILL", subscription: "SUBSCRIPTION" } as const;
+
 type BillRow = {
   id: string;
+  kind: keyof typeof KIND_FROM_DB;
   name: string;
   nativeAmount: bigint;
   currency: string;
@@ -28,6 +32,7 @@ type BillRow = {
 function toBill(row: BillRow): RecurringBillInput {
   return {
     id: row.id,
+    kind: KIND_FROM_DB[row.kind],
     name: row.name,
     nativeAmount: Number(row.nativeAmount),
     currency: row.currency as CurrencyCode,
@@ -54,6 +59,9 @@ export type RecurringBillWrite = {
   categoryId: string | null;
 };
 
+/** What creating takes: the details plus which page it belongs to. The kind is never changed afterwards. */
+export type RecurringBillCreate = RecurringBillWrite & { kind: RecurringBillKind };
+
 export type RecurringBillResult = { ok: true; bill: RecurringBillInput } | { ok: false; error: "category_not_found" };
 
 /** The category must be the caller's own; a missing or someone else's is refused the same way. */
@@ -62,12 +70,13 @@ async function categoryIsOwned(tx: ScopedTransactionClient, userId: string, cate
   return (await tx.category.findFirst({ where: { id: categoryId, userId }, select: { id: true } })) !== null;
 }
 
-export async function createRecurringBill(userId: string, input: RecurringBillWrite): Promise<RecurringBillResult> {
+export async function createRecurringBill(userId: string, input: RecurringBillCreate): Promise<RecurringBillResult> {
   return withUserScope(userId, async (tx) => {
     if (!(await categoryIsOwned(tx, userId, input.categoryId))) return { ok: false, error: "category_not_found" } as const;
     const row = await tx.recurringBill.create({
       data: {
         userId,
+        kind: KIND_TO_DB[input.kind],
         name: input.name,
         nativeAmount: BigInt(input.nativeAmount),
         currency: input.currency,

@@ -20,8 +20,13 @@ import { normalizeMerchantForFuzzyMatch, similarityRatio, type SubscriptionAnaly
  * Pure: the caller supplies already-fetched rows.
  */
 
+/** Which page an item belongs to (AGENTS.md §3eeee). */
+export type RecurringBillKind = "bill" | "subscription";
+
 export type RecurringBillInput = {
   id: string;
+  /** Fixed when it is added: the Bills page lists bills, the Subscriptions page lists subscriptions. */
+  kind: RecurringBillKind;
   name: string;
   /** What one charge costs, positive, in minor units of `currency`. */
   nativeAmount: number;
@@ -142,6 +147,8 @@ export function namesMatch(a: string, b: string): boolean {
 
 export type LedgerExpense = {
   displayName: string;
+  /** The ILS agorot amount recorded with the charge, signed like `nativeAmount`. Only needed to total what was spent. */
+  amountAgorot?: number;
   currency: CurrencyCode;
   /** Signed: negative for an expense. */
   nativeAmount: number;
@@ -183,6 +190,31 @@ export function findPayment(
   return best;
 }
 
+/**
+ * The ledger charges that belong to this bill and are dated inside
+ * [`from`, `to`): the same name and amount test as `findPayment`, but by the
+ * date the money actually left, not by which due date it settles. This is what
+ * "spent this month" adds up, so a bill due on the 3rd and paid on
+ * September 28 counts in September, not October.
+ */
+export function chargesInPeriod(
+  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount">,
+  ledger: readonly LedgerExpense[],
+  from: Date,
+  to: Date,
+): LedgerExpense[] {
+  return ledger.filter((row) => {
+    if (row.nativeAmount >= 0) return false;
+    const at = row.occurredAt.getTime();
+    if (at < from.getTime() || at >= to.getTime()) return false;
+    if (!namesMatch(bill.name, row.displayName)) return false;
+    if (row.currency === bill.currency) {
+      return Math.abs(Math.abs(row.nativeAmount) - bill.nativeAmount) / bill.nativeAmount <= AMOUNT_TOLERANCE;
+    }
+    return true;
+  });
+}
+
 // === Rows for the radar's list ===============================================
 
 /** A detected subscription, as much of it as the supersede check needs. */
@@ -193,6 +225,7 @@ export type DetectedSubscription = {
 
 export type ManualBillRow = SubscriptionAnalysis & {
   manualBillId: string;
+  manualBillKind: RecurringBillKind;
   /** The day of the month the bill is due, so a day the previous month does not have still lands on the right day. */
   dueDay: number;
 };
@@ -247,6 +280,7 @@ export function buildManualBillRows(
 
     rows.push({
       manualBillId: bill.id,
+      manualBillKind: bill.kind,
       dueDay: bill.anchorDate.getUTCDate(),
       merchantKey: manualBillKey(bill.id),
       displayName: bill.name,

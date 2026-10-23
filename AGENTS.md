@@ -9813,6 +9813,9 @@ You can now type them in, and get a phone reminder before one is due.
 
 ## 3dddd. Subscriptions and bills on separate pages (ad hoc)
 
+**Superseded in part by §3eeee**: the pages are now fully independent, each with
+its own add form, list and total. Read that section first.
+
 Some people do not want the two mixed together. They are now two pages, split
 by SOURCE rather than by type: nothing in the data model changed.
 
@@ -9836,11 +9839,97 @@ by SOURCE rather than by type: nothing in the data model changed.
 - **Verified**: component test for the tab switcher; both pages added to the
   accessibility audit (59 Playwright tests pass); both pages checked in the
   browser. No migration, so production needs no `deploy-migrations.yml` run.
-- **Local test note**: the local `pfw_runtime` role has a 20-connection limit
-  (the RLS migration), and the full suite's parallel workers can exceed it,
-  failing different integration files each run with "too many connections".
-  Each passes alone, and `npm run test:integration -- --maxWorkers=2` passes
-  all of them.
+- **Test note**: the `pfw_runtime` role is limited to 20 connections (the RLS
+  migration) and every integration test file opens its own pools, so more than
+  two files at once intermittently failed a random file with "too many
+  connections", locally and in CI (it blocked PR #40). `vitest.config.mts` now
+  sets `maxWorkers: 2`, so plain `npm run test` is stable: three full runs in a
+  row passed.
+
+## 3eeee. Independent Subscriptions and Bills pages (ad hoc)
+
+§3dddd split the two pages by where an item came from, but only the Bills page
+could add anything, and it added both kinds. Fixed so each page stands alone.
+
+- **Each saved item has a kind** (`RecurringBill.kind`, `BILL` or `SUBSCRIPTION`;
+  migration `20261023120000_recurring_bill_kind`, one new column defaulting to
+  `BILL`, so everything saved before stays a bill). It is fixed when the item is
+  added: the create body carries `kind` (absent means a bill, an unknown value is
+  a 400), and an edit never sends or changes it, so an item cannot move between
+  pages.
+- **Subscriptions page** (`/transactions/subscriptions`): what the radar finds in
+  the statements, plus subscriptions added here ("Add a subscription", an "Added
+  by you" list with edit and delete). Its total counts exactly those, and
+  "Coming up" lists both.
+- **Bills page** (`/transactions/bills`): bills only, with "Add a bill", its own
+  list, its own total and its own "Coming up". No subscription appears on it.
+- **One form for both** (`RecurringBillForm`, still in `bills/_components/`): the
+  page passes `kind`, and the words (placeholder, button, errors) follow it, so
+  neither page mentions the other's items.
+- **Totals** (`build-subscription-radar-data.ts`): `subscriptionsCashDrag` and
+  `billsCashDrag` are what each page shows. The combined `cashDrag` and
+  `cashDragMonthlyAgorot` are unchanged and still feed Safe to Spend, the
+  runway's spending floor and the reminders, which care about everything that
+  leaves the account, so those figures do not change.
+- **One link stays between them**: a bill whose charges the radar has since
+  found in the statements is listed on the Bills page as "Now in your
+  statements" and counted once, on the Subscriptions page, so nothing is
+  counted twice.
+- **Verified**: integration tests against real Postgres (each page's total counts
+  only its own kind while the combined figure counts both; an edit keeps the
+  kind; a missing kind defaults to a bill and an unknown one is refused), a
+  component test of the form (each page's wording and request, and no `kind` on
+  an edit), and a browser spec on the production build that adds a subscription
+  and a bill through the real forms and checks neither shows on the other page,
+  with an accessibility scan of both. The spec deletes everything it adds.
+- **Production needs `deploy-migrations.yml`** for the new migration in the same
+  sitting as the merge (§3eee): until then the Subscriptions and Bills pages fail
+  to load their lists.
+- **Known limitation**: items added on the Bills page before this change were all
+  stored as bills, including any that were really subscriptions. Delete and
+  re-add them on the Subscriptions page; there is no "move" action, by design.
+
+## 3ffff. Month totals and an Add button on both pages (ad hoc)
+
+§3eeee made the two pages independent but showed each page's usual monthly
+COST, not what was spent. Each page now leads with what was actually charged
+this calendar month, and has its own Add button.
+
+- **Spent this month, per page** (`MonthTotals` in `build-subscription-radar-data.ts`):
+  the charges dated inside the current UTC month, read from the ledger by the
+  date the money left. The Subscriptions page counts the radar's detected
+  subscriptions (their own charges, found through `memberMerchantKeys`, which
+  the radar now reports for each detected subscription) plus the subscriptions
+  added by hand; the Bills page counts only bills added by hand. A hand-added
+  item's charges are the ledger expenses matching its name and amount
+  (`chargesInPeriod`), so a bill due on the 3rd and paid on September 28
+  counts in September. A subscription cancelled since is still counted for the
+  month it was charged in. Each charge is converted at its own day's rate into
+  the reporting currency (`sumFlowsInReporting`, §3vvv).
+- **Still to be charged this month**: the existing pending-bill logic Safe to
+  Spend uses (`findPendingBills`), run on only that page's rows.
+- **Usual cost** (`cashDrag` per page) stays as one small line under it.
+- **Add button** (`AddItemPanel`): "+ Add subscription" / "+ Add bill" opens the
+  form for that page's kind and closes it after saving. The form's own button
+  now says "Save subscription" / "Save bill". Items added by hand have Delete
+  (with a confirm) in the "Added by you" list on each page. Subscriptions found
+  in statements keep Mark reviewed and Cancel instead: they come from real
+  transactions, so deleting them is deliberately not offered (decided with the
+  user).
+- **What went wrong first, so it is not repeated**: PR #39 was merged while its
+  second commit (§3eeee) was still unpushed, so production briefly had only the
+  first split; the migration run that followed applied nothing. Recovered by
+  cherry-picking that commit onto a new branch. Check that the merged PR
+  contains the commits you expect, and that the migration run lists the
+  migration it applied, before saying a change is live.
+- **Verified**: integration tests against real Postgres (each page's spent total
+  counts only this month's charges for its own items and not last month's; a
+  detected subscription's charge counts; still-to-come per page), each broken
+  three ways to confirm it fails; the form and a browser spec on the production
+  build (Add button, form, Delete, the totals' headings, neither page showing
+  the other's items, accessibility scan).
+- **Production needs `deploy-migrations.yml`** for `20261023120000_recurring_bill_kind`
+  (from §3eeee), which has NOT been applied there yet.
 
 ## 4. Design system (Phase 0)
 

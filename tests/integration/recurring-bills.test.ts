@@ -4,6 +4,7 @@ import { createAdminClient } from "../../src/server/db/admin-client";
 import { createRecurringBill, deleteRecurringBill, listRecurringBills, updateRecurringBill } from "../../src/server/dal/recurring-bills";
 import { gatherPhoneAlertFacts } from "../../src/server/dal/phone-alerts";
 import { setSubscriptionStatus } from "../../src/server/dal/subscriptions";
+import { parseRecurringBillBody } from "../../src/server/api/recurring-bill-validation";
 import { buildSubscriptionRadarData } from "../../src/server/subscriptions/build-subscription-radar-data";
 import { listBillsDueSoon } from "../../src/server/subscriptions/bills-due-soon";
 import { manualBillKey } from "../../src/lib/recurring-bills";
@@ -34,6 +35,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
 
   async function addBill(input: Partial<Parameters<typeof createRecurringBill>[1]> = {}) {
     const result = await createRecurringBill(owner.id, {
+      kind: "bill",
       name: "Gym",
       nativeAmount: 20_000,
       currency: "ILS",
@@ -132,7 +134,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
     });
 
     it("refuses a category that is not the caller's, on create and on edit", async () => {
-      const input = { name: "Gym", nativeAmount: 20_000, currency: "ILS" as const, cadence: "monthly" as const, anchorDate: day("2026-07-25") };
+      const input = { kind: "bill" as const, name: "Gym", nativeAmount: 20_000, currency: "ILS" as const, cadence: "monthly" as const, anchorDate: day("2026-07-25") };
       expect(await createRecurringBill(owner.id, { ...input, categoryId: strangerCategoryId })).toEqual({ ok: false, error: "category_not_found" });
       const bill = await addBill();
       expect(await updateRecurringBill(owner.id, bill.id, { ...input, categoryId: strangerCategoryId })).toEqual({ ok: false, error: "category_not_found" });
@@ -164,6 +166,81 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
       });
       expect(Number(after.cashDragMonthlyAgorot) - Number(before.cashDragMonthlyAgorot)).toBe(20_000);
       expect(after.manualBills).toEqual([expect.objectContaining({ id: bill.id, name: "Gym", detectedAs: null, nextDueDate: "2026-10-25" })]);
+      await removeAllBills();
+    });
+
+    it("keeps bills and subscriptions apart: each is listed and totalled on its own page", async () => {
+      const bill = await addBill({ kind: "bill", name: "Electricity", nativeAmount: 20_000 });
+      const subscription = await addBill({ kind: "subscription", name: "Streamflix Plus", nativeAmount: 5_000 });
+      const data = await buildSubscriptionRadarData(owner.id, asOf());
+
+      expect(data.manualBills.find((item) => item.id === bill.id)?.kind).toBe("bill");
+      expect(data.manualBills.find((item) => item.id === subscription.id)?.kind).toBe("subscription");
+      expect(data.subscriptions.find((row) => row.manualBillId === bill.id)?.manualBillKind).toBe("bill");
+      expect(data.subscriptions.find((row) => row.manualBillId === subscription.id)?.manualBillKind).toBe("subscription");
+
+      // Each page's total counts only its own items; the combined figure (Safe to Spend, the runway) counts both.
+      expect(data.billsCashDrag.monthly).toContain("200.00");
+      expect(data.subscriptionsCashDrag.monthly).toContain("50.00");
+      expect(data.subscriptionsCashDrag.monthly).not.toContain("200.00");
+      expect(data.billsCashDrag.monthly).not.toContain("250.00");
+      expect(Number(data.cashDragMonthlyAgorot)).toBe(25_000);
+      await removeAllBills();
+    });
+
+    it("each page's total is what was actually charged this month for its own items", async () => {
+      await addBill({ kind: "bill", name: "Electricity Company", nativeAmount: 30_000 });
+      await addBill({ kind: "subscription", name: "Fitness Club", nativeAmount: 20_000 });
+      await charge("ELECTRICITY COMPANY", "2026-10-05", -30_000n);
+      await charge("FITNESS CLUB", "2026-10-13", -20_000n);
+      // Charged last month: not part of October's total.
+      await charge("FITNESS CLUB", "2026-09-13", -20_000n);
+      const data = await buildSubscriptionRadarData(owner.id, asOf());
+
+      expect(data.monthTotals.bills).toMatchObject({ monthLabel: "October 2026", spentCount: 1 });
+      expect(data.monthTotals.bills.spent).toContain("300.00");
+      expect(data.monthTotals.subscriptions).toMatchObject({ monthLabel: "October 2026", spentCount: 1 });
+      expect(data.monthTotals.subscriptions.spent).toContain("200.00");
+      expect(data.monthTotals.subscriptions.spent).not.toContain("400.00");
+      await removeAllBills();
+    });
+
+    it("counts a detected subscription's charge this month, and what is still to come", async () => {
+      await charge("Streamflix", "2026-07-20", -3_990n);
+      await charge("Streamflix", "2026-08-20", -3_990n);
+      await charge("Streamflix", "2026-09-20", -3_990n);
+      await addBill({ kind: "bill", name: "Water Company", nativeAmount: 8_000, anchorDate: day("2026-10-28") });
+      // Mid-October: the usual October Streamflix charge has not come yet, and the water bill is due on the 28th.
+      const before = await buildSubscriptionRadarData(owner.id, new Date("2026-10-16T09:00:00Z"));
+      expect(before.monthTotals.subscriptions.spentCount).toBe(0);
+      expect(before.monthTotals.subscriptions.stillDue).toContain("39.90");
+      expect(before.monthTotals.bills.stillDue).toContain("80.00");
+      expect(before.monthTotals.bills.spentCount).toBe(0);
+
+      await charge("Streamflix", "2026-10-20", -3_990n);
+      const after = await buildSubscriptionRadarData(owner.id, new Date("2026-10-21T09:00:00Z"));
+      expect(after.monthTotals.subscriptions.spentCount).toBe(1);
+      expect(after.monthTotals.subscriptions.spent).toContain("39.90");
+      expect(after.monthTotals.subscriptions.stillDue).toContain("0.00");
+      await removeAllBills();
+    });
+
+    it("an item keeps its kind when edited, and a new one defaults to a bill", async () => {
+      const subscription = await addBill({ kind: "subscription", name: "Streamflix Plus" });
+      const updated = await updateRecurringBill(owner.id, subscription.id, {
+        name: "Streamflix Max",
+        nativeAmount: 6_000,
+        currency: "ILS",
+        cadence: "monthly",
+        anchorDate: day("2026-07-25"),
+        categoryId: null,
+      });
+      expect(updated).toMatchObject({ ok: true, bill: { kind: "subscription", name: "Streamflix Max" } });
+      expect(parseRecurringBillBody({ name: "Water", amount: "30.00", currency: "ILS", cadence: "monthly", anchorDate: "2026-10-01" })).toMatchObject({
+        ok: true,
+        data: { kind: "bill" },
+      });
+      expect(parseRecurringBillBody({ name: "Water", amount: "30.00", currency: "ILS", cadence: "monthly", anchorDate: "2026-10-01", kind: "nonsense" }).ok).toBe(false);
       await removeAllBills();
     });
 

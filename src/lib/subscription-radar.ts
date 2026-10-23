@@ -262,6 +262,13 @@ export type SubscriptionAnalysis = {
   categoryId: string | null;
   /** The average gap between charges in days, or `null` with fewer than two. Lets a caller step a weekly bill forward through a month. */
   averageIntervalDays: number | null;
+  /**
+   * The raw merchant keys the radar grouped into this subscription (billing
+   * descriptors that differ only by noise), set on detected ones. Lets a
+   * caller find this subscription's own charges in the ledger. Absent on a
+   * typed-in bill.
+   */
+  memberMerchantKeys?: readonly string[];
 };
 
 /** More than this many distinct price levels stops looking like "a subscription that
@@ -473,7 +480,7 @@ export function runSubscriptionRadar(
 
       const analysis = analyzeSubscription(memberOccurrences);
       if (analysis.isRecurring) {
-        subscriptions.push(analysis);
+        subscriptions.push({ ...analysis, memberMerchantKeys: cluster.memberMerchantKeys });
       } else {
         freeTrialCandidates.push({
           merchantKey: cluster.canonicalMerchantKey,

@@ -20,6 +20,7 @@ const RATES = { ILS: 1, USD: 3.5, EUR: 4, GBP: 4.7, TRY: 0.1 } as const;
 function bill(overrides: Partial<RecurringBillInput> = {}): RecurringBillInput {
   return {
     id: "b1",
+    kind: "subscription",
     name: "Netflix",
     nativeAmount: 5_000,
     currency: "ILS",

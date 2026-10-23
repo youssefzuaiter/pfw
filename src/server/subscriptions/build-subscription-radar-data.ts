@@ -1,7 +1,10 @@
 import "server-only";
 import { cache } from "react";
-import type { Agorot } from "../../lib/money";
-import { getReportingFormatter } from "../reporting/reporting-context";
+import { agorot, type Agorot } from "../../lib/money";
+import { getReportingContext, getReportingFormatter } from "../reporting/reporting-context";
+import { formatReportingMinorUnits, sumFlowsInReporting, type ReportingFlow } from "../../lib/reporting-currency";
+import { findPendingBills } from "../../lib/safe-to-spend";
+import { formatMonthKey, monthKeyFor, monthKeyToExclusiveEndDate, monthKeyToStartDate } from "../../lib/date-month";
 import { formatNativeAmount, nativeAmount } from "../../lib/currency";
 import {
   calculateCashDrag,
@@ -10,7 +13,7 @@ import {
   type SubscriptionAnalysis,
   type SubscriptionOccurrence,
 } from "../../lib/subscription-radar";
-import { buildManualBillRows, type LedgerExpense } from "../../lib/recurring-bills";
+import { buildManualBillRows, chargesInPeriod, type LedgerExpense, type RecurringBillKind } from "../../lib/recurring-bills";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { listRecurringBills } from "../dal/recurring-bills";
 import { getSubscriptionStatuses } from "../dal/subscriptions";
@@ -30,6 +33,8 @@ export type SubscriptionRow = SubscriptionAnalysis & {
   formattedPriceHike: { from: string; to: string } | null;
   /** Set only on a row that comes from a bill the user typed in (AGENTS.md §3cccc). */
   manualBillId?: string;
+  /** Which page a typed-in row belongs to; set together with `manualBillId`. */
+  manualBillKind?: RecurringBillKind;
   /** The day of the month a typed-in bill is due. */
   dueDay?: number;
 };
@@ -37,6 +42,7 @@ export type SubscriptionRow = SubscriptionAnalysis & {
 /** A bill the user typed in, for the screen that manages them. */
 export type ManualBillSummary = {
   id: string;
+  kind: RecurringBillKind;
   name: string;
   currency: SubscriptionAnalysis["currency"];
   cadence: "monthly" | "quarterly" | "annual";
@@ -53,12 +59,30 @@ export type ManualBillSummary = {
   status: SubscriptionReviewStatus;
 };
 
+/** What one page has cost this calendar month: what was actually charged, and what is still to come. */
+export type MonthTotals = {
+  /** For example "October 2026". */
+  monthLabel: string;
+  /** Charges dated this month for what the page lists, from the ledger. Formatted in the reporting currency. */
+  spent: string;
+  spentCount: number;
+  /** Charges still expected before the month ends. Formatted in the reporting currency. */
+  stillDue: string;
+  stillDueCount: number;
+};
+
 export type SubscriptionRadarData = {
   subscriptions: SubscriptionRow[];
   /** Every subscription or bill the user typed in, counted or not. */
   manualBills: ManualBillSummary[];
   possibleFreeTrials: (ReturnType<typeof buildFreeTrialRow>)[];
   cashDrag: { monthly: string; annual: string };
+  /** What the Subscriptions page totals: statement-detected subscriptions plus the subscriptions typed in. */
+  /** This calendar month, per page: the Subscriptions page and the Bills page each total only their own items. */
+  monthTotals: { subscriptions: MonthTotals; bills: MonthTotals };
+  subscriptionsCashDrag: { monthly: string; annual: string };
+  /** What the Bills page totals: only the bills typed in. */
+  billsCashDrag: { monthly: string; annual: string };
   /** The same monthly cash-drag total as `cashDrag.monthly`, as a raw `Agorot` rather than a formatted display string — added for the Real-Time Liquidity Runway & Burn-Rate Engine (AGENTS.md §3v), which needs the actual number to compute a burn-rate floor, not text to render. Purely additive; the existing `cashDrag` field and every prior consumer of it are unchanged. */
   cashDragMonthlyAgorot: Agorot;
 };
@@ -91,6 +115,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
   asOf: Date = new Date(),
 ): Promise<SubscriptionRadarData> {
   const formatMoney = await getReportingFormatter(userId);
+  const reporting = await getReportingContext(userId);
   const since = new Date(asOf.getTime() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
   const [occurrenceRows, statuses, rateTable, bills] = await Promise.all([
@@ -132,7 +157,13 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
   // (never counted twice) and reported on its own below.
   const ledger: LedgerExpense[] = occurrenceRows
     .filter((row) => row.nativeAmount < 0n)
-    .map((row) => ({ displayName: row.displayName, currency: row.currency, nativeAmount: Number(row.nativeAmount), occurredAt: row.occurredAt }));
+    .map((row) => ({
+      displayName: row.displayName,
+      amountAgorot: Number(row.amount),
+      currency: row.currency,
+      nativeAmount: Number(row.nativeAmount),
+      occurredAt: row.occurredAt,
+    }));
   const manual = buildManualBillRows(
     bills,
     ledger,
@@ -155,6 +186,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     const next = counted ? counted.nextExpectedDate : null;
     return {
       id: bill.id,
+      kind: bill.kind,
       name: bill.name,
       currency: bill.currency,
       cadence: bill.cadence,
@@ -170,8 +202,62 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
 
   const activeForCashDrag = subscriptions.filter((s) => s.status !== "CANCELLED");
   const cashDrag = calculateCashDrag(activeForCashDrag, rateTable);
+  // Each page totals only what it lists. The combined figure above still feeds
+  // Safe to Spend and the runway, which care about everything that leaves.
+  const subscriptionsDrag = calculateCashDrag(
+    activeForCashDrag.filter((row) => row.manualBillKind !== "bill"),
+    rateTable,
+  );
+  const billsDrag = calculateCashDrag(
+    activeForCashDrag.filter((row) => row.manualBillKind === "bill"),
+    rateTable,
+  );
+
+  // What each page spent this calendar month. The charges come from the ledger by
+  // the date the money left, so a charge settling last month's due date is not
+  // counted here. Spending is counted even for a subscription cancelled since.
+  const monthKey = monthKeyFor(asOf);
+  const monthStart = monthKeyToStartDate(monthKey);
+  const monthEnd = monthKeyToExclusiveEndDate(monthKey);
+  const toFlow = (row: LedgerExpense): ReportingFlow => ({
+    amount: Math.abs(row.amountAgorot ?? 0),
+    occurredAt: row.occurredAt,
+    currency: row.currency,
+    nativeAmount: Math.abs(row.nativeAmount),
+  });
+  const ledgerThisMonth = ledger.filter((row) => row.occurredAt >= monthStart && row.occurredAt < monthEnd);
+  const detectedCharges: LedgerExpense[] = [];
+  for (const row of subscriptions) {
+    if (row.manualBillId || !row.memberMerchantKeys) continue;
+    const keys = new Set(row.memberMerchantKeys);
+    for (const charge of occurrenceRows) {
+      if (charge.nativeAmount >= 0n || charge.currency !== row.currency || !keys.has(charge.merchantKey)) continue;
+      if (charge.occurredAt < monthStart || charge.occurredAt >= monthEnd) continue;
+      detectedCharges.push({ displayName: charge.displayName, amountAgorot: Number(charge.amount), currency: charge.currency, nativeAmount: Number(charge.nativeAmount), occurredAt: charge.occurredAt });
+    }
+  }
+  const manualCharges = (kind: RecurringBillKind) =>
+    bills.filter((bill) => bill.kind === kind).flatMap((bill) => chargesInPeriod(bill, ledgerThisMonth, monthStart, monthEnd));
+  const totalsFor = (charges: LedgerExpense[], rows: SubscriptionRow[]): MonthTotals => {
+    const pending = findPendingBills(rows, asOf, rateTable);
+    return {
+      monthLabel: formatMonthKey(monthKey),
+      spent: formatReportingMinorUnits(sumFlowsInReporting(charges.map(toFlow), reporting), reporting),
+      spentCount: charges.length,
+      stillDue: formatMoney(agorot(pending.reduce((sum, item) => sum + Number(item.totalAgorot), 0))),
+      stillDueCount: pending.reduce((sum, item) => sum + item.occurrences, 0),
+    };
+  };
+  const monthTotals = {
+    subscriptions: totalsFor(
+      [...detectedCharges, ...manualCharges("subscription")],
+      subscriptions.filter((row) => row.manualBillKind !== "bill"),
+    ),
+    bills: totalsFor(manualCharges("bill"), subscriptions.filter((row) => row.manualBillKind === "bill")),
+  };
 
   return {
+    monthTotals,
     manualBills,
     subscriptions: subscriptions.sort((a, b) => {
       // Active/reviewed subscriptions first, cancelled ones pushed to the
@@ -185,6 +271,8 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     // The totals are in the reporting currency (AGENTS.md §3nnn); each
     // subscription's own price above stays in the currency it is charged in.
     cashDrag: { monthly: formatMoney(cashDrag.monthlyAgorot), annual: formatMoney(cashDrag.annualAgorot) },
+    subscriptionsCashDrag: { monthly: formatMoney(subscriptionsDrag.monthlyAgorot), annual: formatMoney(subscriptionsDrag.annualAgorot) },
+    billsCashDrag: { monthly: formatMoney(billsDrag.monthlyAgorot), annual: formatMoney(billsDrag.annualAgorot) },
     cashDragMonthlyAgorot: cashDrag.monthlyAgorot,
   };
 });

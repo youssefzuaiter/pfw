@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge } from "../../../../../components/badge/badge";
 import { Spinner } from "../../../../../components/spinner/spinner";
-import { RecurringBillForm, type CadenceValue, type EditableBill } from "./recurring-bill-form";
+import { KIND_WORDS, RecurringBillForm, type CadenceValue, type EditableBill } from "./recurring-bill-form";
 
 const CADENCE_LABEL: Record<CadenceValue, string> = {
   monthly: "month",
@@ -49,11 +49,11 @@ function ManualBillRow({ item, categories }: { item: ManualBillItem; categories:
       const response = await fetch(`/api/recurring-bills/${item.id}`, { method: "DELETE" });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.error ?? "Failed to delete the bill");
+        throw new Error(body.error ?? `Failed to delete the ${KIND_WORDS[item.kind].noun}`);
       }
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete the bill");
+      setError(err instanceof Error ? err.message : `Failed to delete the ${KIND_WORDS[item.kind].noun}`);
       setIsDeleting(false);
     }
   }
@@ -81,7 +81,7 @@ function ManualBillRow({ item, categories }: { item: ManualBillItem; categories:
         <p className="flex flex-wrap items-center gap-2 font-medium text-fg">
           {item.name}
           {item.status === "CANCELLED" && <Badge variant="critical">CANCELLED</Badge>}
-          {item.detectedAs && <Badge variant="neutral">Detected from statements</Badge>}
+          {item.detectedAs && <Badge variant="neutral">Now in your statements</Badge>}
         </p>
         <p className="font-tabular-figures text-sm tracking-tight text-muted">
           {item.formattedAmount} / {CADENCE_LABEL[item.cadence]}
@@ -90,7 +90,7 @@ function ManualBillRow({ item, categories }: { item: ManualBillItem; categories:
         </p>
         {item.detectedAs && (
           <p className="text-xs text-muted">
-            Your statements now show this as &ldquo;{item.detectedAs}&rdquo;, so that one is counted and this entry is not, to avoid
+            Your statements now show this as &ldquo;{item.detectedAs}&rdquo;, so that one is counted (on the Subscriptions page) and this entry is not, to avoid
             counting it twice.
           </p>
         )}
@@ -131,7 +131,7 @@ function ManualBillRow({ item, categories }: { item: ManualBillItem; categories:
   );
 }
 
-/** The subscriptions and bills the user typed in, with edit and delete (AGENTS.md §3cccc). */
+/** The bills or subscriptions the user typed in, with edit and delete (AGENTS.md §3cccc, §3eeee). */
 export function ManualBillList({ items, categories }: { items: readonly ManualBillItem[]; categories: readonly Category[] }) {
   return (
     <ul className="flex flex-col gap-3">

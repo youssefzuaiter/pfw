@@ -6,6 +6,13 @@ import { Spinner } from "../../../../../components/spinner/spinner";
 import { SUPPORTED_CURRENCIES, type CurrencyCode } from "../../../../../lib/currency";
 
 export type CadenceValue = "monthly" | "quarterly" | "annual";
+export type ItemKind = "bill" | "subscription";
+
+/** The words each page uses, so neither page talks about the other's items. */
+export const KIND_WORDS: Record<ItemKind, { noun: string; namePlaceholder: string; addLabel: string }> = {
+  bill: { noun: "bill", namePlaceholder: "Electricity", addLabel: "Save bill" },
+  subscription: { noun: "subscription", namePlaceholder: "Netflix", addLabel: "Save subscription" },
+};
 
 const CADENCES: readonly { value: CadenceValue; label: string }[] = [
   { value: "monthly", label: "Every month" },
@@ -16,6 +23,7 @@ const CADENCES: readonly { value: CadenceValue; label: string }[] = [
 /** A bill as the form edits it: the amount as the text the user would type. */
 export type EditableBill = {
   id: string;
+  kind: ItemKind;
   name: string;
   amount: string;
   currency: CurrencyCode;
@@ -26,6 +34,8 @@ export type EditableBill = {
 
 type Props = {
   categories: readonly { id: string; name: string }[];
+  /** Which page the item belongs to when adding a new one. Ignored when editing: an item keeps its kind. */
+  kind?: ItemKind;
   /** Given, the form edits that bill instead of adding a new one. */
   bill?: EditableBill;
   /** Called after a successful save, once the page has been refreshed. */
@@ -40,11 +50,11 @@ function todayIso(): string {
 }
 
 /**
- * Adds a subscription or bill by hand, or edits one (AGENTS.md §3cccc). The
+ * Adds a bill or a subscription by hand, or edits one (AGENTS.md §3cccc, §3eeee). The
  * date is any date the bill is due; later due dates follow from how often it
  * repeats, so there is nothing to keep up to date.
  */
-export function RecurringBillForm({ categories, bill, onDone }: Props) {
+export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: Props) {
   const router = useRouter();
   const idBase = useId();
   const [name, setName] = useState(bill?.name ?? "");
@@ -57,6 +67,8 @@ export function RecurringBillForm({ categories, bill, onDone }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = bill !== undefined;
+  const itemKind: ItemKind = bill?.kind ?? kind;
+  const words = KIND_WORDS[itemKind];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,11 +87,12 @@ export function RecurringBillForm({ categories, bill, onDone }: Props) {
           cadence,
           anchorDate,
           categoryId: categoryId || null,
+          ...(isEdit ? {} : { kind: itemKind }),
         }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.error ?? (isEdit ? "Failed to save the bill" : "Failed to add the bill"));
+        throw new Error(body.error ?? (isEdit ? `Failed to save the ${words.noun}` : `Failed to add the ${words.noun}`));
       }
       if (!isEdit) {
         setName("");
@@ -90,7 +103,7 @@ export function RecurringBillForm({ categories, bill, onDone }: Props) {
       router.refresh();
       onDone?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save the bill");
+      setError(err instanceof Error ? err.message : `Failed to save the ${words.noun}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -109,7 +122,7 @@ export function RecurringBillForm({ categories, bill, onDone }: Props) {
           value={name}
           maxLength={80}
           onChange={(event) => setName(event.target.value)}
-          placeholder="Netflix"
+          placeholder={words.namePlaceholder}
           className={`min-w-[150px] ${FIELD}`}
         />
       </div>
@@ -186,7 +199,7 @@ export function RecurringBillForm({ categories, bill, onDone }: Props) {
         className="uv-btn-press flex items-center gap-2 rounded-md border border-border bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {isSubmitting && <Spinner />}
-        {isSubmitting ? "Saving…" : isEdit ? "Save changes" : "Add subscription or bill"}
+        {isSubmitting ? "Saving…" : isEdit ? "Save changes" : words.addLabel}
       </button>
       {error && (
         <p role="alert" className="w-full text-sm text-negative">
