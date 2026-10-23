@@ -210,6 +210,17 @@ test.describe("rate limiting", () => {
 
     expect(sawTooManyRequests, `never got a 429 across 31 requests (last status: ${lastStatus})`).toBe(true);
   });
+
+  // The burst above used up this user's whole window. Every later test signs in
+  // as the same user, so until the window rolls over a page load in one of them
+  // can get a 429 and fail its "no console errors" check (seen on CI, where the
+  // spending-trends and transaction-splits specs run straight after this file).
+  // Waiting for the next window costs at most a minute.
+  test.afterAll(async () => {
+    test.setTimeout(90_000);
+    const WINDOW_MS = 60_000;
+    await new Promise((resolve) => setTimeout(resolve, WINDOW_MS - (Date.now() % WINDOW_MS) + 500));
+  });
 });
 
 test.describe("stored XSS", () => {
