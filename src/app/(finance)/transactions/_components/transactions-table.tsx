@@ -1,3 +1,5 @@
+"use client";
+
 import { ReportingFlowAmount } from "../../../../components/currency/reporting-currency-provider";
 import type { CurrencyCode } from "../../../../lib/currency";
 import type { Agorot } from "../../../../lib/money";
@@ -75,13 +77,34 @@ function AmountCell({ row }: { row: TransactionRow }) {
   );
 }
 
+const CHECKBOX =
+  "h-4 w-4 rounded border-border bg-elevated accent-[var(--pfw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 export function TransactionsTable({
   rows,
   categories,
+  selectedIds,
+  onToggle,
+  onToggleAll,
 }: {
   rows: readonly TransactionRow[];
   categories: readonly Category[];
+  /** Given with the two handlers below, each row gets a checkbox (AGENTS.md §3hhhh). */
+  selectedIds?: ReadonlySet<string>;
+  onToggle?: (id: string) => void;
+  /** Ticks every shown row, or clears them all. */
+  onToggleAll?: (ids: readonly string[], select: boolean) => void;
 }) {
+  const selectable = selectedIds !== undefined && onToggle !== undefined && onToggleAll !== undefined;
+  const allSelected = selectable && rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
+
+  function handleToggleAll(event: React.ChangeEvent<HTMLInputElement>) {
+    onToggleAll?.(rows.map((row) => row.id), event.target.checked);
+  }
+  function handleToggleRow(event: React.ChangeEvent<HTMLInputElement>) {
+    onToggle?.(event.target.dataset.id as string);
+  }
+
   if (rows.length === 0) {
     return <p className="p-6 text-center text-sm text-muted">No transactions match your filters.</p>;
   }
@@ -92,6 +115,11 @@ export function TransactionsTable({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
+              {selectable && (
+                <th scope="col" className="w-10 px-4 py-2">
+                  <input type="checkbox" checked={allSelected} onChange={handleToggleAll} aria-label="Select all shown transactions" className={CHECKBOX} />
+                </th>
+              )}
               <th scope="col" className="px-4 py-2 font-medium">
                 Date
               </th>
@@ -112,6 +140,18 @@ export function TransactionsTable({
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} data-transaction-id={row.id} className="border-b border-border last:border-0">
+                {selectable && (
+                  <td className="px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(row.id)}
+                      onChange={handleToggleRow}
+                      data-id={row.id}
+                      aria-label={`Select ${row.merchantName ?? row.description}`}
+                      className={CHECKBOX}
+                    />
+                  </td>
+                )}
                 <td className="whitespace-nowrap px-4 py-2 font-tabular-figures tracking-tight text-muted">
                   {row.occurredAt.toISOString().slice(0, 10)}
                 </td>
@@ -128,7 +168,6 @@ export function TransactionsTable({
                 <td className="whitespace-nowrap px-4 py-2 text-right">
                   <span className="inline-flex items-center gap-1">
                     <LedgerHistoryModal transactionId={row.id} label={row.merchantName ?? row.description} />
-              <TransactionRowActions transactionId={row.id} isTransfer={row.isTransfer} />
                     <TransactionRowActions transactionId={row.id} isTransfer={row.isTransfer} />
                   </span>
                 </td>
@@ -142,7 +181,17 @@ export function TransactionsTable({
         {rows.map((row) => (
           <li key={row.id} className="rounded-lg border border-border bg-surface p-4">
             <div className="flex items-start justify-between gap-2">
-              <div>
+              {selectable && (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(row.id)}
+                  onChange={handleToggleRow}
+                  data-id={row.id}
+                  aria-label={`Select ${row.merchantName ?? row.description}`}
+                  className={`mt-1 shrink-0 ${CHECKBOX}`}
+                />
+              )}
+              <div className="min-w-0 flex-1">
                 <p className="font-medium text-fg">{row.merchantName ?? row.description}</p>
                 <p className="font-tabular-figures text-xs tracking-tight text-muted">
                   {row.occurredAt.toISOString().slice(0, 10)}

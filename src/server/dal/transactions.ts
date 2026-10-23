@@ -1059,6 +1059,128 @@ export async function setTransactionTransfer(
   });
 }
 
+/** The most transactions one bulk edit may touch. */
+export const MAX_BULK_TRANSACTIONS = 500;
+
+export type BulkTransactionAction =
+  | { type: "category"; categoryId: string }
+  | { type: "transfer"; isTransfer: boolean }
+  | { type: "delete" }
+  /** Undoes a bulk delete: restores deleted rows by id. */
+  | { type: "restore" };
+
+export type BulkTransactionResult =
+  | {
+      ok: true;
+      /** The ids actually changed, so a caller can offer to undo exactly those. */
+      changedIds: string[];
+      /** Rows divided across categories: one category cannot be set on them, edit the split instead. */
+      skippedSplit: number;
+      /** Rows already the way the action wants them. */
+      unchanged: number;
+      /** Ids that are not the caller's, do not exist, or are not in the state the action needs. Indistinguishable by design (Section 2.2). */
+      notFound: number;
+    }
+  | { ok: false; error: "category_not_found" };
+
+/**
+ * One edit applied to several transactions at once (AGENTS.md §3hhhh), all or
+ * nothing: it runs in a single transaction, so a failure part-way leaves every
+ * row as it was. Each change appends the same ledger commit the single-row
+ * route would, so the tamper-evident history is complete either way.
+ *
+ * The id list is untrusted. Ids that are not the caller's are simply not
+ * found, exactly like ids that do not exist. Setting a category skips split
+ * rows (their categories are edited in the split editor) and does not teach the
+ * merchant vector store, which needs a client-computed embedding per row.
+ */
+export async function bulkEditTransactions(
+  userId: string,
+  ids: readonly string[],
+  action: BulkTransactionAction,
+): Promise<BulkTransactionResult> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0 || unique.length > MAX_BULK_TRANSACTIONS) {
+    throw new RangeError(`A bulk edit takes between 1 and ${MAX_BULK_TRANSACTIONS} transactions`);
+  }
+
+  return withUserScope(
+    userId,
+    async (tx): Promise<BulkTransactionResult> => {
+      const changedIds: string[] = [];
+      let skippedSplit = 0;
+      let unchanged = 0;
+
+      if (action.type === "restore") {
+        const rows = await tx.notableTransaction.findMany({
+          where: { id: { in: unique }, userId, deletedAt: { not: null } },
+          include: { category: true, splits: SPLIT_STATE_SELECT },
+        });
+        for (const row of rows) {
+          await restoreRowInTransaction(tx, userId, row);
+          changedIds.push(row.id);
+        }
+        return { ok: true, changedIds, skippedSplit, unchanged, notFound: unique.length - rows.length };
+      }
+
+      const rows = await tx.notableTransaction.findMany({
+        where: { id: { in: unique }, userId, ...LIVE },
+        include: { category: true, splits: SPLIT_STATE_SELECT },
+      });
+
+      if (action.type === "category") {
+        const category = await tx.category.findFirst({ where: { id: action.categoryId, userId } });
+        if (!category) return { ok: false, error: "category_not_found" };
+        for (const row of rows) {
+          if (row.splits.length > 0) {
+            skippedSplit++;
+            continue;
+          }
+          if (row.categoryId === category.id && !row.needsReview) {
+            unchanged++;
+            continue;
+          }
+          const updated = await tx.notableTransaction.update({
+            where: { id: row.id },
+            data: { categoryId: category.id, needsReview: false },
+          });
+          await appendLedgerCommit(tx, userId, {
+            transactionId: row.id,
+            action: "UPDATE",
+            state: buildLedgerState({ ...updated, categoryName: category.name }),
+          });
+          changedIds.push(row.id);
+        }
+      } else if (action.type === "transfer") {
+        for (const row of rows) {
+          if (row.isTransfer === action.isTransfer) {
+            unchanged++;
+            continue;
+          }
+          await tx.notableTransaction.update({ where: { id: row.id }, data: { isTransfer: action.isTransfer } });
+          changedIds.push(row.id);
+        }
+      } else {
+        const deletedAt = new Date();
+        for (const row of rows) {
+          await tx.notableTransaction.update({ where: { id: row.id }, data: { deletedAt, providerTransactionId: null } });
+          await appendLedgerCommit(tx, userId, {
+            transactionId: row.id,
+            action: "DELETE",
+            // The released dedupe key rides along so a restore can put it back (same as the single-row delete).
+            state: { ...buildLedgerState({ ...row, categoryName: row.category.name }), providerTransactionId: row.providerTransactionId },
+          });
+          changedIds.push(row.id);
+        }
+      }
+
+      return { ok: true, changedIds, skippedSplit, unchanged, notFound: unique.length - rows.length };
+    },
+    // Hundreds of single-row updates plus a ledger commit each legitimately exceed Prisma's 5s default.
+    { timeoutMs: 120_000 },
+  );
+}
+
 export type RuleApplicationChange = {
   transactionId: string;
   occurredAt: Date;
