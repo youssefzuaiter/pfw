@@ -10024,6 +10024,54 @@ checkbox, and a bar appears once any are ticked.
   level security still hides another user's category (the second layer).
 - **No migration.**
 
+## 3jjjj. Bills whose amount is different every time (ad hoc)
+
+A utility bill billed by use has no fixed amount, so a hand-added bill (§3cccc)
+could not be recognised as paid and could not say what it would cost. A bill
+can now be marked "The amount is different every time".
+
+- **`RecurringBill.amountVaries`** (migration
+  `20261023200000_recurring_bill_amount_varies`, `BOOLEAN NOT NULL DEFAULT
+  false`, so every existing bill is unchanged). Set when adding or editing, and
+  an edit can switch it back; `kind` is still fixed at creation. The body field
+  is an optional strict boolean, default false.
+- **Matching is by name and date only** when it is on: `findPayment` and
+  `chargesInPeriod` skip the 40% amount comparison, so a payment of any size
+  settles this cycle's bill, counts in the page's month total and stops Safe to
+  Spend deducting it again.
+- **The expected amount** is `estimateVariableAmount`: the average of the last
+  up to three matching payments in the bill's own currency, dated no later
+  than today, rounded half up to a whole minor unit. With no payment yet it is
+  the typed amount (the form calls it "Typical amount" and says it is only the
+  starting guess). The estimate feeds the radar row, so the page, the cost
+  totals, Safe to Spend, the reminders and the calendar all use the same figure
+  (`expectedNativeAmount`, `estimateBasedOnPayments` on `ManualBillSummary`).
+  The list says "Different every time: the average of its last N payment(s)", or
+  that it is using the typed amount.
+- **Name-only matching is a heuristic with a known risk**: a payment can be
+  taken for a different bill that shares a distinctive word, or an unrelated
+  charge with a similar merchant name. To reduce this, company-name filler
+  words ("company", "corp", "corporation", "limited", "group", "utility",
+  "utilities") are now ignored when matching, for every bill. The fix when a
+  bill is not recognised, or is recognised wrongly, is a more distinctive name.
+- **Verified**: unit tests for the matching, the estimate (fewer than three
+  payments, ordering, rounding, other merchants, income, currencies, future
+  dates, a payment made today) and the radar rows; integration tests against
+  real Postgres (stored and switched back, the validation, the average in the
+  list and the cost total, the typed-amount fallback, Safe to Spend by exactly
+  the estimate and not again once a large payment arrives, a far-off charge in
+  the month total for a varying bill but not a fixed one, the calendar); the
+  form's checkbox, label and request body; an e2e test with an accessibility
+  scan. Six mutations (ignoring the flag in either matcher, averaging every
+  payment, ignoring the estimate in the rows, counting future payments,
+  truncating instead of rounding) were each caught.
+- **Production needs `deploy-migrations.yml`** for
+  `20261023200000_recurring_bill_amount_varies` in the same sitting as the merge
+  (§3eee); the log must list it as applied.
+- **Not built**: a per-month amount typed by hand, an estimate weighted by
+  season (a summer electricity bill will be underestimated by a winter average),
+  or an alert when a payment is far above the estimate.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

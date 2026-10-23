@@ -60,12 +60,52 @@ describe("RecurringBillForm", () => {
     render(
       <RecurringBillForm
         categories={[]}
-        bill={{ id: "b1", kind: "subscription", name: "Netflix", amount: "49.90", currency: "ILS", cadence: "monthly", anchorDate: "2026-10-01", categoryId: null }}
+        bill={{ id: "b1", kind: "subscription", name: "Netflix", amount: "49.90", amountVaries: false, currency: "ILS", cadence: "monthly", anchorDate: "2026-10-01", categoryId: null }}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toMatchObject({ url: "/api/recurring-bills/b1", method: "PATCH" });
     expect(calls[0].body).not.toHaveProperty("kind");
+  });
+
+  it("sends a fixed amount by default, and marks the amount as varying when the box is ticked", async () => {
+    const calls = installFetch();
+    render(<RecurringBillForm categories={[]} kind="bill" />);
+    expect(screen.getByLabelText("Amount")).toBeInTheDocument();
+    expect(screen.getByLabelText("The amount is different every time")).not.toBeChecked();
+    await fillAndSubmit("Save bill");
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].body).toMatchObject({ amountVaries: false });
+  });
+
+  it("asks for a typical amount once the amount varies, and sends that", async () => {
+    const calls = installFetch();
+    render(<RecurringBillForm categories={[]} kind="bill" />);
+    fireEvent.click(screen.getByLabelText("The amount is different every time"));
+    expect(screen.getByLabelText("Typical amount")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Amount")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Electricity" } });
+    fireEvent.change(screen.getByLabelText("Typical amount"), { target: { value: "300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save bill" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].body).toMatchObject({ name: "Electricity", amount: "300", amountVaries: true });
+  });
+
+  it("opens an existing varying bill with the box ticked, and can switch it back to a fixed amount", async () => {
+    const calls = installFetch();
+    render(
+      <RecurringBillForm
+        categories={[]}
+        bill={{ id: "b2", kind: "bill", name: "Water", amount: "80.00", amountVaries: true, currency: "ILS", cadence: "monthly", anchorDate: "2026-10-01", categoryId: null }}
+      />,
+    );
+    const box = screen.getByLabelText("The amount is different every time");
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({ url: "/api/recurring-bills/b2", method: "PATCH" });
+    expect(calls[0].body).toMatchObject({ amountVaries: false });
   });
 });

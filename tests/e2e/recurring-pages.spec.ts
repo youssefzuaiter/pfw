@@ -12,6 +12,7 @@ test.describe.configure({ mode: "serial" });
 
 const SUBSCRIPTION = "E2E Zebracloud Test";
 const BILL = "E2E Electricity Test";
+const VARYING_BILL = "E2E Varying Test";
 
 async function add(page: import("@playwright/test").Page, name: string, addButton: string, saveButton: string) {
   // The form is behind the page's Add button.
@@ -48,6 +49,7 @@ test.afterAll(async ({ browser, baseURL }) => {
   const page = await context.newPage();
   await removeIfPresent(page, "/transactions/subscriptions", SUBSCRIPTION);
   await removeIfPresent(page, "/transactions/bills", BILL);
+  await removeIfPresent(page, "/transactions/bills", VARYING_BILL);
   await context.close();
 });
 
@@ -100,4 +102,23 @@ test("both pages with an item on them pass the accessibility scan", async ({ pag
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
     expect(results.violations, url).toEqual([]);
   }
+});
+
+test("a bill whose amount varies asks for a typical amount, says how it is worked out, and passes the accessibility scan", async ({ page }) => {
+  await page.goto("/transactions/bills");
+  await page.getByRole("button", { name: "+ Add bill", exact: true }).click();
+  await page.getByLabel("The amount is different every time").check();
+  await expect(page.getByLabel("Amount", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Name", { exact: true }).first().fill(VARYING_BILL);
+  await page.getByLabel("Typical amount", { exact: true }).fill("300");
+
+  const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Save bill", exact: true }).click();
+  const row = page.locator("li", { hasText: VARYING_BILL, has: page.getByRole("button", { name: "Delete", exact: true }) });
+  await expect(row).toBeVisible();
+  // No payments yet, so it is the typed amount that is used, and the row says so.
+  await expect(row.getByText(/Different every time/)).toBeVisible();
+  await expect(row.getByText(/about/i).first()).toBeVisible();
 });

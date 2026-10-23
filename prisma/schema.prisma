@@ -1745,6 +1745,11 @@ model RecurringBill {
   nativeAmount BigInt
   currency     Currency @default(ILS)
   cadence      BillCadence
+  /// The charge is different every time (billed by use). Its payments are then
+  /// recognised by name alone, and the amount it is expected to cost is the
+  /// average of its last few real payments; `nativeAmount` is only the typed
+  /// starting figure (AGENTS.md §3jjjj).
+  amountVaries Boolean  @default(false)
   /// Which page it belongs to: the Bills page or the Subscriptions page
   /// (AGENTS.md §3eeee). Fixed when it is created; each page lists only its own.
   kind         RecurringBillKind @default(BILL)

@@ -13,7 +13,10 @@ const CADENCE_LABEL: Record<CadenceValue, string> = {
 };
 
 export type ManualBillItem = EditableBill & {
+  /** The amount it is expected to cost: for a varying bill, the average of its last payments. */
   formattedAmount: string;
+  /** For a varying bill, how many real payments that was averaged from; 0 means it is still the typed amount. */
+  estimateBasedOnPayments: number;
   categoryName: string | null;
   nextDueDate: string | null;
   detectedAs: string | null;
@@ -84,10 +87,19 @@ function ManualBillRow({ item, categories }: { item: ManualBillItem; categories:
           {item.detectedAs && <Badge variant="neutral">Now in your statements</Badge>}
         </p>
         <p className="font-tabular-figures text-sm tracking-tight text-muted">
+          {item.amountVaries && "about "}
           {item.formattedAmount} / {CADENCE_LABEL[item.cadence]}
           {item.categoryName && ` — ${item.categoryName}`}
           {item.nextDueDate && ` — next due ${item.nextDueDate}`}
         </p>
+        {item.amountVaries && (
+          <p className="text-xs text-muted">
+            Different every time:{" "}
+            {item.estimateBasedOnPayments > 0
+              ? `the average of its last ${item.estimateBasedOnPayments} ${item.estimateBasedOnPayments === 1 ? "payment" : "payments"}.`
+              : "using the typical amount you entered until a payment appears in your statements."}
+          </p>
+        )}
         {item.detectedAs && (
           <p className="text-xs text-muted">
             Your statements now show this as &ldquo;{item.detectedAs}&rdquo;, so that one is counted (on the Subscriptions page) and this entry is not, to avoid

@@ -39,6 +39,8 @@ export default async function BillsPage({ searchParams }: { searchParams: Promis
     kind: bill.kind,
     name: bill.name,
     amount: minorUnitsToInputText(bill.nativeAmount),
+    amountVaries: bill.amountVaries,
+    estimateBasedOnPayments: bill.estimateBasedOnPayments,
     currency: bill.currency,
     cadence: bill.cadence,
     anchorDate: bill.anchorDate,

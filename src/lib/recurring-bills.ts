@@ -28,8 +28,15 @@ export type RecurringBillInput = {
   /** Fixed when it is added: the Bills page lists bills, the Subscriptions page lists subscriptions. */
   kind: RecurringBillKind;
   name: string;
-  /** What one charge costs, positive, in minor units of `currency`. */
+  /** What one charge costs, positive, in minor units of `currency`. For a bill whose amount varies, a typical amount: the start until real payments replace it. */
   nativeAmount: number;
+  /**
+   * The charge is different every time (a utility bill billed by use). Its
+   * payments are then recognised by name alone, whatever the amount, and the
+   * amount it is expected to cost is the average of its last few real payments
+   * (AGENTS.md §3jjjj), the typed amount only until there are some.
+   */
+  amountVaries: boolean;
   currency: CurrencyCode;
   cadence: SubscriptionCadence & ("monthly" | "quarterly" | "annual");
   /** A date the bill is or was due (midnight UTC). */
@@ -114,6 +121,14 @@ const GENERIC_WORDS = new Set([
   "store",
   "fee",
   "plan",
+  // Company-name filler: a bill billed by use is matched by name alone, so "Water Company" must not match "Electricity Company".
+  "company",
+  "corp",
+  "corporation",
+  "limited",
+  "group",
+  "utility",
+  "utilities",
 ]);
 
 const MIN_SHARED_WORD_LENGTH = 4;
@@ -169,7 +184,7 @@ const AMOUNT_TOLERANCE = 0.4;
  * has no comparable amount, so only its name and date count.
  */
 export function findPayment(
-  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount">,
+  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount"> & { amountVaries?: boolean },
   due: Date,
   ledger: readonly LedgerExpense[],
 ): LedgerExpense | null {
@@ -181,7 +196,8 @@ export function findPayment(
     const at = row.occurredAt.getTime();
     if (at < from || at >= to) continue;
     if (!namesMatch(bill.name, row.displayName)) continue;
-    if (row.currency === bill.currency) {
+    // A bill billed by use has no amount to compare with: the name and the date are the test.
+    if (!bill.amountVaries && row.currency === bill.currency) {
       const difference = Math.abs(Math.abs(row.nativeAmount) - bill.nativeAmount) / bill.nativeAmount;
       if (difference > AMOUNT_TOLERANCE) continue;
     }
@@ -198,7 +214,7 @@ export function findPayment(
  * September 28 counts in September, not October.
  */
 export function chargesInPeriod(
-  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount">,
+  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount"> & { amountVaries?: boolean },
   ledger: readonly LedgerExpense[],
   from: Date,
   to: Date,
@@ -208,11 +224,43 @@ export function chargesInPeriod(
     const at = row.occurredAt.getTime();
     if (at < from.getTime() || at >= to.getTime()) return false;
     if (!namesMatch(bill.name, row.displayName)) return false;
-    if (row.currency === bill.currency) {
+    if (!bill.amountVaries && row.currency === bill.currency) {
       return Math.abs(Math.abs(row.nativeAmount) - bill.nativeAmount) / bill.nativeAmount <= AMOUNT_TOLERANCE;
     }
     return true;
   });
+}
+
+/** How many of a varying bill's most recent payments make up its expected amount. */
+export const VARIABLE_ESTIMATE_PAYMENTS = 3;
+
+export type AmountEstimate = {
+  /** Positive, minor units of the bill's currency. */
+  nativeAmount: number;
+  /** How many real payments it was averaged from; 0 means the typed amount, not yet replaced. */
+  basedOnPayments: number;
+};
+
+/**
+ * What a bill billed by use is expected to cost: the average of its last few
+ * real payments (the most recent three, by date), rounded to a whole minor
+ * unit, or the typed amount while there are none. Only payments in the bill's
+ * own currency count, since an amount in another currency is not comparable,
+ * and only ones dated no later than today. Pure: the ledger is the caller's.
+ */
+export function estimateVariableAmount(
+  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount">,
+  ledger: readonly LedgerExpense[],
+  asOf: Date,
+): AmountEstimate {
+  const today = startOfUtcDay(asOf).getTime() + MS_PER_DAY;
+  const payments = ledger
+    .filter((row) => row.nativeAmount < 0 && row.currency === bill.currency && row.occurredAt.getTime() < today && namesMatch(bill.name, row.displayName))
+    .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+    .slice(0, VARIABLE_ESTIMATE_PAYMENTS);
+  if (payments.length === 0) return { nativeAmount: bill.nativeAmount, basedOnPayments: 0 };
+  const total = payments.reduce((sum, row) => sum + Math.abs(row.nativeAmount), 0);
+  return { nativeAmount: Math.round(total / payments.length), basedOnPayments: payments.length };
 }
 
 // === Rows for the radar's list ===============================================
@@ -226,6 +274,8 @@ export type DetectedSubscription = {
 export type ManualBillRow = SubscriptionAnalysis & {
   manualBillId: string;
   manualBillKind: RecurringBillKind;
+  /** Set for a bill whose amount varies: what the amount shown was worked out from. */
+  amountEstimate: AmountEstimate | null;
   /** The day of the month the bill is due, so a day the previous month does not have still lands on the right day. */
   dueDay: number;
 };
@@ -267,6 +317,10 @@ export function buildManualBillRows(
       continue;
     }
 
+    // A bill billed by use costs about what its last few payments did; one with a fixed amount, exactly what was typed.
+    const estimate = bill.amountVaries ? estimateVariableAmount(bill, ledger, asOf) : null;
+    const amount = estimate ? estimate.nativeAmount : bill.nativeAmount;
+
     const dueThisMonth = dueDateInMonth(bill, year, month);
     const paid = dueThisMonth ? findPayment(bill, dueThisMonth, ledger) !== null : false;
     const pending = dueThisMonth !== null && !paid;
@@ -281,6 +335,7 @@ export function buildManualBillRows(
     rows.push({
       manualBillId: bill.id,
       manualBillKind: bill.kind,
+      amountEstimate: estimate,
       dueDay: bill.anchorDate.getUTCDate(),
       merchantKey: manualBillKey(bill.id),
       displayName: bill.name,
@@ -288,7 +343,7 @@ export function buildManualBillRows(
       isRecurring: true,
       cadence: bill.cadence,
       occurrenceCount: 0,
-      currentNativeAmount: nativeAmount(-bill.nativeAmount),
+      currentNativeAmount: nativeAmount(-amount),
       firstSeenAt: bill.anchorDate,
       lastSeenAt,
       nextExpectedDate: nextDue,

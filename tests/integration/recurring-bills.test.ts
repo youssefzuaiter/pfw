@@ -36,6 +36,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
   async function addBill(input: Partial<Parameters<typeof createRecurringBill>[1]> = {}) {
     const result = await createRecurringBill(owner.id, {
       kind: "bill",
+      amountVaries: false,
       name: "Gym",
       nativeAmount: 20_000,
       currency: "ILS",
@@ -108,6 +109,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
       expect(await listRecurringBills(owner.id)).toEqual([expect.objectContaining({ id: bill.id, name: "Netflix", nativeAmount: 4_990, cadence: "monthly", categoryId })]);
 
       const updated = await updateRecurringBill(owner.id, bill.id, {
+        amountVaries: false,
         name: "Netflix Premium",
         nativeAmount: 6_990,
         currency: "USD",
@@ -126,7 +128,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
       const bill = await addBill({ name: "Private" });
       expect(await listRecurringBills(stranger.id)).toEqual([]);
       expect(
-        await updateRecurringBill(stranger.id, bill.id, { name: "Hijacked", nativeAmount: 1, currency: "ILS", cadence: "monthly", anchorDate: day("2026-10-01"), categoryId: null }),
+        await updateRecurringBill(stranger.id, bill.id, { name: "Hijacked", amountVaries: false, nativeAmount: 1, currency: "ILS", cadence: "monthly", anchorDate: day("2026-10-01"), categoryId: null }),
       ).toBeNull();
       expect(await deleteRecurringBill(stranger.id, bill.id)).toBe(false);
       expect((await listRecurringBills(owner.id))[0].name).toBe("Private");
@@ -134,7 +136,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
     });
 
     it("refuses a category that is not the caller's, on create and on edit", async () => {
-      const input = { kind: "bill" as const, name: "Gym", nativeAmount: 20_000, currency: "ILS" as const, cadence: "monthly" as const, anchorDate: day("2026-07-25") };
+      const input = { kind: "bill" as const, amountVaries: false, name: "Gym", nativeAmount: 20_000, currency: "ILS" as const, cadence: "monthly" as const, anchorDate: day("2026-07-25") };
       expect(await createRecurringBill(owner.id, { ...input, categoryId: strangerCategoryId })).toEqual({ ok: false, error: "category_not_found" });
       const bill = await addBill();
       expect(await updateRecurringBill(owner.id, bill.id, { ...input, categoryId: strangerCategoryId })).toEqual({ ok: false, error: "category_not_found" });
@@ -228,6 +230,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
     it("an item keeps its kind when edited, and a new one defaults to a bill", async () => {
       const subscription = await addBill({ kind: "subscription", name: "Streamflix Plus" });
       const updated = await updateRecurringBill(owner.id, subscription.id, {
+        amountVaries: false,
         name: "Streamflix Max",
         nativeAmount: 6_000,
         currency: "ILS",
@@ -313,6 +316,77 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
       await removeAllBills();
       await addBill({ name: "Insurance", nativeAmount: 90_000, cadence: "quarterly", anchorDate: day("2026-01-20") });
       expect((await buildSafeToSpendData(owner.id, asOf())).bills).toEqual([expect.objectContaining({ displayName: "Insurance" })]);
+      await removeAllBills();
+    });
+  });
+
+  describe("a bill whose amount varies", () => {
+    it("is stored as varying, and an edit can switch it back", async () => {
+      const bill = await addBill({ name: "Electricity", nativeAmount: 30_000, amountVaries: true });
+      expect((await listRecurringBills(owner.id))[0]).toMatchObject({ id: bill.id, amountVaries: true });
+      const updated = await updateRecurringBill(owner.id, bill.id, {
+        amountVaries: false,
+        name: "Electricity",
+        nativeAmount: 30_000,
+        currency: "ILS",
+        cadence: "monthly",
+        anchorDate: day("2026-07-25"),
+        categoryId: null,
+      });
+      expect(updated).toMatchObject({ ok: true, bill: { amountVaries: false } });
+    });
+
+    it("is off unless asked for, and only a real boolean turns it on", () => {
+      const body = { name: "Water", amount: "30.00", currency: "ILS", cadence: "monthly", anchorDate: "2026-10-01" };
+      expect(parseRecurringBillBody(body)).toMatchObject({ ok: true, data: { amountVaries: false } });
+      expect(parseRecurringBillBody({ ...body, amountVaries: true })).toMatchObject({ ok: true, data: { amountVaries: true } });
+      expect(parseRecurringBillBody({ ...body, amountVaries: "yes" }).ok).toBe(false);
+    });
+
+    it("is listed and counted at the average of its last payments, not the typed amount", async () => {
+      await addBill({ name: "Electricity Company", nativeAmount: 30_000, amountVaries: true, anchorDate: day("2026-07-25") });
+      await charge("ELECTRICITY COMPANY", "2026-08-05", -20_000n);
+      await charge("ELECTRICITY COMPANY", "2026-09-05", -40_000n);
+      const data = await buildSubscriptionRadarData(owner.id, asOf());
+
+      expect(data.manualBills[0]).toMatchObject({ amountVaries: true, expectedNativeAmount: 30_000, estimateBasedOnPayments: 2 });
+      expect(data.manualBills[0].formattedAmount).toContain("300.00");
+      expect(data.billsCashDrag.monthly).toContain("300.00");
+      await removeAllBills();
+    });
+
+    it("falls back to the typed amount while it has no payments", async () => {
+      await addBill({ name: "Electricity Company", nativeAmount: 45_000, amountVaries: true, anchorDate: day("2026-07-25") });
+      const data = await buildSubscriptionRadarData(owner.id, asOf());
+      expect(data.manualBills[0]).toMatchObject({ expectedNativeAmount: 45_000, estimateBasedOnPayments: 0 });
+      await removeAllBills();
+    });
+
+    it("lowers Safe to Spend by the estimate while still to come, and not at all once paid, however big the payment", async () => {
+      await charge("ELECTRICITY COMPANY", "2026-09-05", -20_000n);
+      await charge("ELECTRICITY COMPANY", "2026-08-05", -40_000n);
+      const before = await buildSafeToSpendData(owner.id, asOf());
+      await addBill({ name: "Electricity Company", nativeAmount: 99_999, amountVaries: true, anchorDate: day("2026-07-25") });
+      const pending = await buildSafeToSpendData(owner.id, asOf());
+      expect(Number(before.safeToSpendAgorot) - Number(pending.safeToSpendAgorot)).toBe(30_000);
+
+      // This month's bill arrives at three times the estimate: still recognised as the payment, so not deducted again.
+      await charge("ELECTRICITY COMPANY", "2026-10-10", -90_000n);
+      const paid = await buildSafeToSpendData(owner.id, asOf());
+      expect(paid.bills).toEqual([]);
+      // Cash fell by the 900.00 paid; the 300.00 estimate is no longer deducted on top of it.
+      expect(Number(pending.safeToSpendAgorot) - Number(paid.safeToSpendAgorot)).toBe(60_000);
+      await removeAllBills();
+    });
+
+    it("counts a far-off charge in this month's total only for a varying bill, not a fixed one", async () => {
+      await addBill({ name: "Electricity Company", nativeAmount: 30_000, amountVaries: true });
+      await addBill({ name: "Water Company", nativeAmount: 30_000, amountVaries: false });
+      await charge("ELECTRICITY COMPANY", "2026-10-05", -90_000n);
+      await charge("WATER COMPANY", "2026-10-06", -90_000n);
+      const data = await buildSubscriptionRadarData(owner.id, asOf());
+      expect(data.monthTotals.bills.spentCount).toBe(1);
+      expect(data.monthTotals.bills.spent).toContain("900.00");
       await removeAllBills();
     });
   });
