@@ -18,7 +18,7 @@ import { PRIMARY_NAV_ITEMS } from "../../src/components/nav/nav-items";
 // status colours — and exactly the kind the contrast sweep (§3tt) found
 // failing everywhere else. The demo account's seed gives it a populated
 // mirror, so the audit sees the real page, not the empty state.
-const ROUTES = [...PRIMARY_NAV_ITEMS.map((item) => item.href), "/trading/core", "/review?month=2026-09", "/settings"];
+const ROUTES = [...PRIMARY_NAV_ITEMS.map((item) => item.href), "/trading/core", "/review?month=2026-09", "/settings", "/transactions/subscriptions", "/transactions/bills"];
 
 test.describe("accessibility", () => {
   for (const route of ROUTES) {

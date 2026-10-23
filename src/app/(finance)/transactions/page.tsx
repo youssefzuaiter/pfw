@@ -99,7 +99,13 @@ export default async function TransactionsPage({
             href="/transactions/subscriptions"
             className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted hover:bg-elevated-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            Subscriptions radar →
+            Subscriptions →
+          </Link>
+          <Link
+            href="/transactions/bills"
+            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted hover:bg-elevated-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Bills →
           </Link>
           <Link
             href="/transactions/deleted"

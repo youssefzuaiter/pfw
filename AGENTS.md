@@ -9811,6 +9811,37 @@ You can now type them in, and get a phone reminder before one is due.
   tracked account" flag; production needs `deploy-migrations.yml` for
   `20261022160000_recurring_bills` in the same sitting as the merge (§3eee).
 
+## 3dddd. Subscriptions and bills on separate pages (ad hoc)
+
+Some people do not want the two mixed together. They are now two pages, split
+by SOURCE rather than by type: nothing in the data model changed.
+
+- **`/transactions/subscriptions`** is what the radar found in the statements:
+  the detected list with Mark reviewed / Cancel, price-hike badges, possible
+  forgotten trials, and "Coming up" for detected items. Rows with a
+  `manualBillId` are filtered out of it.
+- **`/transactions/bills`** is what the user added by hand (§3cccc): the add
+  form, the "Added by you" list with edit and delete, and "Coming up" for those
+  bills only. A bill the radar has since detected stays listed here with its
+  "now detected as ..." note; the detected one is counted on the other page.
+- **One cost total on both pages** (`CashDragCard`), because it counts every
+  active recurring charge from both sources; splitting it would understate what
+  leaves the account. Safe to Spend, the reminders and the phone alerts are
+  unchanged.
+- **Tabs**: `RecurringNav` (same markup as the trading pages' switcher) at the
+  top of both pages. The bill form and list moved to `bills/_components/`.
+- **Links**: the Transactions header, the dashboard quick links and the command
+  palette each gained a Bills entry; the radar entries are now just
+  "Subscriptions". The old `/transactions/subscriptions` URL still works.
+- **Verified**: component test for the tab switcher; both pages added to the
+  accessibility audit (59 Playwright tests pass); both pages checked in the
+  browser. No migration, so production needs no `deploy-migrations.yml` run.
+- **Local test note**: the local `pfw_runtime` role has a 20-connection limit
+  (the RLS migration), and the full suite's parallel workers can exceed it,
+  failing different integration files each run with "too many connections".
+  Each passes alone, and `npm run test:integration -- --maxWorkers=2` passes
+  all of them.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
