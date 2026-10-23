@@ -10230,6 +10230,65 @@ could make the "lowest projected balance" too optimistic. It now includes them.
   in does not exist yet, so only expenses are scheduled.
 - **No migration.**
 
+## 3nnnn. Debt repayments found in your transactions (ad hoc)
+
+A debt's repayment that came in as an ordinary transaction (a card or loan
+instalment you never typed into Debts) left the debt looking unpaid: Safe to
+Spend still counted its minimum as due (§3yyy named this as a known limit), and
+the balance never fell. Both are fixed, in two separate ways.
+
+- **Recognising a repayment** (`matchDebtPayments`, `src/lib/debt-payment-matching.ts`,
+  pure): a live expense, not a transfer, whose merchant (or description) matches
+  the debt's name by `namesMatch` (the bill matcher of §3cccc: near-identical, or
+  a shared distinctive word of 4+ letters). A row that fits TWO debts is skipped,
+  never guessed: recording it would lower the wrong balance (two debts at one bank
+  share the bank's name). A debt's balance is what the user entered when they added
+  it, so a repayment dated before that day is already in it and is never a match
+  to record.
+- **Safe to Spend** (`build-safe-to-spend-data.ts`): what a debt was paid this
+  month is the LARGER of the payments recorded on the debt and the matched
+  ledger repayments, never their sum, because a payment recorded from a
+  transaction is in both. This one counts a repayment made earlier this month
+  even before the debt was added (`includeBeforeDebtAdded`): it is cash that has
+  already left, which is what Safe to Spend measures; it just is not offered for
+  recording. If the ledger cannot be read it falls back to the recorded payments.
+- **Recording one** (`applyDebtPaymentMatches`, `POST /api/debts/payment-matches/apply`,
+  `src/server/dal/debt-payment-matches.ts`): the "Payments found in your
+  transactions" panel on `/debts` lists unrecorded matches, all ticked. Recording
+  creates a `DebtPayment` exactly as typing one in does (principal and interest
+  split, balance lowered, or raised under negative amortization), through the
+  same code (`recordDebtPaymentInTransaction`, which `recordDebtPayment` now
+  calls). The request is untrusted: matching runs again in the caller's
+  transaction and only items it still proposes, and that are not recorded, are
+  applied (others skipped); oldest first so each starts from the balance the
+  last left; all or nothing; at most `MAX_DEBT_PAYMENTS_PER_APPLY` (100).
+- **Schema** (migration `20261024100000_debt_payment_transaction_link`):
+  `DebtPayment.transactionId`, nullable, UNIQUE, a foreign key to
+  `NotableTransaction` that sets null if the row goes. At most one payment per
+  transaction, so the same repayment cannot be recorded twice even by a race.
+  Added to `CROSS_TENANT_FOREIGN_KEYS` (account deletion). Existing payments have
+  none and are unchanged.
+- **Verified**: 6 unit tests for the matcher; 9 integration tests against real
+  Postgres (what matches and what does not, an ambiguous row skipped, another
+  user sees none, recording lowers the balance with the link and is never offered
+  or applied twice, a made-up pair or another user's or a repeated one changes
+  nothing, size limits, and four Safe to Spend cases: a ledger repayment credited,
+  one made before the debt was added counted but not offered, a recorded payment
+  not counted twice, a hand-typed payment kept); 4 component tests; an e2e spec on
+  the production build (accessibility scan, record against the seeded mortgage,
+  not offered again) that restores the row, the balance and the payments.
+  Mutation-checked, each caught: a recorded match applied again, sum instead of
+  larger, the ledger ignored, the before-debt rule dropped, the date rule dropped,
+  ambiguity guessed, the link not stored.
+- **Not built**: matching by amount (only names match, so a repayment under an
+  unrelated name still needs the per-debt form or a rule); undoing a recorded
+  payment; foreign-currency repayments (debts are shekels, the row's frozen
+  shekel amount is used).
+- **Production needs `deploy-migrations.yml`** for the new migration in the same
+  sitting as the merge (§3eee). The column is on a table the app already reads,
+  and Prisma selects every column, so until it runs anything that reads debts
+  (the Debts page, net worth, Safe to Spend, the advisor) fails.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
