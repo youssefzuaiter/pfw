@@ -4,7 +4,7 @@ import "server-only";
 import { monthKeyToExclusiveEndDate } from "../../lib/date-month";
 import { computeAvailableToBudget, computeRollingBalance, type MonthlyEnvelopeActivity } from "../../lib/envelope-math";
 import { agorot, type Agorot } from "../../lib/money";
-import { withUserScope } from "../db/with-user-scope";
+import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
 /**
  * Zero-Sum Envelope Budgeting — the ledger-math DAL. Every function
@@ -41,24 +41,27 @@ export type EnvelopeBalance = {
  * push total allocations past this figure.
  */
 export async function getAvailableToBudget(userId: string, month: string): Promise<Agorot> {
-  return withUserScope(userId, async (tx) => {
-    const cutoff = monthKeyToExclusiveEndDate(month);
+  return withUserScope(userId, (tx) => availableToBudgetInTransaction(tx, userId, month));
+}
 
-    const [incomeResult, allocationResult] = await Promise.all([
-      tx.notableTransaction.aggregate({
-        where: { userId, occurredAt: { lt: cutoff }, amount: { gt: 0n }, ...REAL_MONEY },
-        _sum: { amount: true },
-      }),
-      tx.envelopeAllocation.aggregate({
-        where: { userId, month: { lte: month } },
-        _sum: { amountAgorot: true },
-      }),
-    ]);
+/** `getAvailableToBudget` inside a transaction the caller already holds, so a bulk write can check and write as one. */
+export async function availableToBudgetInTransaction(tx: ScopedTransactionClient, userId: string, month: string): Promise<Agorot> {
+  const cutoff = monthKeyToExclusiveEndDate(month);
 
-    const totalIncome = agorot(Number(incomeResult._sum.amount ?? 0n));
-    const totalAllocated = agorot(Number(allocationResult._sum.amountAgorot ?? 0n));
-    return computeAvailableToBudget(totalIncome, totalAllocated);
-  });
+  const [incomeResult, allocationResult] = await Promise.all([
+    tx.notableTransaction.aggregate({
+      where: { userId, occurredAt: { lt: cutoff }, amount: { gt: 0n }, ...REAL_MONEY },
+      _sum: { amount: true },
+    }),
+    tx.envelopeAllocation.aggregate({
+      where: { userId, month: { lte: month } },
+      _sum: { amountAgorot: true },
+    }),
+  ]);
+
+  const totalIncome = agorot(Number(incomeResult._sum.amount ?? 0n));
+  const totalAllocated = agorot(Number(allocationResult._sum.amountAgorot ?? 0n));
+  return computeAvailableToBudget(totalIncome, totalAllocated);
 }
 
 /**
@@ -166,37 +169,46 @@ export async function allocateToEnvelope(
   amountAgorot: Agorot,
   month: string,
 ): Promise<AllocateToEnvelopeResult> {
-  return withUserScope(userId, async (tx) => {
-    const category = await tx.category.findFirst({ where: { id: categoryId, userId } });
-    if (!category) return { ok: false, error: "category_not_found" };
+  return withUserScope(userId, (tx) => allocateInTransaction(tx, userId, categoryId, amountAgorot, month));
+}
 
-    const existing = await tx.envelopeAllocation.findUnique({
-      where: { userId_categoryId_month: { userId, categoryId, month } },
-    });
+/** `allocateToEnvelope` inside a transaction the caller already holds. */
+export async function allocateInTransaction(
+  tx: ScopedTransactionClient,
+  userId: string,
+  categoryId: string,
+  amountAgorot: Agorot,
+  month: string,
+): Promise<AllocateToEnvelopeResult> {
+  const category = await tx.category.findFirst({ where: { id: categoryId, userId } });
+  if (!category) return { ok: false, error: "category_not_found" };
 
-    if (existing) {
-      const updated = await tx.envelopeAllocation.update({
-        where: { id: existing.id },
-        data: { amountAgorot: BigInt(amountAgorot) },
-      });
-      return { ok: true, categoryId, month, amountAgorot: agorot(Number(updated.amountAgorot)) };
-    }
-
-    const priorAllocation = await tx.envelopeAllocation.findFirst({
-      where: { userId, categoryId, month: { lt: month } },
-      orderBy: { month: "desc" },
-      select: { sharedGroupId: true },
-    });
-
-    const created = await tx.envelopeAllocation.create({
-      data: {
-        userId,
-        categoryId,
-        month,
-        amountAgorot: BigInt(amountAgorot),
-        sharedGroupId: priorAllocation?.sharedGroupId ?? null,
-      },
-    });
-    return { ok: true, categoryId, month, amountAgorot: agorot(Number(created.amountAgorot)) };
+  const existing = await tx.envelopeAllocation.findUnique({
+    where: { userId_categoryId_month: { userId, categoryId, month } },
   });
+
+  if (existing) {
+    const updated = await tx.envelopeAllocation.update({
+      where: { id: existing.id },
+      data: { amountAgorot: BigInt(amountAgorot) },
+    });
+    return { ok: true, categoryId, month, amountAgorot: agorot(Number(updated.amountAgorot)) };
+  }
+
+  const priorAllocation = await tx.envelopeAllocation.findFirst({
+    where: { userId, categoryId, month: { lt: month } },
+    orderBy: { month: "desc" },
+    select: { sharedGroupId: true },
+  });
+
+  const created = await tx.envelopeAllocation.create({
+    data: {
+      userId,
+      categoryId,
+      month,
+      amountAgorot: BigInt(amountAgorot),
+      sharedGroupId: priorAllocation?.sharedGroupId ?? null,
+    },
+  });
+  return { ok: true, categoryId, month, amountAgorot: agorot(Number(created.amountAgorot)) };
 }

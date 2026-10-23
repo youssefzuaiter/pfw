@@ -10174,6 +10174,54 @@ marks both.
   import time (it is a separate, reviewed step on purpose).
 - **No migration.**
 
+## 3mmmm. Suggested budgets from past spending (ad hoc)
+
+Setting up envelopes (§3ss) meant typing an amount for every category. The
+Budgets page now offers amounts from what each category actually cost.
+
+- **The rule** (`src/lib/envelope-suggestions.ts`, pure): the average monthly
+  spend over up to `SUGGESTION_MONTHS` (3) complete months before the month
+  being budgeted, rounded UP to the next ₪10 (`ROUND_UP_TO_AGOROT`), so a budget
+  is never set just under what a category usually costs. The average is over the
+  months that have ANY activity, not over all three: months before the user's
+  first transaction are not zero spending, or a new account's suggestions would
+  be far too low. With no months of activity there are no suggestions.
+- **What is counted** (`listEnvelopeSuggestions`, `src/server/dal/envelope-suggestions.ts`):
+  the existing `getSpendByCategoryInRange` per month, so transfers, deleted
+  rows and income are left out and a split row counts in each of its categories
+  (§3xxx). Only envelopes with nothing set for the month are offered (one set to
+  0 counts as open); a suggestion never replaces a budget the user chose.
+- **Applying** (`applyEnvelopeSuggestions`, `POST /api/envelopes/suggestions/apply`):
+  the request is untrusted and checked in ONE transaction with the writes: every
+  category must be the caller's, active and not Uncategorized; none may already
+  have an amount for the month (`already_set`); and the total may not exceed
+  what is available to budget, read in the same transaction
+  (`exceeds_available`, the Zero-Sum Rule of §3ss). All or nothing. Amounts are
+  shekel strings parsed server-side; at most `MAX_SUGGESTION_ITEMS` (100). To
+  do this in one transaction `getAvailableToBudget` and `allocateToEnvelope`
+  gained `availableToBudgetInTransaction` and `allocateInTransaction`; their
+  behaviour is unchanged.
+- **The panel** (`SuggestedBudgetsPanel`, above the envelope list): everything
+  starts ticked, every amount can be edited, and the total is shown against what
+  is available. Apply is off when the total is more than is available or a
+  ticked amount is not above zero. The page still renders if the suggestions
+  cannot be worked out (logged). There is no Undo; each envelope below stays
+  editable.
+- **Verified**: 6 unit tests for the rule; 10 integration tests against real
+  Postgres (the average and rounding, a month with no activity not counted as
+  zero, transfers/deleted/the current month/older months left out, only open
+  envelopes offered, nothing without history, another user sees none; applying
+  sets all, refuses a total above what is available with nothing written, never
+  overwrites, refuses another user's, archived and Uncategorized categories all
+  or nothing, size limits and a repeated category); 5 component tests; an e2e
+  spec on the production build (accessibility scan, set one envelope, Apply off
+  above what is available) that removes what it creates. Mutation-checked, each
+  caught: all envelopes offered, a fixed three-month divisor, no availability
+  check, overwriting, no ownership check, archived categories accepted.
+- **Not built**: suggestions from income or goals, a different window than three
+  months, seasonal adjustment.
+- **No migration.**
+
 ## 3llll. The cash-flow forecast knows your bills (ad hoc)
 
 The dashboard's 60-day cash-flow forecast (§3b) only knew what the recurring

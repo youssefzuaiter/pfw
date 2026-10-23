@@ -3,6 +3,7 @@ import { CreateHouseholdForm } from "../../../components/household/create-househ
 import { HouseholdAdminPanel } from "../../../components/household/household-admin-panel";
 import { HouseholdNav } from "../../../components/household/household-nav";
 import { currentMonthKey } from "../../../lib/date-month";
+import { agorot } from "../../../lib/money";
 import { nativeAmount } from "../../../lib/currency";
 import { convertNativeAmountToAgorot } from "../../../lib/exchange-rate";
 import { getCurrentUser } from "../../../server/auth/current-user";
@@ -16,8 +17,10 @@ import {
   listGroupMembers,
   listMyGroups,
 } from "../../../server/dal/shared-groups";
+import { listEnvelopeSuggestions } from "../../../server/dal/envelope-suggestions";
 import { EnvelopeRow, type EnvelopeRowData } from "./_components/envelope-row";
 import { HouseholdSharedView } from "./_components/household-shared-view";
+import { SuggestedBudgetsPanel } from "./_components/suggested-budgets-panel";
 
 export const instant = false;
 
@@ -110,10 +113,15 @@ export default async function BudgetsPage({
   }
 
   const month = currentMonthKey();
-  const [availableAgorot, envelopeBalances, formatMoney] = await Promise.all([
+  const [availableAgorot, envelopeBalances, formatMoney, suggested] = await Promise.all([
     getAvailableToBudget(user.id, month),
     getEnvelopeBalances(user.id, month),
     getReportingFormatter(user.id),
+    // The suggestions are a convenience: if they cannot be worked out, the page still works.
+    listEnvelopeSuggestions(user.id, month).catch((error) => {
+      console.error("Suggested budgets failed", error);
+      return null;
+    }),
   ]);
 
   const envelopeRows: EnvelopeRowData[] = envelopeBalances
@@ -154,6 +162,20 @@ export default async function BudgetsPage({
           assigned somewhere. Allocations are entered in shekels.
         </p>
       </section>
+
+      {suggested && suggested.suggestions.length > 0 && (
+        <SuggestedBudgetsPanel
+          month={month}
+          monthsUsed={suggested.monthsUsed}
+          availableAgorot={availableAgorot}
+          rows={suggested.suggestions.map((s) => ({
+            categoryId: s.categoryId,
+            categoryName: s.categoryName,
+            averageFormatted: formatMoney(agorot(s.averageAgorot)),
+            suggestedValue: (s.suggestedAgorot / 100).toFixed(2),
+          }))}
+        />
+      )}
 
       <ul className="flex flex-col gap-4">
         {envelopeRows.map((envelope) => (
