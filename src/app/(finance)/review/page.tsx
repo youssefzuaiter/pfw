@@ -71,6 +71,9 @@ export default async function MonthlyReviewPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-xl font-semibold text-fg">Monthly review</h1>
         <nav aria-label="Choose a month" className="flex items-center gap-2">
+          <Link href="/trends" className={linkClass}>
+            Spending trends
+          </Link>
           <Link href={`/review?month=${previousKey}`} className={linkClass}>
             ← {formatMonthKey(previousKey)}
           </Link>
