@@ -73,6 +73,7 @@ export const SWEPT_ROUTES = [
   "PUT /api/transactions/[id]/splits",
   "POST /api/transactions/category-suggestions/apply",
   "POST /api/transactions/import",
+  "POST /api/transactions/bulk",
   "POST /api/transactions/import-batch/[batchId]",
   "POST /api/transactions/import-batch/[batchId]/restore",
   "POST /api/transactions/rules/apply",

@@ -9982,6 +9982,48 @@ page draws bills, and neither draws the other's.
 - **Not built**: a combined calendar of subscriptions and bills together, and
   dragging an item to a new date.
 
+## 3hhhh. Bulk edit on /transactions (ad hoc)
+
+Fixing 70 miscategorised rows used to mean 70 separate edits. Rows now have a
+checkbox, and a bar appears once any are ticked.
+
+- **What it does**: set one category, mark as a transfer, un-mark, or delete, for
+  everything ticked at once. A header checkbox ticks every row shown. Delete asks
+  to confirm, then offers **Undo** for exactly the rows it deleted.
+- **One all-or-nothing request** (`bulkEditTransactions`, `POST
+  /api/transactions/bulk`, at most `MAX_BULK_TRANSACTIONS` = 500 rows): a single
+  transaction, so a failure part-way leaves every row as it was. Actions are
+  `category`, `transfer`, `delete` and `restore`. Each change appends the same
+  ledger commit the single-row route does (UPDATE, DELETE, RESTORE), so the
+  tamper-evident history is complete either way; a bulk delete releases each
+  row's dedupe key exactly as a single delete does, so Undo puts it back.
+- **What it skips, and says so**: split rows (their categories are edited in the
+  split editor, §3xxx), rows already the way the action wants them, and ids that
+  are not the caller's or not in the needed state (all reported as "not found",
+  indistinguishable by design, Section 2.2). The result line says how many of
+  each. A category the caller does not own refuses the whole edit.
+- **Only what is on screen is touched**: the selection is cut down to the rows
+  currently shown, so a search or a refresh cannot leave a hidden row selected and
+  changed by accident.
+- **Not done in bulk**: it does not teach the merchant vector store (§3u), which
+  needs a client-computed embedding per row; set a category on one row for that.
+  Transfers write no ledger commit, same as the single-row toggle.
+- **A bug fixed on the way**: since #29 (split transactions) every desktop row
+  rendered its Delete and Transfer buttons twice. One is gone.
+- **A contrast limit hit again**: red text on the raised grey (`bg-elevated`) is
+  4.29:1 (§3vv). The bar's Delete button sits on the bar's own surface instead.
+- **Verified**: 7 integration tests against real Postgres (category on many rows
+  with the ledger trail and category totals; skipped split and unchanged rows;
+  transfers drop rows out of spending; delete then restore with the commits;
+  another user's rows and category; all-or-nothing; the size limit), 9 component
+  tests (the bar and the selection), and a browser spec on the production build
+  (accessibility scan of the bar, category, transfers, delete with confirmation,
+  Undo) that puts every field back afterwards. Mutation-checked: split rows
+  updated, a missing ledger commit on category change and on delete are each
+  caught. Dropping the category's ownership filter is NOT caught, correctly: row
+  level security still hides another user's category (the second layer).
+- **No migration.**
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

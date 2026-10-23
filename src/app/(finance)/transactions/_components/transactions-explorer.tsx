@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Spinner } from "../../../../components/spinner/spinner";
 import { embedTextWithTimeout } from "../../../../lib/embeddings/local-embedder";
 import { agorot } from "../../../../lib/money";
+import { BulkActionBar } from "./bulk-action-bar";
 import { TransactionsTable, type TransactionRow } from "./transactions-table";
 
 type Category = { id: string; name: string };
@@ -85,6 +86,7 @@ export function TransactionsExplorer({
   const [rows, setRows] = useState<readonly TransactionRow[]>(initialRows);
   const [mode, setMode] = useState<"idle" | "searching" | "semantic" | "substring" | "error">("idle");
   const requestIdRef = useRef(0);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   /** Clears any in-flight search too (bumping the ref invalidates its stale-response check below) — called directly from the input's onChange, not derived via an effect, since resetting on an empty query is a direct response to that one event, not a synchronization concern. */
   function handleQueryChange(value: string) {
@@ -150,6 +152,39 @@ export function TransactionsExplorer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
+  // With no search typed, show the server's rows as they are now: a change saved
+  // on this page (a split, a delete, a transfer) calls router.refresh(), which
+  // updates initialRows, and a copy kept in state would go on showing the old
+  // ones until a reload.
+  const shownRows = query.trim() === "" ? initialRows : rows;
+  // An action only ever touches rows that are on screen: a selection made before
+  // a search or a refresh is cut down to what is still shown, so nothing hidden
+  // can be changed by accident.
+  const selectedShown = shownRows.filter((row) => selected.has(row.id)).map((row) => row.id);
+  const selectedShownSet: ReadonlySet<string> = new Set(selectedShown);
+
+  function handleToggle(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function handleToggleAll(ids: readonly string[], select: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        if (select) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+  function handleClear() {
+    setSelected(new Set());
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <div role="search" className="flex flex-wrap items-center gap-3">
@@ -186,11 +221,14 @@ export function TransactionsExplorer({
         <p className="text-xs text-negative">Search failed — showing your last results. Try again in a moment.</p>
       )}
 
-      {/* With no search typed, show the server's rows as they are now: a
-          change saved on this page (a split, a delete, a transfer) calls
-          router.refresh(), which updates initialRows, and a copy kept in
-          state would go on showing the old ones until a reload. */}
-      <TransactionsTable rows={query.trim() === "" ? initialRows : rows} categories={categories} />
+      <TransactionsTable
+        rows={shownRows}
+        categories={categories}
+        selectedIds={selectedShownSet}
+        onToggle={handleToggle}
+        onToggleAll={handleToggleAll}
+      />
+      <BulkActionBar selectedIds={selectedShown} categories={categories} onClear={handleClear} />
     </div>
   );
 }
