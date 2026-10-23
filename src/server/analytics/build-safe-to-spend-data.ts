@@ -17,6 +17,8 @@ import { currentBalanceAgorot } from "../../lib/account-balance";
 import { listAccountBalanceParts } from "../dal/account-balances";
 import { getEnvelopeBalances } from "../dal/envelopes";
 import { getLatestRateTable } from "../dal/exchange-rates";
+import { matchedPaidInPeriod } from "../../lib/debt-payment-matching";
+import { listDebtPaymentMatches } from "../dal/debt-payment-matches";
 import { listDebts } from "../dal/debts";
 import { listGoals } from "../dal/goals";
 import { getTransactionOccurrencesSince } from "../dal/transactions";
@@ -87,16 +89,29 @@ export const buildSafeToSpendData = cache(async function buildSafeToSpendData(
 
   // A debt's repayment that is already a recurring bill must not be counted twice.
   const billNames = radar.subscriptions.filter((s) => s.isRecurring && s.status !== "CANCELLED").map((s) => s.displayName);
+  // What each debt was paid this month in the ledger (AGENTS.md §3nnnn), whether or
+  // not it has been recorded as a payment. A debt is due its minimum less what
+  // was paid: the larger of the recorded payments and the ledger's, never their
+  // sum, because a payment recorded from a transaction is in both.
+  let ledgerPaidThisMonth = new Map<string, number>();
+  try {
+    const matches = await listDebtPaymentMatches(userId, { from: monthStart, includeBeforeDebtAdded: true });
+    ledgerPaidThisMonth = matchedPaidInPeriod(matches, monthStart, monthEnd);
+  } catch (error) {
+    // Falls back to the recorded payments alone, as before.
+    console.error("Debt payments in the ledger could not be read for Safe to Spend", error);
+  }
   const debtsDue = computeDebtsDue(
-    debts.map((debt) => ({
-      debtId: debt.id,
-      name: debt.name,
-      balanceAgorot: agorot(Number(debt.currentBalance)),
-      minimumPaymentAgorot: agorot(Number(debt.minimumPayment)),
-      paidThisMonthAgorot: agorot(
-        debt.payments.filter((p) => p.paidAt >= monthStart && p.paidAt < monthEnd).reduce((sum, p) => sum + Number(p.amount), 0),
-      ),
-    })),
+    debts.map((debt) => {
+      const recorded = debt.payments.filter((p) => p.paidAt >= monthStart && p.paidAt < monthEnd).reduce((sum, p) => sum + Number(p.amount), 0);
+      return {
+        debtId: debt.id,
+        name: debt.name,
+        balanceAgorot: agorot(Number(debt.currentBalance)),
+        minimumPaymentAgorot: agorot(Number(debt.minimumPayment)),
+        paidThisMonthAgorot: agorot(Math.max(recorded, ledgerPaidThisMonth.get(debt.id) ?? 0)),
+      };
+    }),
     billNames,
   );
 
