@@ -21,6 +21,7 @@ const KIND_TO_DB = { bill: "BILL", subscription: "SUBSCRIPTION" } as const;
 type BillRow = {
   id: string;
   kind: keyof typeof KIND_FROM_DB;
+  amountVaries: boolean;
   name: string;
   nativeAmount: bigint;
   currency: string;
@@ -33,6 +34,7 @@ function toBill(row: BillRow): RecurringBillInput {
   return {
     id: row.id,
     kind: KIND_FROM_DB[row.kind],
+    amountVaries: row.amountVaries,
     name: row.name,
     nativeAmount: Number(row.nativeAmount),
     currency: row.currency as CurrencyCode,
@@ -51,6 +53,8 @@ export async function listRecurringBills(userId: string): Promise<RecurringBillI
 
 export type RecurringBillWrite = {
   name: string;
+  /** Billed by use: different every time. Unlike the kind, this can be changed when editing. */
+  amountVaries: boolean;
   /** Positive, minor units of `currency`. */
   nativeAmount: number;
   currency: CurrencyCode;
@@ -77,6 +81,7 @@ export async function createRecurringBill(userId: string, input: RecurringBillCr
       data: {
         userId,
         kind: KIND_TO_DB[input.kind],
+        amountVaries: input.amountVaries,
         name: input.name,
         nativeAmount: BigInt(input.nativeAmount),
         currency: input.currency,
@@ -103,6 +108,7 @@ export async function updateRecurringBill(
       where: { id },
       data: {
         name: input.name,
+        amountVaries: input.amountVaries,
         nativeAmount: BigInt(input.nativeAmount),
         currency: input.currency,
         cadence: CADENCE_TO_DB[input.cadence],

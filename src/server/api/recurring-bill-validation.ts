@@ -19,6 +19,8 @@ const BodySchema = z.object({
   categoryId: z.string().trim().min(1).max(60).nullable().optional(),
   // Which page it belongs to. Only used when creating; an edit cannot move an item between pages.
   kind: z.enum(["bill", "subscription"]).optional(),
+  // Billed by use: a different amount every time. Absent means a fixed amount.
+  amountVaries: z.boolean().optional(),
 });
 
 export type RecurringBillBodyResult = { ok: true; data: RecurringBillCreate } | { ok: false; message: string; issues?: unknown };
@@ -50,6 +52,7 @@ export function parseRecurringBillBody(raw: unknown, now: Date = new Date()): Re
     ok: true,
     data: {
       kind: parsed.data.kind ?? "bill",
+      amountVaries: parsed.data.amountVaries ?? false,
       name: parsed.data.name,
       nativeAmount: amount,
       currency: parsed.data.currency,

@@ -72,7 +72,8 @@ export async function buildRecurringCalendar(
       key,
       name: bill.name,
       currency: bill.currency,
-      nativeAmount: bill.nativeAmount,
+      // A bill billed by use is expected to cost about what its last payments did.
+      nativeAmount: summary.expectedNativeAmount,
       schedule: { kind: "anchor", cadence: bill.cadence, anchorDate: bill.anchorDate },
       cancelled: summary.status === "CANCELLED",
     });

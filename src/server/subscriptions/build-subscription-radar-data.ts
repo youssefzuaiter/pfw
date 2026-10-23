@@ -46,8 +46,15 @@ export type ManualBillSummary = {
   name: string;
   currency: SubscriptionAnalysis["currency"];
   cadence: "monthly" | "quarterly" | "annual";
-  /** Positive, minor units of `currency`. */
+  /** Positive, minor units of `currency`: what was typed. */
   nativeAmount: number;
+  /** The charge is different every time (billed by use). */
+  amountVaries: boolean;
+  /** What it is expected to cost: for a varying bill, the average of its last few real payments; otherwise the typed amount. */
+  expectedNativeAmount: number;
+  /** For a varying bill, how many real payments the expected amount was averaged from; 0 means it is still the typed amount. */
+  estimateBasedOnPayments: number;
+  /** The expected amount as text. */
   formattedAmount: string;
   /** The date the schedule is anchored on, `YYYY-MM-DD`. */
   anchorDate: string;
@@ -184,6 +191,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     const supersededBy = manual.superseded.find((entry) => entry.bill.id === bill.id)?.detectedAs ?? null;
     // A counted bill always has a row; a superseded one has no schedule of its own any more.
     const next = counted ? counted.nextExpectedDate : null;
+    const expected = counted?.amountEstimate?.nativeAmount ?? bill.nativeAmount;
     return {
       id: bill.id,
       kind: bill.kind,
@@ -191,7 +199,10 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
       currency: bill.currency,
       cadence: bill.cadence,
       nativeAmount: bill.nativeAmount,
-      formattedAmount: formatNativeAmount(nativeAmount(bill.nativeAmount), bill.currency),
+      amountVaries: bill.amountVaries,
+      expectedNativeAmount: expected,
+      estimateBasedOnPayments: counted?.amountEstimate?.basedOnPayments ?? 0,
+      formattedAmount: formatNativeAmount(nativeAmount(expected), bill.currency),
       anchorDate: dayText(bill.anchorDate),
       categoryId: bill.categoryId,
       nextDueDate: next ? dayText(next) : null,

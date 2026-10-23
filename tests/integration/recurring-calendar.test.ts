@@ -25,7 +25,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
   const day = (iso: string) => new Date(`${iso}T00:00:00Z`);
 
   async function addBill(kind: "bill" | "subscription", name: string, nativeAmount: number, anchorDate: string) {
-    const result = await createRecurringBill(owner.id, { kind, name, nativeAmount, currency: "ILS", cadence: "monthly", anchorDate: day(anchorDate), categoryId: null });
+    const result = await createRecurringBill(owner.id, { kind, amountVaries: false, name, nativeAmount, currency: "ILS", cadence: "monthly", anchorDate: day(anchorDate), categoryId: null });
     if (!result.ok) throw new Error("setup failed");
     return result.bill;
   }
@@ -99,6 +99,17 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("rec
     const calendar = await buildRecurringCalendar(stranger.id, "bill", "2026-10", asOf);
     expect(entries(calendar)).toEqual([]);
     expect(entries(await buildRecurringCalendar(stranger.id, "subscription", "2026-10", asOf))).toEqual([]);
+  });
+
+  it("draws a bill whose amount varies at the average of its last payments", async () => {
+    const result = await createRecurringBill(owner.id, { kind: "bill", amountVaries: true, name: "Electricity Company", nativeAmount: 99_999, currency: "ILS", cadence: "monthly", anchorDate: day("2026-07-25"), categoryId: null });
+    if (!result.ok) throw new Error("setup failed");
+    await charge("ELECTRICITY COMPANY", "2026-08-05", -20_000n);
+    await charge("ELECTRICITY COMPANY", "2026-09-05", -40_000n);
+
+    const calendar = await buildRecurringCalendar(owner.id, "bill", "2026-10", asOf);
+    const due = calendar.days.flatMap((d) => d.entries).filter((entry) => entry.state === "due");
+    expect(due).toEqual([expect.objectContaining({ name: "Electricity Company", nativeAmount: 30_000 })]);
   });
 
   it("a month asked for in the address is used only when it is a real month", () => {

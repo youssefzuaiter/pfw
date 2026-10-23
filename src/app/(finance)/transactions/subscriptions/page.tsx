@@ -54,6 +54,8 @@ export default async function SubscriptionsPage({ searchParams }: { searchParams
       kind: bill.kind,
       name: bill.name,
       amount: minorUnitsToInputText(bill.nativeAmount),
+      amountVaries: bill.amountVaries,
+      estimateBasedOnPayments: bill.estimateBasedOnPayments,
       currency: bill.currency,
       cadence: bill.cadence,
       anchorDate: bill.anchorDate,

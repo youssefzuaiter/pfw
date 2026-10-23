@@ -3,6 +3,8 @@ import {
   buildManualBillRows,
   dueDateInMonth,
   findPayment,
+  chargesInPeriod,
+  estimateVariableAmount,
   isManualBillKey,
   minorUnitsToInputText,
   manualBillIdFromKey,
@@ -21,6 +23,7 @@ function bill(overrides: Partial<RecurringBillInput> = {}): RecurringBillInput {
   return {
     id: "b1",
     kind: "subscription",
+    amountVaries: false,
     name: "Netflix",
     nativeAmount: 5_000,
     currency: "ILS",
@@ -151,6 +154,109 @@ describe("findPayment", () => {
     const near = charge("Netflix", "2026-10-12", -5_000);
     const far = charge("Netflix", "2026-10-20", -5_000);
     expect(findPayment(bill(), due, [far, near])).toBe(near);
+  });
+});
+
+describe("a bill whose amount varies", () => {
+  const due = day("2026-10-12");
+  const electricity = (overrides: Partial<RecurringBillInput> = {}) =>
+    bill({ kind: "bill", name: "Electricity", nativeAmount: 30_000, amountVaries: true, ...overrides });
+
+  it("counts a payment of any size as this cycle's, where a fixed bill would not", () => {
+    const big = charge("ELECTRICITY CORP", "2026-10-13", -90_000);
+    expect(findPayment(electricity(), due, [big])).toBe(big);
+    expect(findPayment(electricity({ amountVaries: false }), due, [big])).toBeNull();
+  });
+
+  it("does not mistake one company's bill for another's on a shared word like Company", () => {
+    expect(findPayment(electricity({ name: "Electricity Company" }), due, [charge("WATER COMPANY", "2026-10-12", -30_000)])).toBeNull();
+    expect(findPayment(electricity({ name: "Electricity Company" }), due, [charge("ELECTRICITY COMPANY", "2026-10-12", -30_000)])).not.toBeNull();
+  });
+
+  it("still needs the name and the date to match", () => {
+    expect(findPayment(electricity(), due, [charge("Supermarket", "2026-10-12", -30_000)])).toBeNull();
+    expect(findPayment(electricity(), due, [charge("Electricity", "2026-09-01", -30_000)])).toBeNull();
+    expect(findPayment(electricity(), due, [charge("Electricity", "2026-10-12", 30_000)])).toBeNull();
+  });
+
+  it("counts charges of any size in a period, where a fixed bill counts only near its amount", () => {
+    const rows = [charge("Electricity", "2026-10-05", -12_000), charge("Electricity", "2026-10-20", -95_000)];
+    expect(chargesInPeriod(electricity(), rows, day("2026-10-01"), day("2026-11-01"))).toHaveLength(2);
+    expect(chargesInPeriod(electricity({ amountVaries: false }), rows, day("2026-10-01"), day("2026-11-01"))).toHaveLength(0);
+  });
+
+  describe("estimateVariableAmount", () => {
+    const asOf = new Date("2026-10-16T09:00:00Z");
+
+    it("uses the typed amount until there is a real payment", () => {
+      expect(estimateVariableAmount(electricity(), [], asOf)).toEqual({ nativeAmount: 30_000, basedOnPayments: 0 });
+    });
+
+    it("averages the payments there are when there are fewer than three", () => {
+      const ledger = [charge("Electricity", "2026-09-10", -20_000), charge("Electricity", "2026-08-10", -40_000)];
+      expect(estimateVariableAmount(electricity(), ledger, asOf)).toEqual({ nativeAmount: 30_000, basedOnPayments: 2 });
+    });
+
+    it("averages only the last three, newest first, whatever order the ledger arrives in", () => {
+      const ledger = [
+        charge("Electricity", "2026-05-10", -999_000),
+        charge("Electricity", "2026-09-10", -30_000),
+        charge("Electricity", "2026-07-10", -60_000),
+        charge("Electricity", "2026-08-10", -90_000),
+      ];
+      expect(estimateVariableAmount(electricity(), ledger, asOf)).toEqual({ nativeAmount: 60_000, basedOnPayments: 3 });
+    });
+
+    it("rounds the average to a whole minor unit, half up", () => {
+      const ledger = [charge("Electricity", "2026-09-10", -10_001), charge("Electricity", "2026-08-10", -10_002)];
+      expect(estimateVariableAmount(electricity(), ledger, asOf).nativeAmount).toBe(10_002);
+    });
+
+    it("ignores other merchants, income, other currencies and payments dated after today", () => {
+      const ledger = [
+        charge("Supermarket", "2026-09-10", -80_000),
+        charge("Electricity", "2026-09-11", 80_000),
+        charge("Electricity", "2026-09-12", -80_000, "USD"),
+        charge("Electricity", "2026-10-20", -80_000),
+        charge("Electricity", "2026-09-10", -20_000),
+      ];
+      expect(estimateVariableAmount(electricity(), ledger, asOf)).toEqual({ nativeAmount: 20_000, basedOnPayments: 1 });
+    });
+
+    it("counts a payment made today", () => {
+      const ledger = [charge("Electricity", "2026-10-16", -50_000)];
+      expect(estimateVariableAmount(electricity(), ledger, asOf).basedOnPayments).toBe(1);
+    });
+  });
+
+  describe("in the radar's rows", () => {
+    const asOf = new Date("2026-10-16T09:00:00Z");
+
+    it("is shown, and pending, at the average of its last payments", () => {
+      const ledger = [charge("Electricity", "2026-09-10", -20_000), charge("Electricity", "2026-08-10", -40_000)];
+      const { rows } = buildManualBillRows([electricity({ anchorDate: day("2026-07-25") })], ledger, [], asOf);
+      expect(rows[0].amountEstimate).toEqual({ nativeAmount: 30_000, basedOnPayments: 2 });
+      const pending = findPendingBills(rows.map((row) => ({ ...row, status: "ACTIVE" as const })), asOf, RATES);
+      expect(pending[0].amountEachAgorot).toBe(30_000);
+    });
+
+    it("uses the typed amount while there are no payments", () => {
+      const { rows } = buildManualBillRows([electricity({ nativeAmount: 45_000, anchorDate: day("2026-07-25") })], [], [], asOf);
+      expect(rows[0].amountEstimate).toEqual({ nativeAmount: 45_000, basedOnPayments: 0 });
+      const pending = findPendingBills(rows.map((row) => ({ ...row, status: "ACTIVE" as const })), asOf, RATES);
+      expect(pending[0].amountEachAgorot).toBe(45_000);
+    });
+
+    it("is paid this month by a charge far from the typed amount", () => {
+      const ledger = [charge("Electricity", "2026-10-05", -120_000)];
+      const { rows } = buildManualBillRows([electricity({ anchorDate: day("2026-07-05") })], ledger, [], asOf);
+      expect(findPendingBills(rows.map((row) => ({ ...row, status: "ACTIVE" as const })), asOf, RATES)).toHaveLength(0);
+    });
+
+    it("has no estimate for a bill with a fixed amount", () => {
+      const { rows } = buildManualBillRows([bill()], [], [], asOf);
+      expect(rows[0].amountEstimate).toBeNull();
+    });
   });
 });
 

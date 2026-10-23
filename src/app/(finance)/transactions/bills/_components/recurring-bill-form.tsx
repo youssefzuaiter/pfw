@@ -26,6 +26,8 @@ export type EditableBill = {
   kind: ItemKind;
   name: string;
   amount: string;
+  /** Billed by use: a different amount every time. */
+  amountVaries: boolean;
   currency: CurrencyCode;
   cadence: CadenceValue;
   anchorDate: string;
@@ -59,6 +61,7 @@ export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: P
   const idBase = useId();
   const [name, setName] = useState(bill?.name ?? "");
   const [amount, setAmount] = useState(bill?.amount ?? "");
+  const [amountVaries, setAmountVaries] = useState(bill?.amountVaries ?? false);
   const [currency, setCurrency] = useState<CurrencyCode>(bill?.currency ?? "ILS");
   const [cadence, setCadence] = useState<CadenceValue>(bill?.cadence ?? "monthly");
   const [anchorDate, setAnchorDate] = useState(bill?.anchorDate ?? todayIso());
@@ -87,6 +90,7 @@ export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: P
           cadence,
           anchorDate,
           categoryId: categoryId || null,
+          amountVaries,
           ...(isEdit ? {} : { kind: itemKind }),
         }),
       });
@@ -97,6 +101,7 @@ export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: P
       if (!isEdit) {
         setName("");
         setAmount("");
+        setAmountVaries(false);
         setAnchorDate(todayIso());
         setCategoryId("");
       }
@@ -107,6 +112,10 @@ export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: P
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function handleVariesChange(event: React.ChangeEvent<HTMLInputElement>) {
+    setAmountVaries(event.target.checked);
   }
 
   const id = (field: string) => `${idBase}-${field}`;
@@ -128,7 +137,7 @@ export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: P
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={id("amount")} className="text-xs font-medium text-muted">
-          Amount
+          {amountVaries ? "Typical amount" : "Amount"}
         </label>
         <input
           id={id("amount")}
@@ -188,6 +197,24 @@ export function RecurringBillForm({ categories, kind = "bill", bill, onDone }: P
             </option>
           ))}
         </select>
+      </div>
+      <div className="flex w-full flex-col gap-1">
+        <label htmlFor={id("varies")} className="flex items-center gap-2 text-sm text-fg">
+          <input
+            id={id("varies")}
+            type="checkbox"
+            checked={amountVaries}
+            onChange={handleVariesChange}
+            aria-describedby={id("varies-help")}
+            className="h-4 w-4 rounded border-border bg-elevated accent-[var(--pfw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          The amount is different every time
+        </label>
+        <p id={id("varies-help")} className="text-xs text-muted">
+          For a bill billed by use, like electricity or water. Its payments are recognised by name whatever the amount, and
+          what it is expected to cost becomes the average of its last three payments. The typical amount is only the
+          starting guess.
+        </p>
       </div>
       <p id={id("date-help")} className="w-full text-xs text-muted">
         Any date it is or was due: later dates follow from how often it repeats. A category lets Safe to Spend see that
