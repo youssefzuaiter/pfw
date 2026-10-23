@@ -9839,11 +9839,12 @@ by SOURCE rather than by type: nothing in the data model changed.
 - **Verified**: component test for the tab switcher; both pages added to the
   accessibility audit (59 Playwright tests pass); both pages checked in the
   browser. No migration, so production needs no `deploy-migrations.yml` run.
-- **Local test note**: the local `pfw_runtime` role has a 20-connection limit
-  (the RLS migration), and the full suite's parallel workers can exceed it,
-  failing different integration files each run with "too many connections".
-  Each passes alone, and `npm run test:integration -- --maxWorkers=2` passes
-  all of them.
+- **Test note**: the `pfw_runtime` role is limited to 20 connections (the RLS
+  migration) and every integration test file opens its own pools, so more than
+  two files at once intermittently failed a random file with "too many
+  connections", locally and in CI (it blocked PR #40). `vitest.config.mts` now
+  sets `maxWorkers: 2`, so plain `npm run test` is stable: three full runs in a
+  row passed.
 
 ## 3eeee. Independent Subscriptions and Bills pages (ad hoc)
 

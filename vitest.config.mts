@@ -22,6 +22,12 @@ export default defineConfig({
     },
   },
   test: {
+    // At most two test files run at once. The database role the app connects as
+    // is limited to 20 connections (the RLS migration), and every integration
+    // file opens its own pools, so more than two at a time intermittently fails
+    // a random file with "too many connections for role pfw_runtime", locally
+    // and in CI. Two files fit; the suite is only slightly slower.
+    maxWorkers: 2,
     projects: [
       {
         extends: true,
