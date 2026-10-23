@@ -133,6 +133,7 @@ export default async function DashboardPage() {
         <CashFlowChart
           days={data.cashFlowForecast.days.map((d) => ({ date: d.date, balance: d.projectedBalance }))}
           minimum={data.cashFlowForecast.minimum}
+          bills={data.forecastBills}
         />
       </section>
 

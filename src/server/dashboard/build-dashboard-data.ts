@@ -6,6 +6,8 @@ import type { GoalPaceInput } from "../../lib/insights/goal-pace";
 import { generateInsights } from "../../lib/insights/generate-insights";
 import { agorot, multiplyAgorot, type Agorot } from "../../lib/money";
 import { findRecurringMerchants } from "../../lib/recurring-detection";
+import { isChargeOf } from "../../lib/recurring-bills";
+import { buildSubscriptionRadarData } from "../subscriptions/build-subscription-radar-data";
 import { getEnvelopeBalances } from "../dal/envelopes";
 import { listCategories } from "../dal/categories";
 import { listGoals } from "../dal/goals";
@@ -54,7 +56,8 @@ function daysBefore(date: Date, days: number): Date {
  * user's cached financial data with another if a cache key were ever
  * scoped wrong. Nothing here is safe to cache *across* requests.
  */
-export const buildDashboardData = cache(async (userId: string, now: Date = new Date()) => {
+export const buildDashboardData = cache(async (userId: string, nowOverride?: Date) => {
+  const now = nowOverride ?? new Date();
   const thisMonthStart = startOfMonthUtc(now);
   const nextMonthStart = startOfMonthUtc(monthsBeforeUtc(now, -1));
   const incomeExpenseSince = monthsBeforeUtc(now, INCOME_EXPENSE_HISTORY_MONTHS);
@@ -173,9 +176,29 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
       lastOccurredAt: lastOccurrenceByMerchant.get(r.merchantKey) ?? now,
     }));
 
+  // Bills typed in (AGENTS.md §3llll): their charges still to come go on their
+  // due dates. The radar has already left out a bill that statements show is a
+  // detected subscription (so the recurring detection above projects it and
+  // nothing is counted twice), and a bill's own past charges are taken out of
+  // the flat daily rate below for the same reason.
+  let typedBills: Awaited<ReturnType<typeof buildSubscriptionRadarData>>["forecast"] = { bills: [], events: [] };
+  try {
+    // Without a date of its own, share the radar's per-request result with the other cards on the page.
+    typedBills = (await (nowOverride ? buildSubscriptionRadarData(userId, nowOverride) : buildSubscriptionRadarData(userId))).forecast;
+  } catch (error) {
+    // The forecast worked without them before; a failure here must not take the dashboard down.
+    console.error("The bills could not be added to the cash-flow forecast", error);
+  }
+  const countedBills = typedBills.bills;
+  const scheduledEvents = typedBills.events.map((event) => ({ merchantKey: event.merchantKey, date: event.date, amount: agorot(-Number(event.amountAgorot)) }));
+  const isTypedBillCharge = (o: (typeof occurrences)[number]) =>
+    countedBills.some((bill) =>
+      isChargeOf(bill, { displayName: o.displayName, currency: o.currency, nativeAmount: Number(o.nativeAmount), occurredAt: o.occurredAt }),
+    );
+
   const recurringMerchantKeys = new Set(recurringProjections.map((p) => p.merchantKey));
   const discretionaryAmounts: Agorot[] = occurrences
-    .filter((o) => o.amount < 0n && !recurringMerchantKeys.has(o.merchantKey))
+    .filter((o) => o.amount < 0n && !recurringMerchantKeys.has(o.merchantKey) && !isTypedBillCharge(o))
     .map((o) => agorot(Number(o.amount)));
   const averageDailyDiscretionarySpend =
     discretionaryAmounts.length > 0
@@ -186,6 +209,7 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
     startingBalance: netWorth.breakdown.bankAccounts,
     startDate: now,
     recurringItems: recurringProjections,
+    scheduledEvents,
     averageDailyDiscretionarySpend,
   });
 
@@ -229,6 +253,8 @@ export const buildDashboardData = cache(async (userId: string, now: Date = new D
       netWorth: agorot(Number(snap.netWorthAgorot)),
     })),
     cashFlowForecast,
+    /** How many charges from the bills typed in the forecast includes, and what they come to (a positive amount). */
+    forecastBills: { count: scheduledEvents.length, totalAgorot: scheduledEvents.reduce((sum, event) => sum - event.amount, 0) },
     categorySpendBreakdown,
     /** Per month, in the reporting currency's minor units: each transaction converted on its own day, then added. */
     incomeExpenseHistory: incomeExpenseHistory.map((m) => ({

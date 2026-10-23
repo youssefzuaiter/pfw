@@ -116,6 +116,41 @@ describe("buildCashFlowForecast()", () => {
   });
 });
 
+describe("buildCashFlowForecast() with scheduled events", () => {
+  const base = { startingBalance: agorot(100_000), startDate: date("2026-10-16T09:00:00Z"), recurringItems: [], averageDailyDiscretionarySpend: agorot(0) };
+
+  it("places a scheduled charge on its own day and keeps the balance down afterwards", () => {
+    const forecast = buildCashFlowForecast({ ...base, scheduledEvents: [{ merchantKey: "manual:a", amount: agorot(-30_000), date: date("2026-10-25T00:00:00Z") }] });
+    const day = forecast.days.find((d) => d.date.toISOString().startsWith("2026-10-25"))!;
+    expect(day.events).toEqual([{ merchantKey: "manual:a", amount: -30_000 }]);
+    expect(day.projectedBalance).toBe(70_000);
+    expect(forecast.endingBalance).toBe(70_000);
+    expect(forecast.days.find((d) => d.date.toISOString().startsWith("2026-10-24"))!.projectedBalance).toBe(100_000);
+  });
+
+  it("ignores a charge dated today or before, or beyond the window", () => {
+    const forecast = buildCashFlowForecast({
+      ...base,
+      scheduledEvents: [
+        { merchantKey: "x", amount: agorot(-1_000), date: date("2026-10-16T00:00:00Z") },
+        { merchantKey: "y", amount: agorot(-1_000), date: date("2026-10-01T00:00:00Z") },
+        { merchantKey: "z", amount: agorot(-1_000), date: date("2026-12-16T00:00:00Z") },
+      ],
+    });
+    expect(forecast.endingBalance).toBe(100_000);
+  });
+
+  it("includes a charge on the last day of the window, and adds to recurring items and the daily rate", () => {
+    const forecast = buildCashFlowForecast({
+      ...base,
+      horizonDays: 10,
+      averageDailyDiscretionarySpend: agorot(-100),
+      scheduledEvents: [{ merchantKey: "last", amount: agorot(-5_000), date: date("2026-10-26T00:00:00Z") }],
+    });
+    expect(forecast.endingBalance).toBe(100_000 - 5_000 - 10 * 100);
+  });
+});
+
 describe("estimateAverageDailyDiscretionarySpend()", () => {
   it("divides the total by the historical window", () => {
     expect(estimateAverageDailyDiscretionarySpend([agorot(-1_000), agorot(-2_000)], 30)).toBe(-100);

@@ -220,15 +220,28 @@ export function chargesInPeriod(
   to: Date,
 ): LedgerExpense[] {
   return ledger.filter((row) => {
-    if (row.nativeAmount >= 0) return false;
     const at = row.occurredAt.getTime();
     if (at < from.getTime() || at >= to.getTime()) return false;
-    if (!namesMatch(bill.name, row.displayName)) return false;
-    if (!bill.amountVaries && row.currency === bill.currency) {
-      return Math.abs(Math.abs(row.nativeAmount) - bill.nativeAmount) / bill.nativeAmount <= AMOUNT_TOLERANCE;
-    }
-    return true;
+    return isChargeOf(bill, row);
   });
+}
+
+/**
+ * Whether one ledger row is a charge of this bill, ignoring when: an expense
+ * with a matching name and, for a bill with a fixed amount in the row's own
+ * currency, an amount within a price change of it. The same test
+ * `findPayment` and `chargesInPeriod` use.
+ */
+export function isChargeOf(
+  bill: Pick<RecurringBillInput, "name" | "currency" | "nativeAmount"> & { amountVaries?: boolean },
+  row: LedgerExpense,
+): boolean {
+  if (row.nativeAmount >= 0) return false;
+  if (!namesMatch(bill.name, row.displayName)) return false;
+  if (!bill.amountVaries && row.currency === bill.currency) {
+    return Math.abs(Math.abs(row.nativeAmount) - bill.nativeAmount) / bill.nativeAmount <= AMOUNT_TOLERANCE;
+  }
+  return true;
 }
 
 /** How many of a varying bill's most recent payments make up its expected amount. */
@@ -261,6 +274,71 @@ export function estimateVariableAmount(
   if (payments.length === 0) return { nativeAmount: bill.nativeAmount, basedOnPayments: 0 };
   const total = payments.reduce((sum, row) => sum + Math.abs(row.nativeAmount), 0);
   return { nativeAmount: Math.round(total / payments.length), basedOnPayments: payments.length };
+}
+
+// === Bills still to come, for the cash-flow forecast ========================
+
+export type ManualBillEvent = {
+  billId: string;
+  name: string;
+  /** The day the charge is expected: its due date, or tomorrow for one due today or overdue. */
+  date: Date;
+  /** Positive, minor units of `currency`. */
+  nativeAmount: number;
+  currency: CurrencyCode;
+};
+
+/** How many days ahead the forecast looks. */
+export const FORECAST_HORIZON_DAYS = 60;
+
+/**
+ * The charges of the bills typed in that are still to come inside the forecast
+ * window (AGENTS.md §3llll): each bill's due dates after today, a bill due
+ * today or overdue this month and not yet paid (placed tomorrow, like Safe to
+ * Spend counts it), at the amount it is expected to cost. A due date already
+ * paid, by `findPayment`'s test, is left out, since the money has left and is
+ * in the balance the forecast starts from. Pure: the caller supplies the bills
+ * to count (not cancelled, not taken over by a detected subscription).
+ */
+export function projectManualBillEvents(
+  bills: readonly RecurringBillInput[],
+  ledger: readonly LedgerExpense[],
+  asOf: Date,
+  horizonDays: number = FORECAST_HORIZON_DAYS,
+): ManualBillEvent[] {
+  const today = startOfUtcDay(asOf);
+  const tomorrow = new Date(today.getTime() + MS_PER_DAY);
+  const end = new Date(today.getTime() + horizonDays * MS_PER_DAY);
+
+  const events: ManualBillEvent[] = [];
+  for (const bill of bills) {
+    const expected = bill.amountVaries ? estimateVariableAmount(bill, ledger, asOf).nativeAmount : bill.nativeAmount;
+    if (expected <= 0) continue;
+
+    // Every calendar month from this one to the one the window ends in.
+    let year = today.getUTCFullYear();
+    let month = today.getUTCMonth();
+    const lastYear = end.getUTCFullYear();
+    const lastMonth = end.getUTCMonth();
+    while (year < lastYear || (year === lastYear && month <= lastMonth)) {
+      const due = dueDateInMonth(bill, year, month);
+      if (due && due.getTime() <= end.getTime() && findPayment(bill, due, ledger) === null) {
+        events.push({
+          billId: bill.id,
+          name: bill.name,
+          date: due.getTime() > today.getTime() ? due : tomorrow,
+          nativeAmount: expected,
+          currency: bill.currency,
+        });
+      }
+      month++;
+      if (month > 11) {
+        month = 0;
+        year++;
+      }
+    }
+  }
+  return events.sort((a, b) => a.date.getTime() - b.date.getTime() || a.billId.localeCompare(b.billId));
 }
 
 // === Rows for the radar's list ===============================================
