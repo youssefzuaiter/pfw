@@ -10174,6 +10174,62 @@ marks both.
   import time (it is a separate, reviewed step on purpose).
 - **No migration.**
 
+## 3llll. The cash-flow forecast knows your bills (ad hoc)
+
+The dashboard's 60-day cash-flow forecast (§3b) only knew what the recurring
+detection had found in past statements, so a bill or subscription you typed in
+(§3cccc) was missing until its first charge landed, and a new or yearly bill
+could make the "lowest projected balance" too optimistic. It now includes them.
+
+- **What is added** (`projectManualBillEvents`, `src/lib/recurring-bills.ts`,
+  pure): each counted bill's due dates still to come in the window, on those
+  dates, at the amount it is expected to cost (a bill billed by use is at the
+  average of its last payments, §3jjjj). A due date already paid, by
+  `findPayment`'s test, is left out: that money has left and is in the balance
+  the forecast starts from. A bill due today, or overdue this month and unpaid,
+  is placed tomorrow, the same "late is not paid" rule Safe to Spend uses.
+  The window is `FORECAST_HORIZON_DAYS` (60); its last day is included.
+- **Which bills count** (`buildSubscriptionRadarData(...).forecast`): not
+  cancelled, and not taken over by a detected subscription (the radar already
+  leaves those out of its list). Charges are converted to shekels at the latest
+  rate, like every live figure. A failure to load them is logged and the
+  forecast falls back to what it had, so the dashboard cannot be taken down by
+  this.
+- **Not counted twice**: (1) a bill the statements show is a detected
+  subscription is left to the recurring detection (the radar's own check; the
+  old engine's detections are a subset of the radar's, so no second check is
+  needed); (2) the bill's own past charges are taken out of the flat daily
+  rate (`isChargeOf`, the name and amount test, no date), otherwise a bill
+  paid last month would appear once as history in the daily average and again
+  on its due date.
+- **Engine**: `buildCashFlowForecast` gained optional `scheduledEvents` (a
+  merchant key, a signed amount and a date), placed exactly on their day; a
+  date today, before, or beyond the window is ignored. The existing
+  `recurringItems` (projected from a past interval) are unchanged.
+- **Shown**: under the chart, "Includes N charges from the bills you added,
+  ₪X in all", only when there are some (`forecastBills` on the dashboard data).
+  `buildDashboardData(userId, now?)` passes an explicit `now` through to the
+  radar (for tests); without one it shares the radar's per-request result with
+  the other dashboard cards.
+- **Verified**: unit tests for `projectManualBillEvents` (window ends, paid,
+  due today and overdue, cadences, the 31st, varying amounts, currency and
+  ordering), `isChargeOf` and the engine's scheduled events; 6 integration
+  tests against real Postgres through `buildDashboardData` (charges on their
+  due dates and the balance falling on the day, a paid due date and a cancelled
+  bill left out, the daily rate not double counting a bill's past charges while
+  an ordinary expense still counts, a detected subscription not counted twice,
+  a varying bill at its expected amount, another user's bills not included);
+  component tests for the caption. Mutation-checked, each caught: the past
+  charges left in the daily rate, a paid due date not skipped, the varying
+  estimate ignored, a cancelled bill counted, a taken-over bill counted. In the
+  browser on the demo account, a temporary bill showed "Includes 2 charges ...
+  ₪3,000.00 in all" and was removed.
+- **Not built**: weekly bills (cadences are still monthly, quarterly, yearly);
+  the second forecast on the dashboard (the 30-day cone, §3dd) is a separate
+  model trained on past cash flow and does not use the bills; income you type
+  in does not exist yet, so only expenses are scheduled.
+- **No migration.**
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

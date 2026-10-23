@@ -70,11 +70,24 @@ function projectOccurrenceDates(
   return dates;
 }
 
+/** A charge expected on one known date, such as a bill typed in with its due date. */
+export type ScheduledForecastEvent = {
+  merchantKey: string;
+  /** Signed: negative for a bill. */
+  amount: Agorot;
+  date: Date;
+};
+
 export type CashFlowForecastInput = {
   startingBalance: Agorot;
   startDate: Date;
   horizonDays?: number;
   recurringItems: readonly RecurringProjection[];
+  /**
+   * Charges on known dates, placed exactly there rather than projected from a
+   * past interval (AGENTS.md §3llll). A date outside the window is ignored.
+   */
+  scheduledEvents?: readonly ScheduledForecastEvent[];
   /** Signed, typically negative — the average daily net effect of everything that ISN'T a projected recurring item. */
   averageDailyDiscretionarySpend: Agorot;
 };
@@ -99,6 +112,14 @@ export function buildCashFlowForecast(input: CashFlowForecastInput): CashFlowFor
       existing.push({ merchantKey: item.merchantKey, amount: item.amount });
       eventsByDayOffset.set(dayOffset, existing);
     }
+  }
+
+  for (const event of input.scheduledEvents ?? []) {
+    const dayOffset = Math.round((truncateToDate(event.date).getTime() - windowStart.getTime()) / DAY_MS);
+    if (dayOffset < 1 || dayOffset > horizonDays) continue;
+    const existing = eventsByDayOffset.get(dayOffset) ?? [];
+    existing.push({ merchantKey: event.merchantKey, amount: event.amount });
+    eventsByDayOffset.set(dayOffset, existing);
   }
 
   const days: ForecastDay[] = [];

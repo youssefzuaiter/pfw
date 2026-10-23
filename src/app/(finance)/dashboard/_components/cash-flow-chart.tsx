@@ -20,7 +20,16 @@ function ForecastTooltip({ active, payload, label }: { active?: boolean; payload
   );
 }
 
-export function CashFlowChart({ days, minimum }: { days: readonly ForecastPoint[]; minimum: Minimum }) {
+export function CashFlowChart({
+  days,
+  minimum,
+  bills,
+}: {
+  days: readonly ForecastPoint[];
+  minimum: Minimum;
+  /** The charges from the bills typed in that the forecast includes. */
+  bills?: { count: number; totalAgorot: number };
+}) {
   const money = useReportingMoney();
   const data = days.map((d) => ({ dateLabel: d.date.toISOString().slice(5, 10), dateKey: d.date.getTime(), balance: d.balance }));
   const minimumPoint = data.find((d) => d.dateKey === minimum.date.getTime());
@@ -60,6 +69,12 @@ export function CashFlowChart({ days, minimum }: { days: readonly ForecastPoint[
         </span>{" "}
         on {minimum.date.toISOString().slice(0, 10)}
       </p>
+      {bills && bills.count > 0 && (
+        <p className="mt-1 text-xs text-muted">
+          Includes {bills.count} {bills.count === 1 ? "charge" : "charges"} from the bills you added,{" "}
+          <span className="font-tabular-figures tracking-tight">{money.format(agorot(bills.totalAgorot))}</span> in all.
+        </p>
+      )}
     </div>
   );
 }

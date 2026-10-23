@@ -5,6 +5,8 @@ import {
   findPayment,
   chargesInPeriod,
   estimateVariableAmount,
+  isChargeOf,
+  projectManualBillEvents,
   isManualBillKey,
   minorUnitsToInputText,
   manualBillIdFromKey,
@@ -364,5 +366,81 @@ describe("minorUnitsToInputText", () => {
     expect(minorUnitsToInputText(5)).toBe("0.05");
     expect(minorUnitsToInputText(100)).toBe("1.00");
     expect(minorUnitsToInputText(123_456_789)).toBe("1234567.89");
+  });
+});
+
+describe("isChargeOf", () => {
+  it("is the name and amount test, with no date", () => {
+    expect(isChargeOf(bill(), charge("NETFLIX.COM", "2020-01-01", -5_000))).toBe(true);
+    expect(isChargeOf(bill(), charge("Supermarket", "2026-10-01", -5_000))).toBe(false);
+    expect(isChargeOf(bill(), charge("Netflix", "2026-10-01", -50_000))).toBe(false);
+    expect(isChargeOf(bill(), charge("Netflix", "2026-10-01", 5_000))).toBe(false);
+  });
+
+  it("skips the amount for a varying bill", () => {
+    expect(isChargeOf(bill({ amountVaries: true }), charge("Netflix", "2026-10-01", -50_000))).toBe(true);
+  });
+});
+
+describe("projectManualBillEvents", () => {
+  const asOf = new Date("2026-10-16T09:00:00Z");
+  const names = (events: { name: string; date: Date }[]) => events.map((e) => `${e.name}@${e.date.toISOString().slice(0, 10)}`);
+
+  it("lists each due date still to come in the window", () => {
+    const events = projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-07-25") })], [], asOf);
+    expect(names(events)).toEqual(["Gym@2026-10-25", "Gym@2026-11-25"]);
+    expect(events.every((e) => e.nativeAmount === 5_000 && e.currency === "ILS")).toBe(true);
+  });
+
+  it("leaves out a due date already paid", () => {
+    const ledger = [charge("GYM", "2026-10-20", -5_000)];
+    expect(names(projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-07-25") })], ledger, asOf))).toEqual(["Gym@2026-11-25"]);
+  });
+
+  it("places a bill due earlier this month and not paid on tomorrow, and one that is paid nowhere", () => {
+    const events = projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-07-05") })], [], asOf);
+    expect(names(events)).toEqual(["Gym@2026-10-17", "Gym@2026-11-05", "Gym@2026-12-05"]);
+    const paid = [charge("GYM", "2026-10-05", -5_000)];
+    expect(names(projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-07-05") })], paid, asOf))).toEqual(["Gym@2026-11-05", "Gym@2026-12-05"]);
+  });
+
+  it("places a bill due today and not yet paid on tomorrow", () => {
+    expect(names(projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-07-16") })], [], asOf))[0]).toBe("Gym@2026-10-17");
+  });
+
+  it("keeps to the window: the last day is in, the day after is out", () => {
+    const end = projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-12-15") })], [], asOf);
+    expect(names(end)).toEqual(["Gym@2026-12-15"]);
+    expect(projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-12-16") })], [], asOf)).toEqual([]);
+    expect(projectManualBillEvents([bill({ name: "Gym", anchorDate: day("2026-12-15") })], [], asOf, 59)).toEqual([]);
+  });
+
+  it("follows the cadence: a quarterly bill only in its months, a yearly one only in its month", () => {
+    // Jan, Apr, Jul, Oct: October's 20th is still ahead, January is outside the window.
+    expect(names(projectManualBillEvents([bill({ name: "Insurance", cadence: "quarterly", anchorDate: day("2026-01-20") })], [], asOf))).toEqual(["Insurance@2026-10-20"]);
+    expect(names(projectManualBillEvents([bill({ name: "Insurance", cadence: "annual", anchorDate: day("2025-11-20") })], [], asOf))).toEqual(["Insurance@2026-11-20"]);
+    expect(projectManualBillEvents([bill({ name: "Insurance", cadence: "annual", anchorDate: day("2025-03-20") })], [], asOf)).toEqual([]);
+  });
+
+  it("shortens the 31st to the last day of a short month, and starts at the anchor month", () => {
+    expect(names(projectManualBillEvents([bill({ name: "Rent", anchorDate: day("2026-08-31") })], [], new Date("2027-02-10T00:00:00Z"))).slice(0, 1)).toEqual(["Rent@2027-02-28"]);
+    expect(projectManualBillEvents([bill({ name: "Rent", anchorDate: day("2027-03-01") })], [], asOf)).toEqual([]);
+  });
+
+  it("uses the expected amount for a bill that varies, and the typed one until there are payments", () => {
+    const electricity = bill({ name: "Electricity", kind: "bill", amountVaries: true, nativeAmount: 99_999, anchorDate: day("2026-07-25") });
+    expect(projectManualBillEvents([electricity], [], asOf)[0].nativeAmount).toBe(99_999);
+    const ledger = [charge("Electricity", "2026-09-05", -20_000), charge("Electricity", "2026-08-05", -40_000)];
+    expect(projectManualBillEvents([electricity], ledger, asOf)[0].nativeAmount).toBe(30_000);
+  });
+
+  it("keeps the bill's own currency and orders events by date", () => {
+    const events = projectManualBillEvents(
+      [bill({ id: "b2", name: "Claude", currency: "USD", nativeAmount: 2_000, anchorDate: day("2026-07-18") }), bill({ id: "b1", name: "Gym", anchorDate: day("2026-07-25") })],
+      [],
+      asOf,
+    );
+    expect(events[0]).toMatchObject({ name: "Claude", currency: "USD", nativeAmount: 2_000 });
+    expect(events.map((e) => e.date.getTime())).toEqual([...events.map((e) => e.date.getTime())].sort((a, b) => a - b));
   });
 });

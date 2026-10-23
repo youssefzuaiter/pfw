@@ -13,7 +13,15 @@ import {
   type SubscriptionAnalysis,
   type SubscriptionOccurrence,
 } from "../../lib/subscription-radar";
-import { buildManualBillRows, chargesInPeriod, type LedgerExpense, type RecurringBillKind } from "../../lib/recurring-bills";
+import { convertNativeAmountToAgorot } from "../../lib/exchange-rate";
+import {
+  buildManualBillRows,
+  chargesInPeriod,
+  projectManualBillEvents,
+  type LedgerExpense,
+  type RecurringBillInput,
+  type RecurringBillKind,
+} from "../../lib/recurring-bills";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { listRecurringBills } from "../dal/recurring-bills";
 import { getSubscriptionStatuses } from "../dal/subscriptions";
@@ -92,6 +100,16 @@ export type SubscriptionRadarData = {
   billsCashDrag: { monthly: string; annual: string };
   /** The same monthly cash-drag total as `cashDrag.monthly`, as a raw `Agorot` rather than a formatted display string — added for the Real-Time Liquidity Runway & Burn-Rate Engine (AGENTS.md §3v), which needs the actual number to compute a burn-rate floor, not text to render. Purely additive; the existing `cashDrag` field and every prior consumer of it are unchanged. */
   cashDragMonthlyAgorot: Agorot;
+  /**
+   * What the cash-flow forecast needs from the bills typed in (AGENTS.md §3llll):
+   * the bills that still count (not cancelled, not taken over by a detected
+   * subscription), and their charges still to come in the forecast window, in
+   * shekels at the latest rate. A varying bill is at its expected amount.
+   */
+  forecast: {
+    bills: RecurringBillInput[];
+    events: { merchantKey: string; name: string; date: Date; amountAgorot: Agorot }[];
+  };
 };
 
 function buildFreeTrialRow(trial: PossibleFreeTrial) {
@@ -211,6 +229,17 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     };
   });
 
+  // The bills that still count for the forecast: shown in the list (so not
+  // taken over by a detected subscription) and not cancelled.
+  const countedIds = new Set(manual.rows.map((row) => row.manualBillId));
+  const forecastBills = bills.filter((bill) => countedIds.has(bill.id) && (statuses.get(`manual:${bill.id}`) ?? "ACTIVE") !== "CANCELLED");
+  const forecastEvents = projectManualBillEvents(forecastBills, ledger, asOf).map((event) => ({
+    merchantKey: `manual:${event.billId}`,
+    name: event.name,
+    date: event.date,
+    amountAgorot: convertNativeAmountToAgorot(nativeAmount(event.nativeAmount), event.currency, rateTable[event.currency]),
+  }));
+
   const activeForCashDrag = subscriptions.filter((s) => s.status !== "CANCELLED");
   const cashDrag = calculateCashDrag(activeForCashDrag, rateTable);
   // Each page totals only what it lists. The combined figure above still feeds
@@ -268,6 +297,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
   };
 
   return {
+    forecast: { bills: forecastBills, events: forecastEvents },
     monthTotals,
     manualBills,
     subscriptions: subscriptions.sort((a, b) => {
