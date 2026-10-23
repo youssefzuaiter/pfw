@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseDecimalToNativeAmount, SUPPORTED_CURRENCIES } from "../../lib/currency";
-import type { RecurringBillWrite } from "../dal/recurring-bills";
+import type { RecurringBillCreate } from "../dal/recurring-bills";
 
 /** Largest single charge accepted: 100,000,000.00 of any currency. A typo guard, not a limit anyone should meet. */
 const MAX_MINOR_UNITS = 10_000_000_000;
@@ -17,9 +17,11 @@ const BodySchema = z.object({
   // A date the bill is or was due. Later due dates follow from it and the cadence.
   anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "anchorDate must be a YYYY-MM-DD date"),
   categoryId: z.string().trim().min(1).max(60).nullable().optional(),
+  // Which page it belongs to. Only used when creating; an edit cannot move an item between pages.
+  kind: z.enum(["bill", "subscription"]).optional(),
 });
 
-export type RecurringBillBodyResult = { ok: true; data: RecurringBillWrite } | { ok: false; message: string; issues?: unknown };
+export type RecurringBillBodyResult = { ok: true; data: RecurringBillCreate } | { ok: false; message: string; issues?: unknown };
 
 /** Validates a create or edit body into what the data layer takes. Pure apart from reading the clock for the date window. */
 export function parseRecurringBillBody(raw: unknown, now: Date = new Date()): RecurringBillBodyResult {
@@ -47,6 +49,7 @@ export function parseRecurringBillBody(raw: unknown, now: Date = new Date()): Re
   return {
     ok: true,
     data: {
+      kind: parsed.data.kind ?? "bill",
       name: parsed.data.name,
       nativeAmount: amount,
       currency: parsed.data.currency,

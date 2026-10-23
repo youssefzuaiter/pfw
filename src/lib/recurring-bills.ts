@@ -20,8 +20,13 @@ import { normalizeMerchantForFuzzyMatch, similarityRatio, type SubscriptionAnaly
  * Pure: the caller supplies already-fetched rows.
  */
 
+/** Which page an item belongs to (AGENTS.md §3eeee). */
+export type RecurringBillKind = "bill" | "subscription";
+
 export type RecurringBillInput = {
   id: string;
+  /** Fixed when it is added: the Bills page lists bills, the Subscriptions page lists subscriptions. */
+  kind: RecurringBillKind;
   name: string;
   /** What one charge costs, positive, in minor units of `currency`. */
   nativeAmount: number;
@@ -193,6 +198,7 @@ export type DetectedSubscription = {
 
 export type ManualBillRow = SubscriptionAnalysis & {
   manualBillId: string;
+  manualBillKind: RecurringBillKind;
   /** The day of the month the bill is due, so a day the previous month does not have still lands on the right day. */
   dueDay: number;
 };
@@ -247,6 +253,7 @@ export function buildManualBillRows(
 
     rows.push({
       manualBillId: bill.id,
+      manualBillKind: bill.kind,
       dueDay: bill.anchorDate.getUTCDate(),
       merchantKey: manualBillKey(bill.id),
       displayName: bill.name,

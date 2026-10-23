@@ -10,7 +10,7 @@ import {
   type SubscriptionAnalysis,
   type SubscriptionOccurrence,
 } from "../../lib/subscription-radar";
-import { buildManualBillRows, type LedgerExpense } from "../../lib/recurring-bills";
+import { buildManualBillRows, type LedgerExpense, type RecurringBillKind } from "../../lib/recurring-bills";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { listRecurringBills } from "../dal/recurring-bills";
 import { getSubscriptionStatuses } from "../dal/subscriptions";
@@ -30,6 +30,8 @@ export type SubscriptionRow = SubscriptionAnalysis & {
   formattedPriceHike: { from: string; to: string } | null;
   /** Set only on a row that comes from a bill the user typed in (AGENTS.md §3cccc). */
   manualBillId?: string;
+  /** Which page a typed-in row belongs to; set together with `manualBillId`. */
+  manualBillKind?: RecurringBillKind;
   /** The day of the month a typed-in bill is due. */
   dueDay?: number;
 };
@@ -37,6 +39,7 @@ export type SubscriptionRow = SubscriptionAnalysis & {
 /** A bill the user typed in, for the screen that manages them. */
 export type ManualBillSummary = {
   id: string;
+  kind: RecurringBillKind;
   name: string;
   currency: SubscriptionAnalysis["currency"];
   cadence: "monthly" | "quarterly" | "annual";
@@ -59,6 +62,10 @@ export type SubscriptionRadarData = {
   manualBills: ManualBillSummary[];
   possibleFreeTrials: (ReturnType<typeof buildFreeTrialRow>)[];
   cashDrag: { monthly: string; annual: string };
+  /** What the Subscriptions page totals: statement-detected subscriptions plus the subscriptions typed in. */
+  subscriptionsCashDrag: { monthly: string; annual: string };
+  /** What the Bills page totals: only the bills typed in. */
+  billsCashDrag: { monthly: string; annual: string };
   /** The same monthly cash-drag total as `cashDrag.monthly`, as a raw `Agorot` rather than a formatted display string — added for the Real-Time Liquidity Runway & Burn-Rate Engine (AGENTS.md §3v), which needs the actual number to compute a burn-rate floor, not text to render. Purely additive; the existing `cashDrag` field and every prior consumer of it are unchanged. */
   cashDragMonthlyAgorot: Agorot;
 };
@@ -155,6 +162,7 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     const next = counted ? counted.nextExpectedDate : null;
     return {
       id: bill.id,
+      kind: bill.kind,
       name: bill.name,
       currency: bill.currency,
       cadence: bill.cadence,
@@ -170,6 +178,16 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
 
   const activeForCashDrag = subscriptions.filter((s) => s.status !== "CANCELLED");
   const cashDrag = calculateCashDrag(activeForCashDrag, rateTable);
+  // Each page totals only what it lists. The combined figure above still feeds
+  // Safe to Spend and the runway, which care about everything that leaves.
+  const subscriptionsDrag = calculateCashDrag(
+    activeForCashDrag.filter((row) => row.manualBillKind !== "bill"),
+    rateTable,
+  );
+  const billsDrag = calculateCashDrag(
+    activeForCashDrag.filter((row) => row.manualBillKind === "bill"),
+    rateTable,
+  );
 
   return {
     manualBills,
@@ -185,6 +203,8 @@ export const buildSubscriptionRadarData = cache(async function buildSubscription
     // The totals are in the reporting currency (AGENTS.md §3nnn); each
     // subscription's own price above stays in the currency it is charged in.
     cashDrag: { monthly: formatMoney(cashDrag.monthlyAgorot), annual: formatMoney(cashDrag.annualAgorot) },
+    subscriptionsCashDrag: { monthly: formatMoney(subscriptionsDrag.monthlyAgorot), annual: formatMoney(subscriptionsDrag.annualAgorot) },
+    billsCashDrag: { monthly: formatMoney(billsDrag.monthlyAgorot), annual: formatMoney(billsDrag.annualAgorot) },
     cashDragMonthlyAgorot: cashDrag.monthlyAgorot,
   };
 });

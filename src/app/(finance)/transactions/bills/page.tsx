@@ -24,8 +24,10 @@ export default async function BillsPage() {
   const categories = allCategories.filter((category) => category.slug !== "uncategorized").map((category) => ({ id: category.id, name: category.name }));
   const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
 
-  const manualItems: ManualBillItem[] = data.manualBills.map((bill) => ({
+  // Only bills: subscriptions added by hand belong to the Subscriptions page.
+  const manualItems: ManualBillItem[] = data.manualBills.filter((bill) => bill.kind === "bill").map((bill) => ({
     id: bill.id,
+    kind: bill.kind,
     name: bill.name,
     amount: minorUnitsToInputText(bill.nativeAmount),
     currency: bill.currency,
@@ -43,7 +45,7 @@ export default async function BillsPage() {
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const upcoming = data.subscriptions
-    .filter((subscription) => subscription.manualBillId && subscription.status !== "CANCELLED" && subscription.isRecurring && subscription.nextExpectedDate)
+    .filter((subscription) => subscription.manualBillKind === "bill" && subscription.status !== "CANCELLED" && subscription.isRecurring && subscription.nextExpectedDate)
     .map((subscription) => ({ subscription, due: subscription.nextExpectedDate as Date }))
     .filter(({ due }) => {
       const day = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
@@ -64,12 +66,17 @@ export default async function BillsPage() {
       </div>
       <RecurringNav active="bills" />
       <p className="text-sm text-muted">
-        Bills and subscriptions you added yourself. They count in Safe to Spend and the cost total, and you can get a
-        phone reminder before one is due.
+        Bills you add yourself: rent, electricity, insurance, anything that comes round on a schedule. They count in Safe
+        to Spend, and you can get a phone reminder before one is due.
       </p>
       <ReportingRateNote />
 
-      <CashDragCard monthly={data.cashDrag.monthly} annual={data.cashDrag.annual} />
+      <CashDragCard
+        title="Your bills, in total"
+        monthly={data.billsCashDrag.monthly}
+        annual={data.billsCashDrag.annual}
+        caption="What the bills below cost, counting the ones that are not cancelled."
+      />
 
       <section aria-labelledby="coming-up-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="coming-up-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
@@ -94,13 +101,13 @@ export default async function BillsPage() {
 
       <section aria-labelledby="add-bill-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="add-bill-heading" className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
-          Add a bill or subscription
+          Add a bill
         </h2>
         <p className="mb-3 text-sm text-muted">
-          For one the radar cannot see yet: something new, a bill paid from another account, or a yearly charge. You get a
-          phone reminder three days before it is due if you turned on phone alerts.
+          Something paid from another account, a yearly charge, or a bill that has not shown up in your statements yet.
+          You get a phone reminder three days before it is due if you turned on phone alerts.
         </p>
-        <RecurringBillForm categories={categories} />
+        <RecurringBillForm categories={categories} kind="bill" />
       </section>
 
       <section aria-labelledby="your-bills-heading" className="rounded-lg border border-border bg-surface p-4">
@@ -108,7 +115,7 @@ export default async function BillsPage() {
           Added by you ({manualItems.length})
         </h2>
         {manualItems.length === 0 ? (
-          <p className="text-sm text-muted">You have not added any yet. Use the form above.</p>
+          <p className="text-sm text-muted">You have not added any bills yet. Use the form above.</p>
         ) : (
           <ManualBillList items={manualItems} categories={categories} />
         )}
