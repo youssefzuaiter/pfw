@@ -3,9 +3,11 @@ import { ReportingRateNote } from "../../../../components/currency/reporting-cur
 import { minorUnitsToInputText } from "../../../../lib/recurring-bills";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { listCategories } from "../../../../server/dal/categories";
+import { buildRecurringCalendar, resolveCalendarMonth } from "../../../../server/subscriptions/build-recurring-calendar";
 import { buildSubscriptionRadarData } from "../../../../server/subscriptions/build-subscription-radar-data";
 import { AddItemPanel } from "../_components/add-item-panel";
 import { MonthTotalsCard } from "../_components/month-totals-card";
+import { RecurringCalendar } from "../_components/recurring-calendar";
 import { RecurringNav } from "../_components/recurring-nav";
 import { ManualBillList, type ManualBillItem } from "./_components/manual-bill-list";
 
@@ -18,9 +20,16 @@ const UPCOMING_DAYS = 30;
  * paid from another account, a yearly charge. The ones the radar found in the
  * statements live on /transactions/subscriptions (AGENTS.md §3dddd).
  */
-export default async function BillsPage() {
+export default async function BillsPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   const user = await getCurrentUser();
-  const [data, allCategories] = await Promise.all([buildSubscriptionRadarData(user.id), listCategories(user.id)]);
+  const { month } = await searchParams;
+  const now = new Date();
+  const monthKey = resolveCalendarMonth(month, now);
+  const [data, allCategories, calendar] = await Promise.all([
+    buildSubscriptionRadarData(user.id),
+    listCategories(user.id),
+    buildRecurringCalendar(user.id, "bill", monthKey),
+  ]);
   const categories = allCategories.filter((category) => category.slug !== "uncategorized").map((category) => ({ id: category.id, name: category.name }));
   const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
 
@@ -42,7 +51,6 @@ export default async function BillsPage() {
   }));
 
   // Only the bills added by hand; the radar's own finds are on the other page.
-  const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const upcoming = data.subscriptions
     .filter((subscription) => subscription.manualBillKind === "bill" && subscription.status !== "CANCELLED" && subscription.isRecurring && subscription.nextExpectedDate)
@@ -84,6 +92,8 @@ export default async function BillsPage() {
         categories={categories}
         help="Add something paid on a schedule: rent, electricity, insurance. You get a phone reminder three days before it is due if you turned on phone alerts."
       />
+
+      <RecurringCalendar calendar={calendar} basePath="/transactions/bills" currentMonthKey={resolveCalendarMonth(undefined, now)} noun="bills" />
 
       <section aria-labelledby="coming-up-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="coming-up-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">

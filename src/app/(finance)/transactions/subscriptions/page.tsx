@@ -4,9 +4,11 @@ import { Badge, type BadgeVariant } from "../../../../components/badge/badge";
 import { minorUnitsToInputText } from "../../../../lib/recurring-bills";
 import { getCurrentUser } from "../../../../server/auth/current-user";
 import { listCategories } from "../../../../server/dal/categories";
+import { buildRecurringCalendar, resolveCalendarMonth } from "../../../../server/subscriptions/build-recurring-calendar";
 import { buildSubscriptionRadarData } from "../../../../server/subscriptions/build-subscription-radar-data";
 import { AddItemPanel } from "../_components/add-item-panel";
 import { MonthTotalsCard } from "../_components/month-totals-card";
+import { RecurringCalendar } from "../_components/recurring-calendar";
 import { RecurringNav } from "../_components/recurring-nav";
 import { ManualBillList, type ManualBillItem } from "../bills/_components/manual-bill-list";
 import { SubscriptionStatusToggle } from "./_components/subscription-status-toggle";
@@ -28,9 +30,16 @@ const STATUS_BADGE: Record<string, BadgeVariant> = {
 
 const UPCOMING_DAYS = 30;
 
-export default async function SubscriptionsPage() {
+export default async function SubscriptionsPage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
   const user = await getCurrentUser();
-  const [data, allCategories] = await Promise.all([buildSubscriptionRadarData(user.id), listCategories(user.id)]);
+  const { month } = await searchParams;
+  const now = new Date();
+  const monthKey = resolveCalendarMonth(month, now);
+  const [data, allCategories, calendar] = await Promise.all([
+    buildSubscriptionRadarData(user.id),
+    listCategories(user.id),
+    buildRecurringCalendar(user.id, "subscription", monthKey),
+  ]);
   const categories = allCategories.filter((category) => category.slug !== "uncategorized").map((category) => ({ id: category.id, name: category.name }));
   const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
 
@@ -57,7 +66,6 @@ export default async function SubscriptionsPage() {
     }));
 
   // What is coming up in the next month, soonest first, anything not cancelled.
-  const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const upcoming = [...detected, ...mine]
     .filter((subscription) => subscription.status !== "CANCELLED" && subscription.isRecurring && subscription.nextExpectedDate)
@@ -99,6 +107,8 @@ export default async function SubscriptionsPage() {
         categories={categories}
         help="Add one that has not shown up in your statements yet, or that is paid from another account. You get a phone reminder three days before it is due if you turned on phone alerts."
       />
+
+      <RecurringCalendar calendar={calendar} basePath="/transactions/subscriptions" currentMonthKey={resolveCalendarMonth(undefined, now)} noun="subscriptions" />
 
       <section aria-labelledby="coming-up-heading" className="rounded-lg border border-border bg-surface p-4">
         <h2 id="coming-up-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">

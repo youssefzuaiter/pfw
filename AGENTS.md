@@ -9931,6 +9931,57 @@ this calendar month, and has its own Add button.
 - **Production needs `deploy-migrations.yml`** for `20261023120000_recurring_bill_kind`
   (from §3eeee), which has NOT been applied there yet.
 
+## 3gggg. A calendar on each of the Subscriptions and Bills pages (ad hoc)
+
+The phone reminders (§3cccc) existed; a calendar did not, only a "coming up in
+30 days" list. Each page now has a month calendar of its own items, so the two
+pages stay independent: the Subscriptions page draws subscriptions, the Bills
+page draws bills, and neither draws the other's.
+
+- **What a day shows** (`src/lib/bill-calendar.ts`, pure): charges that really
+  happened, from the ledger by the day the money left, marked **Paid**; and
+  charges still expected from the item's schedule, marked **Due** (today or
+  later) or **Not charged yet** (a date already past with no matching charge).
+  Everything is UTC days.
+- **Where the dates come from**: an item added by hand uses its anchor date and
+  cadence (`dueDateInMonth`, so the 31st lands on the 28th in February, and a
+  quarterly or yearly item shows only in its own months, any month, past or
+  future). A subscription found in the statements is projected forward from its
+  last charge by its cycle, but only while it still looks active (last charged
+  within one cycle), so one that stopped is not shown as due forever; a weekly
+  one shows each expected week.
+- **No double counting**: a charge found this month settles a monthly,
+  quarterly or yearly item (the expected one is not also drawn); a weekly item
+  keeps only the dates after its latest charge. A cancelled item has nothing
+  expected, but a charge it already had still shows. A hand-added item the radar
+  has since detected is drawn once, as the detected one.
+- **Server** (`build-recurring-calendar.ts`): `buildRecurringCalendar(userId,
+  kind, monthKey)` assembles the items and charges from the same radar data the
+  totals use. `resolveCalendarMonth` accepts only a real `YYYY-MM`.
+- **UI** (`RecurringCalendar`): a month grid on wide screens (hidden from
+  assistive technology) and a "Day by day" list for everyone, with Previous /
+  This month / Next links that use `?month=YYYY-MM`, so no client code is
+  needed and every month is a shareable address. Colours are tokens: paid
+  positive, due signature, not charged negative.
+- **Reminders** are unchanged: about three days before each due date, once per
+  date, if phone alerts are on; nightly, so up to a day late.
+- **Verified**: 11 unit tests for the calendar logic (month layout, due vs not
+  charged, paid replacing expected, other months' charges ignored, cancelled,
+  quarterly and yearly months, short months, projection and stopped items,
+  weekly, currencies), 5 integration tests against real Postgres (each page
+  draws only its own items, paid on its own day, a detected subscription
+  projected forward and absent from Bills, another user sees nothing, only a
+  real month accepted), each logic piece broken three ways to confirm it fails,
+  and a browser spec on the production build (the new item on today's date, the
+  month changed and returned, neither page showing the other's items,
+  accessibility scan).
+- **A test name to avoid**: a hand-added item named "Streamflix" is drawn as the
+  demo account's detected Streamflix, by design (§3cccc name matching), so a test
+  that wants a manual item uses a name nothing detected shares.
+- **No migration.**
+- **Not built**: a combined calendar of subscriptions and bills together, and
+  dragging an item to a new date.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

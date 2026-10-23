@@ -10,7 +10,7 @@ import { STORAGE_STATE_PATH } from "./global-setup";
  */
 test.describe.configure({ mode: "serial" });
 
-const SUBSCRIPTION = "E2E Streamflix Test";
+const SUBSCRIPTION = "E2E Zebracloud Test";
 const BILL = "E2E Electricity Test";
 
 async function add(page: import("@playwright/test").Page, name: string, addButton: string, saveButton: string) {
@@ -69,6 +69,28 @@ test("a bill is added on the Bills page and stays off the Subscriptions page", a
   await page.goto("/transactions/subscriptions");
   await expect(page.getByText(BILL)).toHaveCount(0);
   await expect(page.getByText(SUBSCRIPTION).first()).toBeVisible();
+});
+
+test("each page has its own calendar: the new item is on today's date, and the month can be changed", async ({ page }) => {
+  await page.goto("/transactions/subscriptions");
+  const subscriptionsCalendar = page.locator("section", { has: page.getByRole("heading", { name: /^Calendar · / }) });
+  await expect(subscriptionsCalendar.getByText(SUBSCRIPTION).first()).toBeVisible();
+  await expect(subscriptionsCalendar.getByText(BILL)).toHaveCount(0);
+
+  const heading = page.getByRole("heading", { name: /^Calendar · / });
+  const before = await heading.textContent();
+  await page.getByRole("link", { name: "Next →" }).click();
+  await expect(page).toHaveURL(/month=\d{4}-\d{2}/);
+  await expect(heading).not.toHaveText(before ?? "");
+  // Next month the monthly subscription is expected again, still on its own page.
+  await expect(page.locator("section", { has: heading }).getByText(SUBSCRIPTION).first()).toBeVisible();
+  await page.getByRole("link", { name: "This month" }).click();
+  await expect(heading).toHaveText(before ?? "");
+
+  await page.goto("/transactions/bills");
+  const billsCalendar = page.locator("section", { has: page.getByRole("heading", { name: /^Calendar · / }) });
+  await expect(billsCalendar.getByText(BILL).first()).toBeVisible();
+  await expect(billsCalendar.getByText(SUBSCRIPTION)).toHaveCount(0);
 });
 
 test("both pages with an item on them pass the accessibility scan", async ({ page }) => {
