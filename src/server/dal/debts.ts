@@ -1,7 +1,7 @@
 import "server-only";
 import { accrueInterest, bps } from "../../lib/apr";
 import { agorot, subtractAgorot } from "../../lib/money";
-import { withUserScope } from "../db/with-user-scope";
+import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 import type { Prisma } from "../../generated/prisma/client";
 
 /** See bank-accounts.ts for why this returns `null` rather than throwing on a mismatch. */
@@ -68,40 +68,55 @@ export async function recordDebtPayment(
   debtId: string,
   input: { amount: bigint; paidAt: Date },
 ): Promise<RecordDebtPaymentResult> {
-  return withUserScope(userId, async (tx) => {
-    const debt = await tx.debt.findFirst({ where: { id: debtId, userId } });
-    if (!debt) return null;
+  return withUserScope(userId, (tx) => recordDebtPaymentInTransaction(tx, userId, debtId, input));
+}
 
-    const balance = agorot(Number(debt.currentBalance));
-    const payment = agorot(Number(input.amount));
-    const interest = accrueInterest(balance, bps(debt.aprBps));
+/**
+ * `recordDebtPayment` inside a transaction the caller already holds, so a
+ * batch of payments (each reducing the balance the next one starts from) is
+ * all or nothing. `transactionId` links a payment recorded from a ledger
+ * transaction (AGENTS.md §3nnnn); the column is unique, so the same
+ * transaction can never be recorded twice.
+ */
+export async function recordDebtPaymentInTransaction(
+  tx: ScopedTransactionClient,
+  userId: string,
+  debtId: string,
+  input: { amount: bigint; paidAt: Date; transactionId?: string },
+): Promise<RecordDebtPaymentResult> {
+  const debt = await tx.debt.findFirst({ where: { id: debtId, userId } });
+  if (!debt) return null;
 
-    let principalPortion: bigint;
-    let newBalance: bigint;
-    if (payment >= interest) {
-      const principal = subtractAgorot(payment, interest);
-      principalPortion = BigInt(principal);
-      newBalance = principal > balance ? 0n : BigInt(subtractAgorot(balance, principal));
-    } else {
-      // Negative amortization: unpaid interest capitalizes onto the balance.
-      const shortfall = subtractAgorot(interest, payment);
-      principalPortion = -BigInt(shortfall);
-      newBalance = debt.currentBalance + BigInt(shortfall);
-    }
+  const balance = agorot(Number(debt.currentBalance));
+  const payment = agorot(Number(input.amount));
+  const interest = accrueInterest(balance, bps(debt.aprBps));
 
-    await tx.debtPayment.create({
-      data: {
-        userId,
-        debtId,
-        amount: input.amount,
-        paidAt: input.paidAt,
-        principalPortion,
-        interestPortion: BigInt(interest),
-      },
-    });
+  let principalPortion: bigint;
+  let newBalance: bigint;
+  if (payment >= interest) {
+    const principal = subtractAgorot(payment, interest);
+    principalPortion = BigInt(principal);
+    newBalance = principal > balance ? 0n : BigInt(subtractAgorot(balance, principal));
+  } else {
+    // Negative amortization: unpaid interest capitalizes onto the balance.
+    const shortfall = subtractAgorot(interest, payment);
+    principalPortion = -BigInt(shortfall);
+    newBalance = debt.currentBalance + BigInt(shortfall);
+  }
 
-    await tx.debt.update({ where: { id: debtId }, data: { currentBalance: newBalance } });
-
-    return tx.debt.findFirst({ where: { id: debtId, userId }, include: { payments: { orderBy: { paidAt: "desc" } } } });
+  await tx.debtPayment.create({
+    data: {
+      userId,
+      debtId,
+      amount: input.amount,
+      paidAt: input.paidAt,
+      principalPortion,
+      interestPortion: BigInt(interest),
+      transactionId: input.transactionId ?? null,
+    },
   });
+
+  await tx.debt.update({ where: { id: debtId }, data: { currentBalance: newBalance } });
+
+  return tx.debt.findFirst({ where: { id: debtId, userId }, include: { payments: { orderBy: { paidAt: "desc" } } } });
 }
