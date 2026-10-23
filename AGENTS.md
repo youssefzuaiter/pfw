@@ -10111,6 +10111,69 @@ can now be marked "The amount is different every time".
   season (a summer electricity bill will be underestimated by a winter average),
   or an alert when a payment is far above the estimate.
 
+## 3kkkk. Transfer matching (ad hoc)
+
+Money moved between your own accounts imports as spending in one account and
+income in the other, so every income and spending total counted it twice
+(§3ccc added the transfer flag; marking rows was by hand, one at a time or by
+rule). `/transactions/transfers` finds the two halves and, once you confirm,
+marks both.
+
+- **Nothing is stored for the match**: no migration. A pair is only ever the two
+  rows each flagged `isTransfer` (the flag every aggregate already leaves out,
+  law #5); the proposal is recomputed from the ledger every time.
+- **The rules** (`src/lib/transfer-matching.ts`, pure): one expense and one
+  income, in DIFFERENT accounts, within `MAX_DAY_GAP` (3) UTC days, for the same
+  amount. In one currency the entered amounts must be exactly equal; across
+  currencies (lira out, dollars in) the frozen shekel equivalents must be within
+  `CROSS_CURRENCY_TOLERANCE_BPS` (3%), because a bank's own rate never matches
+  the stored one. Candidates are live, not already a transfer, and not split
+  (`REAL_MONEY` plus no splits). Each row joins at most one pair: closest pairs
+  first (day gap, then amount difference, then id), so the result does not
+  depend on the order rows arrive in.
+- **A match is a proposal, never a fact.** A rent payment and a friend's
+  repayment of the same amount can look identical. Each match says if it is
+  `ambiguous` (either half could pair with more than one row) and whether it is
+  `crossCurrency`; only clear same-currency matches start ticked
+  (`isPreselected`), and everything else is the user's call.
+- **Applying re-checks on the server** (`applyTransferMatches`,
+  `src/server/dal/transfer-matches.ts`): the client sends only pairs of ids; the
+  matcher is run again in the caller's scope and a pair is applied only if it is
+  still exactly what it proposes. A stale page, a made-up pair, a repeated pair
+  or another user's ids are counted as `skipped` and change nothing. All or
+  nothing in one transaction; one `update` per row, because `updateMany` is
+  refused on a model with encrypted fields. At most `MAX_TRANSFER_PAIRS` (250)
+  per request. `last4` is never read (encrypted; a nested read returns
+  ciphertext), accounts are labelled by nickname or institution.
+- **Route and screen**: `POST /api/transactions/transfer-matches/apply`
+  (`guardMutation`, one audit entry for the whole apply, registered in the
+  mutating-route inventory). The page lists each pair (both sides with account,
+  date, amount in its own currency, badges for "different currencies", "could
+  match more than one row" and the day gap), with Tick all / Clear ones only /
+  Tick none, and after applying an **Undo** that unmarks exactly the rows it
+  marked through the existing bulk transfer action. Linked from `/transactions`.
+- **A bug the component test found**: the checkbox handler read
+  `event.currentTarget.checked` inside the state updater, which runs after the
+  event is gone, so ticking a box threw. Read the value before calling
+  `setState`.
+- **Verified**: 12 unit tests for the rules (one pair, same account refused,
+  exact amounts, the day window both ways and in UTC, cross-currency within and
+  outside the tolerance, closest partner wins and ambiguity is flagged, identical
+  pairs one to one, order independence); 9 integration tests against real
+  Postgres (proposals with account names, rows that must not match, cross
+  currency, both rows marked and gone from the income and spending totals, a
+  made-up or stale or repeated pair skipped, another user's rows never marked,
+  a split row left out, size limits); 7 component tests; an e2e spec on the
+  production build (accessibility scan, mark, Undo, link from the transactions
+  page) that restores the rows it changes, and the page added to the
+  accessibility audit. Mutation-checked, each caught: no server re-check,
+  transfers not excluded, split rows not excluded, only one row marked.
+- **Not built**: one-sided transfers (money that leaves for an account you do not
+  track, such as funding from your own USD account, stay income and need the rule
+  or the per-row toggle); a looser day window or amount tolerance; matching at
+  import time (it is a separate, reviewed step on purpose).
+- **No migration.**
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored
