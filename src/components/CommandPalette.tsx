@@ -4,7 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { getToolName, isToolUIPart } from "ai";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "cmdk";
 import { setNonce } from "get-nonce";
-import { ArrowLeft, ArrowLeftRight, CalendarClock, LineChart, PiggyBank, Radar, Receipt, Sparkles, TrendingUp, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ChartNoAxesColumn, CalendarClock, LineChart, PiggyBank, Radar, Receipt, Sparkles, TrendingUp, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Spinner } from "./spinner/spinner";
@@ -23,6 +23,7 @@ type PaletteDestination = {
 const DESTINATIONS: PaletteDestination[] = [
   { href: "/budgets", label: "Budget", icon: PiggyBank },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/trends", label: "Spending trends", icon: ChartNoAxesColumn },
   { href: "/transactions/subscriptions", label: "Subscriptions", icon: Radar },
   { href: "/transactions/bills", label: "Bills", icon: CalendarClock },
   { href: "/trading", label: "Trading", icon: LineChart },

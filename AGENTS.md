@@ -10024,6 +10024,45 @@ checkbox, and a bar appears once any are ticked.
   level security still hides another user's category (the second layer).
 - **No migration.**
 
+## 3iiii. Spending trends (ad hoc)
+
+`/review` shows one month; nothing showed where spending was drifting. `/trends`
+does, linked from the review page, the dashboard quick links and the command
+palette.
+
+- **A fair comparison** (`src/lib/spending-trends.ts`, pure): this month *so
+  far* is compared with the same days of the earlier months, not their whole
+  month. On the 12th, October's first twelve days are set against September's,
+  August's and July's first twelve days; a shorter month is capped at its last
+  day. Comparing a partial month with whole ones would always read as a collapse
+  early in the month.
+- **"Usual by now"** is the average of the three earlier months that had any
+  spending (`baselineMonthsUsed`), so a new account is compared with the one or
+  two months it has, not with empty ones; with none, no comparison and no
+  percentage is shown. A change from nothing has no percentage (it says "New"),
+  and a category that stopped is a fall to nothing.
+- **What it shows**: this month so far against usual, the three biggest rises and
+  falls by category, the last six months as bars (the current one marked "so
+  far"), and a category table (so far, usual by now, change, last month) that
+  becomes a list on phones.
+- **The same rules as the rest of the app**: each transaction is converted on its
+  own day into the reporting currency (§3vvv) and then added, so a month equals
+  the sum of its categories; a split transaction counts in each of its categories
+  (§3xxx); transfers and deleted rows are left out (§3ccc); percentages are
+  integer basis points rounded half away from zero (`formatBpsChange`, reused
+  from the review page).
+- **Verified**: 8 unit tests (same-day comparison, a rise and a fall, no earlier
+  data, only months with spending used, income and out-of-window months ignored,
+  a month equals its categories in dollars too, short-month capping, rounding both
+  ways), 3 integration tests against real Postgres (figures and the text, a split,
+  a transfer and a deleted row, another user), and a browser spec on the
+  production build (reached from the review page, six bars, the table) plus the
+  accessibility audit. Each calculation rule was broken four ways to confirm the
+  tests fail.
+- **No migration.**
+- **Not built**: a choice of window or baseline length (six months and three are
+  fixed), per-category drill-down, and trends for income.
+
 ## 3jjjj. Bills whose amount is different every time (ad hoc)
 
 A utility bill billed by use has no fixed amount, so a hand-added bill (§3cccc)
