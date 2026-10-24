@@ -54,6 +54,7 @@ export const SWEPT_ROUTES = [
   "POST /api/bank-accounts/[id]/check",
   "POST /api/debts/[id]/payments",
   "POST /api/envelopes/allocate",
+  "POST /api/debts/payment-matches/apply",
   "POST /api/goals",
   "POST /api/goals/[id]/contributions",
   "POST /api/groups",
@@ -79,6 +80,7 @@ export const SWEPT_ROUTES = [
   "POST /api/transactions/import-batch/[batchId]/restore",
   "POST /api/transactions/rules/apply",
   "POST /api/transactions/transfer-matches/apply",
+  "POST /api/envelopes/suggestions/apply",
   "POST /api/transactions/search",
 ] as const;
 

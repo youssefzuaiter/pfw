@@ -74,6 +74,7 @@ export const CROSS_TENANT_FOREIGN_KEYS = [
   "EnvelopeAllocation.categoryId",
   "GoalContribution.goalId",
   "DebtPayment.debtId",
+  "DebtPayment.transactionId",
   "HoldingLot.holdingId",
   "Trade.portfolioHoldingId",
   "MerchantEmbedding.categoryId",

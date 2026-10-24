@@ -11,8 +11,10 @@ import { agorot, parseShekelsToAgorot } from "../../lib/money";
 import { getCurrentUser } from "../../server/auth/current-user";
 import { getReportingFormatter } from "../../server/reporting/reporting-context";
 import { ReportingRateNote } from "../../components/currency/reporting-currency-provider";
+import { listDebtPaymentMatches } from "../../server/dal/debt-payment-matches";
 import { listDebts } from "../../server/dal/debts";
 import { CreateDebtForm } from "./_components/create-debt-form";
+import { DebtPaymentMatchesPanel } from "./_components/debt-payment-matches-panel";
 import { DeleteDebtButton } from "./_components/delete-debt-button";
 import { RecordPaymentForm } from "./_components/record-payment-form";
 
@@ -42,6 +44,13 @@ export default async function DebtsPage({
   const user = await getCurrentUser();
   const formatMoney = await getReportingFormatter(user.id);
   const debts = await listDebts(user.id);
+  // A convenience: if the matching fails, the page still works.
+  const foundPayments = await listDebtPaymentMatches(user.id)
+    .then((matches) => matches.filter((m) => !m.recorded))
+    .catch((error) => {
+      console.error("Debt payments in the ledger could not be read", error);
+      return [];
+    });
 
   const debtInputs: DebtInput[] = debts.map((d) => ({
     id: d.id,
@@ -68,6 +77,19 @@ export default async function DebtsPage({
       <section className="rounded-lg border border-border bg-surface p-4">
         <CreateDebtForm />
       </section>
+
+      {foundPayments.length > 0 && (
+        <DebtPaymentMatchesPanel
+          rows={foundPayments.map((match) => ({
+            debtId: match.debtId,
+            transactionId: match.transactionId,
+            debtName: match.debtName,
+            label: match.label,
+            date: match.occurredAt.toISOString().slice(0, 10),
+            amountFormatted: formatMoney(agorot(match.amountAgorot)),
+          }))}
+        />
+      )}
 
       {debts.length === 0 && <p className="text-sm text-muted">No debts tracked yet — add one above.</p>}
 

@@ -234,8 +234,8 @@ enum BankConnectionStatus {
 /// existed). This app has no passphrase-rotation flow: once set up, these
 /// three columns are immutable — see `setupZkVault`'s doc comment.
 model User {
-  id                   String   @id @default(cuid())
-  email                String   @unique
+  id                   String    @id @default(cuid())
+  email                String    @unique
   displayName          String
   /// Argon2id hash (AGENTS.md §3ff) — null has a real, load-bearing
   /// meaning: it's what identifies the ORIGINAL seeded demo user row as
@@ -270,7 +270,7 @@ model User {
   /// integer, e.g. from a raw SQL insert that forgot this column, reads
   /// as suspicious rather than as a normal starting state), never
   /// decremented — only ever compared for equality, never ordered.
-  tokenVersion         Int      @default(1)
+  tokenVersion         Int       @default(1)
   /// AES-256-GCM ciphertext at rest (added to encrypted-fields.ts's
   /// ENCRYPTED_FIELDS, same codec as BankAccount.last4/
   /// NotableTransaction.description) — a TOTP seed is exactly as
@@ -285,7 +285,7 @@ model User {
   /// (`confirmTotpSetup`) — never flipped true at the moment a secret is
   /// merely generated, which would lock a user out if they abandoned
   /// setup before finishing it.
-  totpEnabled          Boolean  @default(false)
+  totpEnabled          Boolean   @default(false)
   /// RFC 6238 replay protection: the otplib time-step index of the last
   /// TOTP code this account actually accepted (login or setup
   /// confirmation) — a subsequent `verify()` call passes this back as
@@ -302,7 +302,7 @@ model User {
   /// reset to 0 on any fully successful sign-in, OR on a successful
   /// recovery-code redemption / password reset (see `accountLockedAt`).
   /// Never decremented one at a time; only ever reset to 0 or incremented.
-  failedLoginAttempts Int @default(0)
+  failedLoginAttempts  Int       @default(0)
   /// Non-null once `failedLoginAttempts` reaches `LOCKOUT_THRESHOLD`
   /// (src/server/auth/account-lockout.ts) — a real, load-bearing lock,
   /// not a time-based cooldown: it persists until the account is
@@ -318,8 +318,8 @@ model User {
   /// a lockout that produced no observable effect at all would defeat
   /// the feature's purpose.
   accountLockedAt      DateTime?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   settings                 UserSettings?
   phoneAlertSubscription   PhoneAlertSubscription?
@@ -790,7 +790,7 @@ model BankAccount {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  transactions NotableTransaction[]
+  transactions   NotableTransaction[]
   bankConnection BankConnection?
 
   @@index([userId])
@@ -898,6 +898,8 @@ model NotableTransaction {
   /// Present only when the amount is divided across categories (AGENTS.md
   /// §3xxx); see TransactionSplit.
   splits                TransactionSplit[]
+  /// The debt payment recorded from this transaction, if any (AGENTS.md §3nnnn).
+  debtPayment           DebtPayment?
 
   @@unique([userId, providerTransactionId])
   @@index([userId, occurredAt])
@@ -1051,11 +1053,11 @@ model Debt {
 /// debt-math engine computes the split; a payment can be recorded before
 /// that breakdown is known.
 model DebtPayment {
-  id               String   @id @default(cuid())
+  id               String              @id @default(cuid())
   userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   debtId           String
-  debt             Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  debt             Debt                @relation(fields: [debtId], references: [id], onDelete: Cascade)
   /// Agorot.
   amount           BigInt
   /// Agorot.
@@ -1063,7 +1065,13 @@ model DebtPayment {
   /// Agorot.
   interestPortion  BigInt?
   paidAt           DateTime
-  createdAt        DateTime @default(now())
+  createdAt        DateTime            @default(now())
+  /// The ledger transaction this payment was recorded from (AGENTS.md §3nnnn),
+  /// when it was recorded from one rather than typed in. At most one payment per
+  /// transaction, so the same repayment is never recorded twice. Set to null if
+  /// the transaction is ever removed.
+  transactionId    String?             @unique
+  transaction      NotableTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
   @@index([userId, debtId])
 }
@@ -1285,14 +1293,14 @@ model Trade {
 /// (`websocket_settlement_stream`), which this feature deliberately
 /// does not add — out of scope for what was asked.
 model ScenarioMetrics {
-  id               String   @id @default(cuid())
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ticker           String
-  hash             String
-  predictedMovePct Decimal  @db.Decimal(8, 4)
-  actualFillPrice  Decimal? @db.Decimal(12, 4)
-  decision         String
+  id                     String   @id @default(cuid())
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticker                 String
+  hash                   String
+  predictedMovePct       Decimal  @db.Decimal(8, 4)
+  actualFillPrice        Decimal? @db.Decimal(12, 4)
+  decision               String
   /// Shadow A/B pipeline (ad hoc, Phase 3) — a SECOND, non-authoritative
   /// model's theoretical verdict on the SAME (ticker, headline)
   /// scenario this row's `hash` already identifies, persisted purely
@@ -1317,8 +1325,8 @@ model ScenarioMetrics {
   /// has a durable outbox that REPLAYS a delivery whose response it never
   /// saw (a 5s client timeout on a cold Vercel lambda is enough) — without
   /// this, one evaluated scenario could be counted twice.
-  idempotencyKey   String?  @unique
-  createdAt        DateTime @default(now())
+  idempotencyKey         String?  @unique
+  createdAt              DateTime @default(now())
 
   @@index([userId, ticker, createdAt])
   @@index([hash])
@@ -1740,21 +1748,21 @@ model RecurringBill {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name String
+  name         String
   /// What one charge costs, positive, in minor units of `currency`.
   nativeAmount BigInt
-  currency     Currency @default(ILS)
+  currency     Currency          @default(ILS)
   cadence      BillCadence
   /// The charge is different every time (billed by use). Its payments are then
   /// recognised by name alone, and the amount it is expected to cost is the
   /// average of its last few real payments; `nativeAmount` is only the typed
   /// starting figure (AGENTS.md §3jjjj).
-  amountVaries Boolean  @default(false)
+  amountVaries Boolean           @default(false)
   /// Which page it belongs to: the Bills page or the Subscriptions page
   /// (AGENTS.md §3eeee). Fixed when it is created; each page lists only its own.
   kind         RecurringBillKind @default(BILL)
   /// A date the bill is or was due (UTC day). Later due dates are derived.
-  anchorDate   DateTime @db.Date
+  anchorDate   DateTime          @db.Date
 
   /// The category its charges fall in, so Safe to Spend can tell that the
   /// bill is paid from an envelope that already holds the money. Optional;
