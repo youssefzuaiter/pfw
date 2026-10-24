@@ -10278,6 +10278,49 @@ could make the "lowest projected balance" too optimistic. It now includes them.
   in does not exist yet, so only expenses are scheduled.
 - **No migration.**
 
+## 3oooo. Bank balance check (ad hoc)
+
+Type what your bank shows for an account on a day, and the app says whether its
+own figure for that day agrees, and if not, by how much and why it might not.
+Nothing is changed by checking.
+
+- **The app's figure** is the balance you entered plus the live transactions
+  after the day that balance was true for, up to and including the day checked
+  (`checkAccountBalance`, `src/server/dal/balance-check.ts`): the same roll-forward
+  as net worth and Safe to Spend (§3bbbb), but cut off at the checked day.
+  Transfers count (they move a balance); deleted rows do not. A card's rows are
+  in "money owed" terms. Rows in another currency than the account are taken at
+  their frozen shekel amount converted at the latest rate, and the result says
+  the figure is approximate.
+- **Days that cannot be checked**: before the day the entered balance was true
+  for (the movement in between is not part of the figure), or in the future.
+- **The causes** (`checkBalance`, `src/lib/balance-check.ts`, pure) are
+  suggestions, ranked, never certain: a **duplicate** (a row equal to the gap
+  with a twin of the same amount within 3 days), an **extra row** (a row equal to
+  the gap with no twin), a **wrong sign** (a row of exactly half the gap), and
+  always last **a missing transaction or an entered balance off by exactly the
+  gap**. At most four are shown, and only the rows they name are returned.
+- **`POST /api/bank-accounts/[id]/check`**: behind the mutation guard though it
+  writes nothing (it reads an account's whole movement); 404 for another user's
+  account; 400 for a day before the entered balance or in the future. Registered
+  in the mutating-route inventory.
+- **The screen**: "Check against bank" beside "Update balance" on `/assets`.
+  The result states both figures, the difference and which way it goes, the
+  likely reasons, and offers "Use the bank's balance", which is the existing
+  Update balance call with the bank's figure and the checked day.
+- **Verified**: 9 unit tests for the causes, 8 integration tests against real
+  Postgres (a match, the right rows included and excluded, a named duplicate, the
+  fallback cause, a card, a missing balance day and a foreign-currency row,
+  refused days, another user's account), 5 component tests, and an e2e spec on
+  the production build (the difference and reasons, accessibility scan, a future
+  day refused). Mutation-checked, each caught: transfers excluded, the balance day
+  counted, the end of the checked day dropped, a card's sign, the before-balance
+  refusal, the twin window, the wrong-sign rule.
+- **Not built**: checking against a statement's printed closing balance
+  automatically (§3aaaa already proves an import against its own running
+  balance), and remembering past checks.
+- **No migration.**
+
 ## 3nnnn. Debt repayments found in your transactions (ad hoc)
 
 A debt's repayment that came in as an ordinary transaction (a card or loan

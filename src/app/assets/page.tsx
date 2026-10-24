@@ -13,6 +13,7 @@ import { listManualAssets } from "../../server/dal/manual-assets";
 import { AddWalletForm } from "./_components/add-wallet-form";
 import { CreateAssetForm } from "./_components/create-asset-form";
 import { CreateBankAccountForm } from "./_components/create-bank-account-form";
+import { CheckBalanceForm } from "./_components/check-balance-form";
 import { ReconcileBalanceForm } from "./_components/reconcile-balance-form";
 import { DeleteAssetButton } from "./_components/delete-asset-button";
 import { UpdateValuationForm } from "./_components/update-valuation-form";
@@ -131,8 +132,11 @@ export default async function AssetsPage() {
                   <p className="mt-1 text-xs text-muted">
                     {account.history}
                   </p>
-                  <div className="mt-2">
-                    <ReconcileBalanceForm accountId={account.id} isCard={account.accountType === "CREDIT_CARD"} />
+                  <div className="mt-2 flex flex-col gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      <CheckBalanceForm accountId={account.id} isCard={account.accountType === "CREDIT_CARD"} currency={account.currency} />
+                      <ReconcileBalanceForm accountId={account.id} isCard={account.accountType === "CREDIT_CARD"} />
+                    </div>
                   </div>
                 </div>
                 <CurrencyAmount
