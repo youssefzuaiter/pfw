@@ -51,6 +51,7 @@ export const SWEPT_ROUTES = [
   "POST /api/crypto-wallets",
   "POST /api/dead-mans-switch/cancel-recovery",
   "POST /api/debts",
+  "POST /api/bank-accounts/[id]/check",
   "POST /api/debts/[id]/payments",
   "POST /api/envelopes/allocate",
   "POST /api/goals",
