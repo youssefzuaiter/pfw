@@ -63,8 +63,17 @@ for tool in docker gpg; do
 done
 
 if [ -z "$PG_DUMP_IMAGE" ]; then
+  # stderr is kept (psql's connection errors name the failing step but never
+  # echo the password): hiding it made a rotated password or an unreachable
+  # host exit silently with code 2 and no clue why.
+  probe_err=$(mktemp)
   version_num=$(docker run --rm --pull=missing -e BACKUP_DATABASE_URL --add-host=host.docker.internal:host-gateway \
-    "$PG_PROBE_IMAGE" sh -c 'exec psql "$BACKUP_DATABASE_URL" -Atc "SHOW server_version_num"' 2>/dev/null | tr -d '[:space:]')
+    "$PG_PROBE_IMAGE" sh -c 'exec psql "$BACKUP_DATABASE_URL" -Atc "SHOW server_version_num"' 2>"$probe_err" | tr -d '[:space:]') || true
+  if [ -s "$probe_err" ]; then
+    echo "probe error output:" >&2
+    sed 's/^/  /' "$probe_err" >&2
+  fi
+  rm -f "$probe_err"
   case "$version_num" in
     [1-9][0-9][0-9][0-9][0-9][0-9]) PG_DUMP_IMAGE="postgres:${version_num:0:2}" ;;
     *) echo "could not read the server version (got '${version_num:-nothing}') — is BACKUP_DATABASE_URL reachable and its password current?" >&2; exit 1 ;;
