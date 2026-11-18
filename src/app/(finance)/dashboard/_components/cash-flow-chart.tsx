@@ -69,6 +69,10 @@ export function CashFlowChart({
         </span>{" "}
         on {minimum.date.toISOString().slice(0, 10)}
       </p>
+      <p className="mt-1 text-xs text-muted">
+        Counts what is known to be coming: your bills, regular charges, and your average everyday spending. It does not
+        assume any new income unless a deposit was detected as regular, so it shows what happens if no new money arrives.
+      </p>
       {bills && bills.count > 0 && (
         <p className="mt-1 text-xs text-muted">
           Includes {bills.count} {bills.count === 1 ? "charge" : "charges"} from the bills you added,{" "}
