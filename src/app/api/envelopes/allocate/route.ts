@@ -5,7 +5,8 @@ import { formatAgorot, parseShekelsToAgorot, agorot } from "../../../../lib/mone
 import { guardMutation } from "../../../../server/api/guard-mutation";
 import { jsonBadRequest, jsonNotFound, jsonServerError } from "../../../../server/api/responses";
 import { recordAuditLog } from "../../../../server/dal/audit-log";
-import { allocateToEnvelope, getAvailableToBudget, getEnvelopeBalances } from "../../../../server/dal/envelopes";
+import { allocationFits, reserveIncrease } from "../../../../lib/envelope-math";
+import { allocateToEnvelope, getBudgetPosition, getEnvelopeBalances } from "../../../../server/dal/envelopes";
 
 const BodySchema = z.object({
   categoryId: z.string().min(1),
@@ -24,15 +25,13 @@ const BodySchema = z.object({
  * there's no meaningful behavioral difference between the two verbs
  * here, only which one reads more naturally for a given caller.
  *
- * Enforces the Zero-Sum Rule: the DELTA this request introduces
- * (`amount` minus whatever this category was already allocated for this
- * exact month, zero if none) can never exceed `getAvailableToBudget` —
- * i.e. total allocations across every category, up to and including
- * this month, can never exceed real income received up to and including
- * this month. Checking the delta (not a raw comparison against the new
- * total) is what makes REDUCING an existing allocation, or leaving it
- * unchanged, always valid regardless of how tight `available` already
- * is.
+ * Enforces the Zero-Sum Rule (AGENTS.md §3rrrr): the cash this request
+ * newly sets aside can never exceed what is available to budget (cash in
+ * the accounts, less card debt, less what is already in envelopes). The
+ * change is measured on the envelope's balance, not the typed amount:
+ * lifting an overdrawn envelope back to zero sets nothing aside, because
+ * the overspend already left the account. Reducing an allocation, or
+ * leaving it unchanged, is always valid however tight `available` is.
  */
 async function handleAllocate(request: NextRequest) {
   const guard = await guardMutation(request, "envelopes:allocate");
@@ -62,18 +61,20 @@ async function handleAllocate(request: NextRequest) {
   }
 
   try {
-    const [available, balances] = await Promise.all([
-      getAvailableToBudget(user.id, parsed.data.month),
+    const [position, balances] = await Promise.all([
+      getBudgetPosition(user.id, parsed.data.month),
       getEnvelopeBalances(user.id, parsed.data.month),
     ]);
+    const available = position.availableAgorot;
 
-    const existingThisMonth =
-      balances.find((b) => b.categoryId === parsed.data.categoryId)?.allocatedThisMonthAgorot ?? agorot(0);
+    const envelope = balances.find((b) => b.categoryId === parsed.data.categoryId);
+    const existingThisMonth = envelope?.allocatedThisMonthAgorot ?? agorot(0);
     const delta = amountAgorot - existingThisMonth;
+    const setAside = reserveIncrease(envelope?.balanceAgorot ?? 0, delta);
 
-    if (delta > available) {
+    if (!allocationFits(setAside, available)) {
       return jsonBadRequest(
-        `This would exceed what's available to budget (${formatAgorot(available)} available, ${formatAgorot(agorot(delta))} more requested)`,
+        `This would set aside more than the cash you have free (${formatAgorot(available)} available to budget, ${formatAgorot(agorot(setAside))} more requested)`,
       );
     }
 

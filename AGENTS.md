@@ -10463,6 +10463,60 @@ the long-term core page behind another sign-in).
   "available to budget" next to Safe to Spend, the Copilot on production, chart
   axes, the ntfy default).
 
+## 3rrrr. "Available to budget" is cash, not income (ad hoc)
+
+Found by a design review of the live site: the Budgets page said available to
+budget was $1,770 while Safe to Spend on the dashboard said $721. They were
+answering different questions with similar words, and the Budgets one was wrong
+in the way that matters: it was every shekel of income ever received minus
+every allocation, so it ignored everything spent OUTSIDE an envelope and let
+the zero-sum rule (§3ss) approve funding envelopes with money that was gone.
+The owner chose to base it on cash.
+
+- **The rule** (`computeAvailableToBudget`, `src/lib/envelope-math.ts`, pure):
+  cash in the accounts, minus what credit cards owe, minus what already sits in
+  envelopes. These are the first three lines of Safe to Spend (§3yyy), built
+  from the same account balances (`loadAccountBalanceParts` and `settleAccounts`,
+  including the "count savings" setting), so the two reconcile: Safe to Spend is
+  this figure less the bills, debts and goals still to come. The Budgets page
+  says so and shows the three lines.
+- **Envelope reserve counts positive balances only** (`sumEnvelopeReserve`). An
+  overdrawn envelope contributes 0, never a negative number: its overspend
+  already left the cash, and subtracting a negative would add money back.
+- **The zero-sum check measures cash set aside, not the typed amount**
+  (`reserveIncrease`, `allocationFits`). Lifting an overdrawn envelope from -100
+  to 0 sets nothing aside; only the part above zero does. A reduction or no change
+  always fits, however tight available is; any increase needs the cash. Used by
+  `POST|PATCH /api/envelopes/allocate`, `applyEnvelopeSuggestions` (summed per
+  item, in the same transaction as the writes) and the suggestions panel, so the
+  browser and the server cannot disagree. The panel's rows carry `balanceAgorot`
+  for this.
+- **Data** (`src/server/dal/envelopes.ts`): `budgetPositionInTransaction` /
+  `getBudgetPosition` return cash, card owed, reserve, available and the savings
+  left out; `getAvailableToBudget` is the one figure. `envelopeBalancesInTransaction`
+  was extracted from `getEnvelopeBalances` so a bulk write reads balances and
+  available in one transaction. The exchange-rate table is fetched BEFORE opening
+  the scoped transaction and passed in. `availableToBudgetInTransaction` and the
+  income-minus-allocations query are gone.
+- **What changes for the user**: available no longer rises when income arrives
+  and falls only when an envelope is funded; it follows the real balance. It can
+  be negative (more set aside than the cash covers), and the page says so. The
+  allocate error now reads "This would set aside more than the cash you have free".
+  The `month` argument only affects envelope balances; cash is always live.
+- **Verified**: unit tests for the four pure rules (28 in the file); integration
+  tests against real Postgres (cash less card less envelopes, savings off, spending
+  outside vs inside an envelope, an overdrawn envelope, another user, an overdrawn
+  envelope in suggestions applying only what rises above zero, the same refused
+  when it lifts above the cash); a panel test mirroring the server's overdrawn
+  rule. Mutation-checked, each caught: reserve counting negative balances, card
+  debt ignored, apply using the typed amount instead of the cash set aside. The
+  fixtures needed `balanceAsOf` on their accounts, since an account created "now"
+  does not roll earlier-dated transactions into its balance (§3bbbb).
+- **Known limitations**: the check is not locked against two simultaneous
+  allocations (the same read-then-write as before); Safe to Spend's debts, bills
+  and goals are not subtracted here by design, and the two figures stay different
+  on purpose; no migration.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

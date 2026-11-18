@@ -2,7 +2,15 @@ import { monthKeyToExclusiveEndDate, monthKeyToStartDate, shiftMonthKey } from "
 import { SUGGESTION_MONTHS, suggestEnvelopeAmounts } from "../../lib/envelope-suggestions";
 import { agorot, type Agorot } from "../../lib/money";
 import { withUserScope } from "../db/with-user-scope";
-import { allocateInTransaction, availableToBudgetInTransaction, getAvailableToBudget, getEnvelopeBalances } from "./envelopes";
+import { allocationFits, reserveIncrease } from "../../lib/envelope-math";
+import {
+  allocateInTransaction,
+  budgetPositionInTransaction,
+  envelopeBalancesInTransaction,
+  getAvailableToBudget,
+  getEnvelopeBalances,
+} from "./envelopes";
+import { getLatestRateTable } from "./exchange-rates";
 import { getMonthlyIncomeExpenseHistory, getSpendByCategoryInRange } from "./transactions";
 
 export type EnvelopeSuggestionRow = {
@@ -10,6 +18,8 @@ export type EnvelopeSuggestionRow = {
   categoryName: string;
   averageAgorot: number;
   suggestedAgorot: number;
+  /** The envelope's rolling balance now; an overdrawn one only sets aside what rises above zero. */
+  balanceAgorot: number;
 };
 
 export type EnvelopeSuggestions = {
@@ -44,16 +54,17 @@ export async function listEnvelopeSuggestions(userId: string, month: string): Pr
     for (const row of rows) totals.set(row.categoryId, (totals.get(row.categoryId) ?? 0) + Number(row.totalAgorot));
   }
 
-  const open = new Map(balances.filter((b) => b.allocatedThisMonthAgorot === 0).map((b) => [b.categoryId, b.categoryName]));
+  const open = new Map(balances.filter((b) => b.allocatedThisMonthAgorot === 0).map((b) => [b.categoryId, b]));
   const suggestions = suggestEnvelopeAmounts(totals, monthsUsed)
     .filter((s) => open.has(s.categoryId))
-    .map((s) => ({ ...s, categoryName: open.get(s.categoryId)! }));
+    .map((s) => ({ ...s, categoryName: open.get(s.categoryId)!.categoryName, balanceAgorot: Number(open.get(s.categoryId)!.balanceAgorot) }));
 
   return { month, monthsUsed, availableAgorot: available, suggestions };
 }
 
 export type ApplyEnvelopeSuggestionsResult =
   | { ok: true; applied: number; totalAgorot: Agorot }
+  /** `requestedAgorot` is the cash these would set aside (an overdrawn envelope only counts what rises above zero). */
   | { ok: false; error: "exceeds_available"; availableAgorot: Agorot; requestedAgorot: Agorot }
   | { ok: false; error: "category_not_found" | "already_set" };
 
@@ -63,8 +74,9 @@ export const MAX_SUGGESTION_ITEMS = 100;
  * Sets the chosen envelopes for `month`, all or nothing in one transaction.
  * The request is untrusted: every category must be the caller's, must have
  * nothing set for the month yet (a suggestion never overwrites a budget the
- * user chose), and the total may not exceed what is available to budget, which
- * is read in the same transaction as the writes.
+ * user chose), and the cash newly set aside may not exceed what is available
+ * to budget (AGENTS.md §3rrrr), read in the same transaction as the writes.
+ * An overdrawn envelope only sets aside what rises above zero.
  */
 export async function applyEnvelopeSuggestions(
   userId: string,
@@ -78,6 +90,7 @@ export async function applyEnvelopeSuggestions(
     throw new RangeError("Each envelope can be set only once");
   }
 
+  const rateTable = await getLatestRateTable();
   return withUserScope(userId, async (tx): Promise<ApplyEnvelopeSuggestionsResult> => {
     const categories = await tx.category.findMany({ where: { userId, id: { in: items.map((i) => i.categoryId) }, archivedAt: null, isUncategorized: false }, select: { id: true } });
     if (categories.length !== items.length) return { ok: false, error: "category_not_found" };
@@ -89,8 +102,14 @@ export async function applyEnvelopeSuggestions(
     if (existing.length > 0) return { ok: false, error: "already_set" };
 
     const requested = agorot(items.reduce((sum, item) => sum + item.amountAgorot, 0));
-    const available = await availableToBudgetInTransaction(tx, userId, month);
-    if (requested > available) return { ok: false, error: "exceeds_available", availableAgorot: available, requestedAgorot: requested };
+    const [position, balances] = await Promise.all([
+      budgetPositionInTransaction(tx, userId, month, rateTable),
+      envelopeBalancesInTransaction(tx, userId, month),
+    ]);
+    const available = position.availableAgorot;
+    const balanceOf = new Map(balances.map((b) => [b.categoryId, Number(b.balanceAgorot)]));
+    const setAside = items.reduce((sum, item) => sum + reserveIncrease(balanceOf.get(item.categoryId) ?? 0, item.amountAgorot), 0);
+    if (!allocationFits(setAside, available)) return { ok: false, error: "exceeds_available", availableAgorot: available, requestedAgorot: agorot(setAside) };
 
     for (const item of items) {
       const result = await allocateInTransaction(tx, userId, item.categoryId, item.amountAgorot, month);

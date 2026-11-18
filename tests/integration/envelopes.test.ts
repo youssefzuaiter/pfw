@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agorot } from "../../src/lib/money";
 import { createAdminClient } from "../../src/server/db/admin-client";
-import { allocateToEnvelope, getAvailableToBudget, getEnvelopeBalances } from "../../src/server/dal/envelopes";
+import { allocateToEnvelope, getAvailableToBudget, getBudgetPosition, getEnvelopeBalances } from "../../src/server/dal/envelopes";
 
 /**
  * Integration coverage for the envelope-budgeting DAL's real SQL
@@ -20,6 +20,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
   let accountA: { id: string };
   let groceriesA: { id: string };
   let diningA: { id: string };
+  const extraUserIds: string[] = [];
 
   beforeAll(async () => {
     admin = createAdminClient();
@@ -27,7 +28,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
     userB = await admin.user.create({ data: { email: `envelopes-test-b-${Date.now()}@pfw.local`, displayName: "Envelopes Test B" } });
 
     accountA = await admin.bankAccount.create({
-      data: { userId: userA.id, institutionName: "Test Bank", last4: "1234", accountType: "CHECKING", nativeBalance: 0n },
+      data: { userId: userA.id, institutionName: "Test Bank", last4: "1234", accountType: "CHECKING", nativeBalance: 0n, balanceAsOf: new Date("2025-12-31T00:00:00.000Z") },
     });
     groceriesA = await admin.category.create({ data: { userId: userA.id, slug: "groceries", name: "Groceries" } });
     diningA = await admin.category.create({ data: { userId: userA.id, slug: "dining", name: "Dining" } });
@@ -63,18 +64,85 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
   });
 
   afterAll(async () => {
-    await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id] } } });
+    await admin.user.deleteMany({ where: { id: { in: [userA.id, userB.id, ...extraUserIds] } } });
     await admin.$disconnect();
   });
 
-  describe("getAvailableToBudget", () => {
-    it("sums income up to and including the target month, minus allocations", async () => {
-      // As of January: ₪10,000 income - ₪2,000 allocated = ₪8,000 available.
-      expect(await getAvailableToBudget(userA.id, "2026-01")).toBe(800_000);
+  describe("getAvailableToBudget (AGENTS.md §3rrrr: cash, not income)", () => {
+    async function makeUser(label: string) {
+      const user = await admin.user.create({ data: { email: `envelopes-cash-${label}-${Date.now()}@pfw.local`, displayName: `Cash ${label}` } });
+      extraUserIds.push(user.id);
+      const category = (slug: string) => admin.category.create({ data: { userId: user.id, slug, name: slug } });
+      const account = (accountType: "CHECKING" | "SAVINGS" | "CREDIT_CARD", nativeBalance: bigint) =>
+        admin.bankAccount.create({
+          data: { userId: user.id, institutionName: "Bank", last4: "0001", accountType, nativeBalance, balanceAsOf: new Date("2025-12-31T00:00:00.000Z") },
+        });
+      const spend = (accountId: string, categoryId: string, amount: bigint, day = "2026-01-10") =>
+        admin.notableTransaction.create({
+          data: {
+            userId: user.id, bankAccountId: accountId, categoryId, occurredAt: new Date(`${day}T00:00:00.000Z`),
+            amount: -amount, nativeAmount: -amount, description: "Spend", isManual: true,
+          },
+        });
+      const allocate = (categoryId: string, amount: bigint) =>
+        admin.envelopeAllocation.create({ data: { userId: user.id, categoryId, amountAgorot: amount, month: "2026-01" } });
+      return { user, category, account, spend, allocate };
+    }
+
+    it("is cash in the accounts, less card debt, less what is already in envelopes", async () => {
+      const t = await makeUser("basic");
+      await t.account("CHECKING", 1_000_000n);
+      await t.account("SAVINGS", 300_000n);
+      await t.account("CREDIT_CARD", 100_000n);
+      const groceries = await t.category("groceries");
+      await t.allocate(groceries.id, 200_000n);
+
+      const position = await getBudgetPosition(t.user.id, "2026-01");
+      expect(position).toMatchObject({ cashAgorot: 1_300_000, cardOwedAgorot: 100_000, envelopeReserveAgorot: 200_000, availableAgorot: 1_000_000 });
+      expect(await getAvailableToBudget(t.user.id, "2026-01")).toBe(1_000_000);
     });
 
-    it("accumulates further income in a later month", async () => {
-      // As of February: ₪15,000 income - ₪2,000 allocated = ₪13,000 available.
+    it("leaves savings out when the user turned that off, like Safe to Spend", async () => {
+      const t = await makeUser("savings");
+      await t.account("CHECKING", 1_000_000n);
+      await t.account("SAVINGS", 300_000n);
+      await admin.userSettings.create({ data: { userId: t.user.id, safeToSpendCountSavings: false } });
+
+      const position = await getBudgetPosition(t.user.id, "2026-01");
+      expect(position.availableAgorot).toBe(1_000_000);
+      expect(position.savingsLeftOutAgorot).toBe(300_000);
+    });
+
+    it("falls when money is spent outside any envelope, and does not when spent inside one", async () => {
+      const t = await makeUser("spend");
+      const checking = await t.account("CHECKING", 1_000_000n);
+      const groceries = await t.category("groceries");
+      const dining = await t.category("dining");
+      await t.allocate(groceries.id, 200_000n);
+      expect(await getAvailableToBudget(t.user.id, "2026-01")).toBe(800_000);
+
+      await t.spend(checking.id, groceries.id, 80_000n); // cash -80k, envelope -80k: no net change
+      expect(await getAvailableToBudget(t.user.id, "2026-01")).toBe(800_000);
+
+      await t.spend(checking.id, dining.id, 50_000n); // no envelope: cash -50k
+      expect(await getAvailableToBudget(t.user.id, "2026-01")).toBe(750_000);
+    });
+
+    it("an overdrawn envelope sets nothing aside: its overspend is already out of the cash", async () => {
+      const t = await makeUser("overdrawn");
+      const checking = await t.account("CHECKING", 1_000_000n);
+      const groceries = await t.category("groceries");
+      await t.allocate(groceries.id, 100_000n);
+      await t.spend(checking.id, groceries.id, 130_000n); // envelope at -30k
+
+      const position = await getBudgetPosition(t.user.id, "2026-01");
+      expect(position.envelopeReserveAgorot).toBe(0);
+      expect(position.availableAgorot).toBe(870_000);
+    });
+
+    it("income received no longer counts by itself: only the cash it left in the account", async () => {
+      // The test user A earned 15,000 in total, but its 14,200 of cash is what is free to budget.
+      expect(await getAvailableToBudget(userA.id, "2026-01")).toBe(1_300_000);
       expect(await getAvailableToBudget(userA.id, "2026-02")).toBe(1_300_000);
     });
 

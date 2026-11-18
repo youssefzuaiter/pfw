@@ -55,11 +55,43 @@ export function computeRollingBalance(activity: readonly MonthlyEnvelopeActivity
 }
 
 /**
- * "Ready to assign" — real income received up to and including `month`,
- * minus every allocation made up to and including `month`, across every
- * envelope. The zero-sum rule (Phase 3) is enforced by never letting a
- * new allocation push the total allocated past this figure.
+ * "Available to budget" — the cash that has not been given a job yet:
+ * what is in your accounts, minus what your cards owe, minus what already
+ * sits in envelopes (AGENTS.md §3rrrr). These are the first three lines of
+ * Safe to Spend, so the two always reconcile: Safe to Spend is this figure less
+ * the bills, debts and goals still to come.
+ *
+ * It used to be all income ever received minus all allocations, which ignored
+ * every shekel spent outside an envelope and so could show $1,770 against $721
+ * of real cash. The zero-sum rule is only worth having if it cannot let you
+ * budget money you do not have.
+ *
+ * Negative means more is set aside than the cash covers.
  */
-export function computeAvailableToBudget(totalIncomeAgorot: Agorot, totalAllocatedAgorot: Agorot): Agorot {
-  return agorot(totalIncomeAgorot - totalAllocatedAgorot);
+export function computeAvailableToBudget(input: {
+  cashAgorot: Agorot;
+  cardOwedAgorot: Agorot;
+  /** The positive envelope balances only: an overdrawn envelope's overspend is already out of cash. */
+  envelopeReserveAgorot: Agorot;
+}): Agorot {
+  return agorot(input.cashAgorot - input.cardOwedAgorot - input.envelopeReserveAgorot);
+}
+
+/** The positive balances of a set of envelopes: what is already set aside. */
+export function sumEnvelopeReserve(balancesAgorot: readonly number[]): Agorot {
+  return agorot(balancesAgorot.reduce((sum, balance) => sum + (balance > 0 ? balance : 0), 0));
+}
+
+/**
+ * How much more cash an allocation sets aside. Not the raw change: lifting an
+ * overdrawn envelope from -100 to 0 sets nothing aside, because the overspend
+ * already came out of cash. Negative when the allocation is reduced.
+ */
+export function reserveIncrease(balanceAgorot: number, deltaAgorot: number): number {
+  return Math.max(0, balanceAgorot + deltaAgorot) - Math.max(0, balanceAgorot);
+}
+
+/** Setting less aside is always allowed; setting more aside needs the cash for it. */
+export function allocationFits(increaseAgorot: number, availableAgorot: number): boolean {
+  return increaseAgorot <= 0 || increaseAgorot <= availableAgorot;
 }
