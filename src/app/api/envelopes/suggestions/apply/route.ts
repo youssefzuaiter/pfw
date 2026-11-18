@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     const result = await applyEnvelopeSuggestions(user.id, parsed.data.month, items);
     if (!result.ok) {
       if (result.error === "exceeds_available") {
-        return jsonBadRequest(`These add up to ${formatAgorot(result.requestedAgorot)} but only ${formatAgorot(result.availableAgorot)} is available to budget.`);
+        return jsonBadRequest(`These would set aside ${formatAgorot(result.requestedAgorot)}, but only ${formatAgorot(result.availableAgorot)} of cash is available to budget.`);
       }
       if (result.error === "already_set") return jsonBadRequest("One of these envelopes already has an amount for this month. Reload the page.");
       return jsonBadRequest("One of those categories does not exist.");

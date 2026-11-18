@@ -9,7 +9,7 @@ import { convertNativeAmountToAgorot } from "../../../lib/exchange-rate";
 import { getCurrentUser } from "../../../server/auth/current-user";
 import { getReportingContext, getReportingFormatter } from "../../../server/reporting/reporting-context";
 import { ReportingRateNote } from "../../../components/currency/reporting-currency-provider";
-import { getAvailableToBudget, getEnvelopeBalances } from "../../../server/dal/envelopes";
+import { getBudgetPosition, getEnvelopeBalances } from "../../../server/dal/envelopes";
 import { getLatestRateTable } from "../../../server/dal/exchange-rates";
 import {
   getSharedGroupData,
@@ -113,8 +113,8 @@ export default async function BudgetsPage({
   }
 
   const month = currentMonthKey();
-  const [availableAgorot, envelopeBalances, formatMoney, suggested] = await Promise.all([
-    getAvailableToBudget(user.id, month),
+  const [position, envelopeBalances, formatMoney, suggested] = await Promise.all([
+    getBudgetPosition(user.id, month),
     getEnvelopeBalances(user.id, month),
     getReportingFormatter(user.id),
     // The suggestions are a convenience: if they cannot be worked out, the page still works.
@@ -123,6 +123,8 @@ export default async function BudgetsPage({
       return null;
     }),
   ]);
+
+  const availableAgorot = position.availableAgorot;
 
   const envelopeRows: EnvelopeRowData[] = envelopeBalances
     .slice()
@@ -158,8 +160,29 @@ export default async function BudgetsPage({
           {formatMoney(availableAgorot)}
         </p>
         <p className="mt-1 text-xs text-muted">
-          Real income received through {month}, minus everything allocated so far — every shekel should eventually be
-          assigned somewhere. Allocations are entered in shekels.
+          The cash that has not been given a job yet. Allocations are entered in shekels, and you cannot set aside more than this.
+        </p>
+        <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-muted">{position.savingsLeftOutAgorot > 0 ? "Cash in checking" : "Cash in your accounts"}</dt>
+          <dd className="text-right font-tabular-figures tracking-tight text-fg">{formatMoney(position.cashAgorot)}</dd>
+          <dt className="text-muted">Owed on credit cards</dt>
+          <dd className="text-right font-tabular-figures tracking-tight text-fg">{formatMoney(position.cardOwedAgorot, { showPositiveSign: false })}</dd>
+          <dt className="text-muted">Already in envelopes</dt>
+          <dd className="text-right font-tabular-figures tracking-tight text-fg">{formatMoney(position.envelopeReserveAgorot)}</dd>
+        </dl>
+        {position.savingsLeftOutAgorot > 0 && (
+          <p className="mt-2 text-xs text-muted">
+            Your savings ({formatMoney(position.savingsLeftOutAgorot)}) are left out; you set them aside in Settings.
+          </p>
+        )}
+        {availableAgorot < 0 && (
+          <p className="mt-2 text-xs text-negative">
+            More is set aside in envelopes than your cash covers. Lower an allocation to free it up.
+          </p>
+        )}
+        <p className="mt-2 text-xs text-muted">
+          Safe to Spend on the dashboard starts from this same figure, then also holds back bills, debt payments and goal
+          contributions still to come, so it is lower.
         </p>
       </section>
 
@@ -173,6 +196,7 @@ export default async function BudgetsPage({
             categoryName: s.categoryName,
             averageFormatted: formatMoney(agorot(s.averageAgorot)),
             suggestedValue: (s.suggestedAgorot / 100).toFixed(2),
+            balanceAgorot: s.balanceAgorot,
           }))}
         />
       )}

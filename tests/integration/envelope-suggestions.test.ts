@@ -22,7 +22,7 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
   async function seedUser(label: string) {
     const user = await admin.user.create({ data: { email: `suggest-${label}-${stamp}@pfw.local`, displayName: `Suggest ${label}` } });
     users.push(user.id);
-    const account = await admin.bankAccount.create({ data: { userId: user.id, institutionName: "Test Bank", last4: "1111", accountType: "CHECKING", nativeBalance: 0n } });
+    const account = await admin.bankAccount.create({ data: { userId: user.id, institutionName: "Test Bank", last4: "1111", accountType: "CHECKING", nativeBalance: 0n, balanceAsOf: new Date("2026-06-30T00:00:00Z") } });
     const category = async (slug: string, extra: { archived?: boolean } = {}) =>
       (await admin.category.create({ data: { userId: user.id, slug, name: slug, archivedAt: extra.archived ? new Date() : null } })).id;
     const tx = (categoryId: string, iso: string, amount: number, extra: { isTransfer?: boolean; deleted?: boolean } = {}) =>
@@ -70,7 +70,8 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
     expect(byName.groceries).toMatchObject({ averageAgorot: 161_000, suggestedAgorot: 161_000 });
     expect(byName.dining).toMatchObject({ averageAgorot: 100_500, suggestedAgorot: 101_000 });
     expect(result.suggestions[0].categoryName).toBe("groceries");
-    expect(Number(result.availableAgorot)).toBe(500_000);
+    // Available is cash (this fixture's 500,000 income less its 784,500 of spending), not income received.
+    expect(Number(result.availableAgorot)).toBe(-284_500);
   });
 
   it("does not count a month with no activity as zero spending", async () => {
@@ -152,6 +153,23 @@ describe.skipIf(!process.env.DATABASE_URL || !process.env.APP_DATABASE_URL)("env
       expect(await rows(admin, u.id)).toEqual([]);
       // Exactly what is available is fine.
       expect(await applyEnvelopeSuggestions(u.id, MONTH, [{ categoryId: u.a, amountAgorot: agorot(100_000) }])).toMatchObject({ ok: true });
+    });
+
+    it("an overdrawn envelope only sets aside what rises above zero (the overspend already left the cash)", async () => {
+      const u = await withIncome("overdrawn", 100_000);
+      await u.allocate(u.a, 10_000, "2026-09");
+      await u.tx(u.a, "2026-09-20", -50_000); // cash 50,000; envelope at -40,000 carried into October
+      // 60,000 asked, but only 20,000 of it rises above zero: it fits in 50,000 of cash.
+      expect(await applyEnvelopeSuggestions(u.id, MONTH, [{ categoryId: u.a, amountAgorot: agorot(60_000) }])).toMatchObject({ ok: true });
+
+      const v = await withIncome("overdrawn-too-much", 100_000);
+      await v.allocate(v.a, 10_000, "2026-09");
+      await v.tx(v.a, "2026-09-20", -50_000);
+      // 100,000 lifts it to +60,000, which is more than the 50,000 of cash.
+      expect(await applyEnvelopeSuggestions(v.id, MONTH, [{ categoryId: v.a, amountAgorot: agorot(100_000) }])).toMatchObject({
+        ok: false,
+        error: "exceeds_available",
+      });
     });
 
     it("never overwrites a budget already set, and writes nothing when one is", async () => {

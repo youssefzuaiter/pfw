@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computeAvailableToBudget, computeRollingBalance, type MonthlyEnvelopeActivity } from "./envelope-math";
+import {
+  allocationFits,
+  computeAvailableToBudget,
+  computeRollingBalance,
+  reserveIncrease,
+  sumEnvelopeReserve,
+  type MonthlyEnvelopeActivity,
+} from "./envelope-math";
 import { agorot } from "./money";
 
 function activity(month: string, allocated: number, spent: number): MonthlyEnvelopeActivity {
@@ -113,15 +120,61 @@ describe("computeRollingBalance()", () => {
 });
 
 describe("computeAvailableToBudget()", () => {
-  it("is income minus total allocated", () => {
-    expect(computeAvailableToBudget(agorot(50_000), agorot(30_000))).toBe(20_000);
+  it("is cash, less what cards owe, less what is already in envelopes", () => {
+    expect(computeAvailableToBudget({ cashAgorot: agorot(72_100), cardOwedAgorot: agorot(10_000), envelopeReserveAgorot: agorot(20_000) })).toBe(42_100);
   });
 
-  it("can go negative — allocating more than real income received so far", () => {
-    expect(computeAvailableToBudget(agorot(10_000), agorot(15_000))).toBe(-5_000);
+  it("can go negative when more is set aside than the cash covers", () => {
+    expect(computeAvailableToBudget({ cashAgorot: agorot(10_000), cardOwedAgorot: agorot(0), envelopeReserveAgorot: agorot(15_000) })).toBe(-5_000);
   });
 
-  it("is zero when nothing has been allocated yet", () => {
-    expect(computeAvailableToBudget(agorot(10_000), agorot(0))).toBe(10_000);
+  it("is all the cash when nothing is owed or set aside", () => {
+    expect(computeAvailableToBudget({ cashAgorot: agorot(10_000), cardOwedAgorot: agorot(0), envelopeReserveAgorot: agorot(0) })).toBe(10_000);
+  });
+});
+
+describe("sumEnvelopeReserve()", () => {
+  it("counts positive balances only; an overdrawn envelope adds nothing back", () => {
+    expect(sumEnvelopeReserve([5_000, -3_000, 2_000, 0])).toBe(7_000);
+  });
+
+  it("is zero for no envelopes", () => {
+    expect(sumEnvelopeReserve([])).toBe(0);
+  });
+});
+
+describe("reserveIncrease()", () => {
+  it("is the whole change for an envelope in credit", () => {
+    expect(reserveIncrease(5_000, 2_000)).toBe(2_000);
+    expect(reserveIncrease(5_000, -2_000)).toBe(-2_000);
+  });
+
+  it("does not count covering an overspend: the money already left", () => {
+    expect(reserveIncrease(-10_000, 10_000)).toBe(0);
+    expect(reserveIncrease(-10_000, 4_000)).toBe(0);
+  });
+
+  it("counts only the part above zero once an overspend is covered", () => {
+    expect(reserveIncrease(-10_000, 25_000)).toBe(15_000);
+  });
+
+  it("never sets aside more than what a reduction frees", () => {
+    expect(reserveIncrease(1_000, -5_000)).toBe(-1_000);
+  });
+});
+
+describe("allocationFits()", () => {
+  it("allows setting aside no more than the available cash", () => {
+    expect(allocationFits(5_000, 5_000)).toBe(true);
+    expect(allocationFits(5_001, 5_000)).toBe(false);
+  });
+
+  it("always allows a reduction or no change, even with nothing available", () => {
+    expect(allocationFits(-1_000, -5_000)).toBe(true);
+    expect(allocationFits(0, -5_000)).toBe(true);
+  });
+
+  it("refuses any increase when more is already set aside than the cash covers", () => {
+    expect(allocationFits(1, -5_000)).toBe(false);
   });
 });

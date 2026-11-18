@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SuggestedBudgetRow } from "./suggested-budgets-panel";
 
@@ -8,8 +8,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: refreshMock }) 
 const { SuggestedBudgetsPanel } = await import("./suggested-budgets-panel");
 
 const rows: SuggestedBudgetRow[] = [
-  { categoryId: "g", categoryName: "Groceries", averageFormatted: "₪1,610.00", suggestedValue: "1610.00" },
-  { categoryId: "d", categoryName: "Dining", averageFormatted: "₪1,005.00", suggestedValue: "1010.00" },
+  { categoryId: "g", categoryName: "Groceries", averageFormatted: "₪1,610.00", suggestedValue: "1610.00", balanceAgorot: 0 },
+  { categoryId: "d", categoryName: "Dining", averageFormatted: "₪1,005.00", suggestedValue: "1010.00", balanceAgorot: 0 },
 ];
 
 function installFetch(response: Response) {
@@ -46,6 +46,16 @@ describe("SuggestedBudgetsPanel", () => {
     // Unticking one brings it back under.
     fireEvent.click(screen.getByLabelText("Set a budget for Groceries"));
     expect(screen.getByRole("button", { name: "Set 1 envelope" })).toBeEnabled();
+  });
+
+  it("counts only what rises above zero for an overdrawn envelope, like the server", () => {
+    // Groceries is overdrawn by 1,500: a 1,610 suggestion sets aside only 110; dining sets aside 1,010. Total 1,120.
+    const overdrawn = [{ ...rows[0], balanceAgorot: -150_000 }, rows[1]];
+    render(<SuggestedBudgetsPanel month="2026-10" monthsUsed={3} availableAgorot={120_000} rows={overdrawn} />);
+    expect(screen.getByRole("button", { name: "Set 2 envelopes" })).toBeEnabled();
+    cleanup();
+    render(<SuggestedBudgetsPanel month="2026-10" monthsUsed={3} availableAgorot={110_000} rows={overdrawn} />);
+    expect(screen.getByRole("button", { name: "Set 2 envelopes" })).toBeDisabled();
   });
 
   it("recomputes the total from edited amounts, and refuses a bad or zero amount", () => {

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Spinner } from "../../../../components/spinner/spinner";
+import { allocationFits, reserveIncrease } from "../../../../lib/envelope-math";
 import { agorot, formatAgorot, parseShekelsToAgorot } from "../../../../lib/money";
 
 export type SuggestedBudgetRow = {
@@ -12,6 +13,8 @@ export type SuggestedBudgetRow = {
   averageFormatted: string;
   /** The suggested amount as a shekel string, e.g. "1610.00": the input's starting value. */
   suggestedValue: string;
+  /** The envelope's rolling balance now, in agorot; an overdrawn one only sets aside what rises above zero. */
+  balanceAgorot: number;
 };
 
 function parseAmount(value: string): number | null {
@@ -26,8 +29,9 @@ function parseAmount(value: string): number | null {
 /**
  * Suggested envelope amounts from what each category cost in recent months
  * (AGENTS.md §3mmmm). Everything starts ticked and every amount can be edited.
- * The total is checked against what is available to budget before anything is
- * sent, and the server checks it again.
+ * The cash these would set aside is checked against what is available to budget
+ * (cash less card debt less what is already in envelopes, §3rrrr) before
+ * anything is sent, and the server checks it again.
  */
 export function SuggestedBudgetsPanel({
   month,
@@ -47,19 +51,23 @@ export function SuggestedBudgetsPanel({
   const [done, setDone] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { total, invalid } = useMemo(() => {
+  const { total, setAside, invalid } = useMemo(() => {
     let sum = 0;
+    let aside = 0;
     let bad = 0;
     for (const row of rows) {
       if (!ticked.has(row.categoryId)) continue;
       const amount = parseAmount(amounts[row.categoryId] ?? "");
       if (amount === null) bad++;
-      else sum += amount;
+      else {
+        sum += amount;
+        aside += reserveIncrease(row.balanceAgorot, amount);
+      }
     }
-    return { total: sum, invalid: bad };
+    return { total: sum, setAside: aside, invalid: bad };
   }, [rows, ticked, amounts]);
 
-  const exceeds = total > availableAgorot;
+  const exceeds = !allocationFits(setAside, availableAgorot);
   const canApply = !busy && ticked.size > 0 && invalid === 0 && !exceeds;
 
   function handleToggle(event: React.ChangeEvent<HTMLInputElement>) {

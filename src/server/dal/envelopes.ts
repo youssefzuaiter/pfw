@@ -1,10 +1,19 @@
 import { categoryParts } from "../../lib/transaction-splits";
 import { REAL_MONEY, SPLIT_PARTS_SELECT } from "./transactions";
 import "server-only";
+import { currentBalanceAgorot } from "../../lib/account-balance";
 import { monthKeyToExclusiveEndDate } from "../../lib/date-month";
-import { computeAvailableToBudget, computeRollingBalance, type MonthlyEnvelopeActivity } from "../../lib/envelope-math";
+import {
+  computeAvailableToBudget,
+  computeRollingBalance,
+  sumEnvelopeReserve,
+  type MonthlyEnvelopeActivity,
+} from "../../lib/envelope-math";
 import { agorot, type Agorot } from "../../lib/money";
+import { settleAccounts } from "../../lib/safe-to-spend";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
+import { loadAccountBalanceParts } from "./account-balances";
+import { getLatestRateTable, type RateTable } from "./exchange-rates";
 
 /**
  * Zero-Sum Envelope Budgeting — the ledger-math DAL. Every function
@@ -34,34 +43,73 @@ export type EnvelopeBalance = {
   sharedGroupId: string | null;
 };
 
+export type BudgetPosition = {
+  /** Cash in the accounts that count (checking, and savings unless turned off). */
+  cashAgorot: Agorot;
+  /** What credit cards owe; an overpaid card owes nothing. */
+  cardOwedAgorot: Agorot;
+  /** The positive envelope balances: money already set aside. */
+  envelopeReserveAgorot: Agorot;
+  /** Cash that has not been given a job yet; negative when more is set aside than the cash covers. */
+  availableAgorot: Agorot;
+  /** Savings left out of cash by the user's setting, so the page can say so. */
+  savingsLeftOutAgorot: Agorot;
+};
+
 /**
- * "Ready to assign": real income received up to and including `month`,
- * minus every allocation made up to and including `month`, across every
- * category. Phase 3's allocate route rejects a new allocation that would
- * push total allocations past this figure.
+ * "Available to budget" (AGENTS.md §3rrrr): cash in the accounts, minus what
+ * the cards owe, minus what already sits in envelopes. The first three lines
+ * of Safe to Spend, built from the same balances, so the two reconcile; Safe
+ * to Spend then also holds back bills, debts and goals still to come.
+ *
+ * The zero-sum rule refuses to set aside more than this, so an envelope can
+ * never be funded with money that is not there. (It used to be all income ever
+ * received minus all allocations, which ignored everything spent outside an
+ * envelope.)
+ *
+ * `rateTable` is passed in because it is read outside a user-scoped
+ * transaction; fetch it before opening the one this runs in.
  */
-export async function getAvailableToBudget(userId: string, month: string): Promise<Agorot> {
-  return withUserScope(userId, (tx) => availableToBudgetInTransaction(tx, userId, month));
+export async function budgetPositionInTransaction(
+  tx: ScopedTransactionClient,
+  userId: string,
+  month: string,
+  rateTable: RateTable,
+): Promise<BudgetPosition> {
+  const [accountRows, balances, settings] = await Promise.all([
+    loadAccountBalanceParts(tx, userId),
+    envelopeBalancesInTransaction(tx, userId, month),
+    tx.userSettings.findUnique({ where: { userId }, select: { safeToSpendCountSavings: true } }),
+  ]);
+  const countSavings = settings?.safeToSpendCountSavings ?? true;
+
+  const { cashAgorot, cardOwedAgorot, savingsAgorot, savingsCounted } = settleAccounts(
+    accountRows.map(({ parts }) => ({
+      accountType: parts.accountType,
+      balanceAgorot: currentBalanceAgorot(parts, rateTable[parts.currency]),
+    })),
+    { countSavings },
+  );
+  const envelopeReserveAgorot = sumEnvelopeReserve(balances.map((b) => b.balanceAgorot));
+
+  return {
+    cashAgorot,
+    cardOwedAgorot,
+    envelopeReserveAgorot,
+    availableAgorot: computeAvailableToBudget({ cashAgorot, cardOwedAgorot, envelopeReserveAgorot }),
+    savingsLeftOutAgorot: savingsCounted ? agorot(0) : savingsAgorot,
+  };
 }
 
-/** `getAvailableToBudget` inside a transaction the caller already holds, so a bulk write can check and write as one. */
-export async function availableToBudgetInTransaction(tx: ScopedTransactionClient, userId: string, month: string): Promise<Agorot> {
-  const cutoff = monthKeyToExclusiveEndDate(month);
+/** `budgetPositionInTransaction` in a transaction of its own. */
+export async function getBudgetPosition(userId: string, month: string): Promise<BudgetPosition> {
+  const rateTable = await getLatestRateTable();
+  return withUserScope(userId, (tx) => budgetPositionInTransaction(tx, userId, month, rateTable));
+}
 
-  const [incomeResult, allocationResult] = await Promise.all([
-    tx.notableTransaction.aggregate({
-      where: { userId, occurredAt: { lt: cutoff }, amount: { gt: 0n }, ...REAL_MONEY },
-      _sum: { amount: true },
-    }),
-    tx.envelopeAllocation.aggregate({
-      where: { userId, month: { lte: month } },
-      _sum: { amountAgorot: true },
-    }),
-  ]);
-
-  const totalIncome = agorot(Number(incomeResult._sum.amount ?? 0n));
-  const totalAllocated = agorot(Number(allocationResult._sum.amountAgorot ?? 0n));
-  return computeAvailableToBudget(totalIncome, totalAllocated);
+/** Just the available figure. */
+export async function getAvailableToBudget(userId: string, month: string): Promise<Agorot> {
+  return (await getBudgetPosition(userId, month)).availableAgorot;
 }
 
 /**
@@ -75,7 +123,16 @@ export async function availableToBudgetInTransaction(tx: ScopedTransactionClient
  * page's "unbudgeted categories" section already established.
  */
 export async function getEnvelopeBalances(userId: string, month: string): Promise<EnvelopeBalance[]> {
-  return withUserScope(userId, async (tx) => {
+  return withUserScope(userId, (tx) => envelopeBalancesInTransaction(tx, userId, month));
+}
+
+/** `getEnvelopeBalances` inside a transaction the caller already holds. */
+export async function envelopeBalancesInTransaction(
+  tx: ScopedTransactionClient,
+  userId: string,
+  month: string,
+): Promise<EnvelopeBalance[]> {
+  {
     const cutoff = monthKeyToExclusiveEndDate(month);
 
     const [categories, allocationRows, transactionRows] = await Promise.all([
@@ -140,7 +197,7 @@ export async function getEnvelopeBalances(userId: string, month: string): Promis
         sharedGroupId: latestSharedGroupState.get(category.id)?.sharedGroupId ?? null,
       };
     });
-  });
+  }
 }
 
 export type AllocateToEnvelopeResult =
