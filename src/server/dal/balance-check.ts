@@ -69,7 +69,7 @@ export async function checkAccountBalance(
 
     const after = rollForwardFilter(account);
     const rows = await tx.notableTransaction.findMany({
-      where: { userId, bankAccountId: accountId, ...LIVE, occurredAt: { ...after, lt: new Date(day.getTime() + DAY_MS) } },
+      where: { userId, bankAccountId: accountId, isPaper: false, ...LIVE, occurredAt: { ...after, lt: new Date(day.getTime() + DAY_MS) } },
       orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
       take: MAX_ROWS,
       select: { id: true, occurredAt: true, currency: true, nativeAmount: true, amount: true, merchantName: true, description: true },

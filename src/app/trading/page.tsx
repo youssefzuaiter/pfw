@@ -37,7 +37,7 @@ export default async function TradingPage({
   const user = await getCurrentUser();
   const now = new Date();
   const [holdings, trades, rateTable] = await Promise.all([
-    listPortfolioHoldings(user.id),
+    listPortfolioHoldings(user.id, { includePaper: true }),
     listTrades(user.id),
     getLatestRateTable(now),
   ]);
@@ -156,7 +156,10 @@ export default async function TradingPage({
               return (
                 <li key={holding.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 first:border-t-0 first:pt-0">
                   <div>
-                    <p className="font-medium text-fg">{holding.symbol}</p>
+                    <p className="font-medium text-fg">
+                      {holding.symbol}
+                      {holding.isPaper && <span className="ml-2 text-xs font-normal text-muted">paper</span>}
+                    </p>
                     <p className="font-tabular-figures text-xs text-muted">
                       {holding.quantity.toFixed(4)} sh · cost basis {formatAgorot(costBasis)}
                       {priceCaption && ` · ${priceCaption}`}

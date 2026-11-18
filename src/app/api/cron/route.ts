@@ -10,6 +10,7 @@ import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
 import { encryptLegacyPlaintextBankTokens } from "../../../server/crypto/legacy-plaintext-sweep";
+import { flagExistingPaperRows } from "../../../server/paper-trader/flag-existing-paper-rows";
 import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { StaleDataError } from "../../../server/stale-data-error";
 import { jsonForbidden, jsonServerError } from "../../../server/api/responses";
@@ -236,6 +237,20 @@ export async function GET(request: NextRequest) {
       return { ok: true };
     });
 
+    // Flags paper-trader rows written before `isPaper` existed (§3pppp), so
+    // practice money stays out of every real total. A no-op once flagged.
+    const paperRowFlagging = await runJob("paper-row-flagging", async () => {
+      const result = await flagExistingPaperRows();
+      if (!result.ok) return result;
+      if (result.transactionsFlagged > 0 || result.holdingsFlagged > 0 || result.conflicts > 0) {
+        console.log(
+          `cron: paper-row-flagging ok — transactions=${result.transactionsFlagged} holdings=${result.holdingsFlagged} conflicts=${result.conflicts}`,
+        );
+      }
+      if (result.conflicts > 0) return { ok: false, error: `${result.conflicts} holding(s) look like paper positions but a paper holding already exists in that ticker` };
+      return { ok: true };
+    });
+
     const results = {
       fxRateSync,
       fxRateHistory,
@@ -248,6 +263,7 @@ export async function GET(request: NextRequest) {
       rateLimitCleanup,
       encryptionKeyRotation,
       legacyPlaintextEncryption,
+      paperRowFlagging,
     };
 
     // The one place a nightly failure reaches a human (AGENTS.md §3yy).

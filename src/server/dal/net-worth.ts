@@ -55,7 +55,8 @@ export async function computeLiveNetWorth(userId: string, asOf: Date = new Date(
       const [accounts, assets, holdings, debts] = await Promise.all([
         loadAccountBalanceParts(tx, userId),
         tx.manualAsset.findMany({ where: { userId } }),
-        tx.portfolioHolding.findMany({ where: { userId } }),
+        // Real positions only: a paper-trader position is practice money (AGENTS.md §3pppp).
+        tx.portfolioHolding.findMany({ where: { userId, isPaper: false } }),
         tx.debt.findMany({ where: { userId } }),
       ]);
       // Same transaction as the holdings themselves, so the price of a

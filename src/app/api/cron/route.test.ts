@@ -24,6 +24,7 @@ vi.mock("../../../server/dead-mans-switch/inactivity-check", () => ({ runInactiv
 vi.mock("../../../server/dal/rate-limit-buckets", () => ({ deleteExpiredRateLimitBuckets: vi.fn() }));
 vi.mock("../../../server/crypto/key-rotation", () => ({ runEncryptionKeyRotationSweep: vi.fn() }));
 vi.mock("../../../server/crypto/legacy-plaintext-sweep", () => ({ encryptLegacyPlaintextBankTokens: vi.fn() }));
+vi.mock("../../../server/paper-trader/flag-existing-paper-rows", () => ({ flagExistingPaperRows: vi.fn() }));
 vi.mock("../../../server/crypto/field-encryption", () => ({ getEncryptionKeyFingerprints: vi.fn() }));
 vi.mock("../../../server/ops/operator-alert", () => ({ sendOperatorAlert: vi.fn() }));
 vi.mock("../../../server/alerts/phone-alerts-job", () => ({ sendPhoneAlerts: vi.fn(), sendOperatorPhoneAlert: vi.fn() }));
@@ -38,6 +39,7 @@ import { runInactivityCheck } from "../../../server/dead-mans-switch/inactivity-
 import { deleteExpiredRateLimitBuckets } from "../../../server/dal/rate-limit-buckets";
 import { runEncryptionKeyRotationSweep } from "../../../server/crypto/key-rotation";
 import { encryptLegacyPlaintextBankTokens } from "../../../server/crypto/legacy-plaintext-sweep";
+import { flagExistingPaperRows } from "../../../server/paper-trader/flag-existing-paper-rows";
 import { getEncryptionKeyFingerprints } from "../../../server/crypto/field-encryption";
 import { sendOperatorAlert } from "../../../server/ops/operator-alert";
 import { sendOperatorPhoneAlert, sendPhoneAlerts } from "../../../server/alerts/phone-alerts-job";
@@ -64,6 +66,7 @@ function allHealthy() {
   vi.mocked(deleteExpiredRateLimitBuckets).mockResolvedValue(0 as never);
   vi.mocked(runEncryptionKeyRotationSweep).mockResolvedValue({ ok: true, inProgress: false } as never);
   vi.mocked(encryptLegacyPlaintextBankTokens).mockResolvedValue({ ok: true, encrypted: 0, failed: 0, remaining: 0 });
+  vi.mocked(flagExistingPaperRows).mockResolvedValue({ ok: true, transactionsFlagged: 0, holdingsFlagged: 0, conflicts: 0 });
   vi.mocked(getEncryptionKeyFingerprints).mockReturnValue({ current: CURRENT_KID, next: null });
 }
 
@@ -87,6 +90,26 @@ describe("GET /api/cron operator alert", () => {
     expect(sendOperatorAlert).not.toHaveBeenCalled();
     expect(sendOperatorPhoneAlert).not.toHaveBeenCalled();
     expect((await GET(request()).then((r) => r.json())).operatorPhoneAlert).toBe("not_needed");
+  });
+
+  it("alerts when a paper holding is split across two rows, naming how many", async () => {
+    allHealthy();
+    vi.mocked(flagExistingPaperRows).mockResolvedValue({ ok: true, transactionsFlagged: 3, holdingsFlagged: 1, conflicts: 2 });
+
+    const body = await (await GET(request())).json();
+    expect(body.paperRowFlagging.ok).toBe(false);
+    expect(vi.mocked(sendOperatorAlert).mock.calls[0][0].lines).toEqual([
+      "paperRowFlagging: 2 holding(s) look like paper positions but a paper holding already exists in that ticker",
+    ]);
+  });
+
+  it("stays healthy when paper rows were flagged without conflict", async () => {
+    allHealthy();
+    vi.mocked(flagExistingPaperRows).mockResolvedValue({ ok: true, transactionsFlagged: 5, holdingsFlagged: 2, conflicts: 0 });
+
+    const body = await (await GET(request())).json();
+    expect(body.paperRowFlagging.ok).toBe(true);
+    expect(sendOperatorAlert).not.toHaveBeenCalled();
   });
 
   it("reports a bank token that could not be encrypted, with how many are still plaintext", async () => {
