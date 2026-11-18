@@ -57,11 +57,12 @@ export function PositionsTable({ rows }: { rows: PortfolioRow[] }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.symbol} className="border-b border-border last:border-b-0">
+            <tr key={`${row.symbol}:${row.isPaper}`} className="border-b border-border last:border-b-0">
               <td className="py-3 pr-3">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-fg">{row.symbol}</span>
                   <Badge variant={CLASS_VARIANT[row.assetClass]}>{CLASS_LABEL[row.assetClass]}</Badge>
+                  {row.isPaper && <Badge variant="neutral">Paper</Badge>}
                 </div>
                 <p className="text-xs text-muted">{row.name}</p>
               </td>

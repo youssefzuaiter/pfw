@@ -103,6 +103,7 @@ export async function recordPendingPaperTrade(
       exchangeRate: input.exchangeRate,
       executedAt: input.executedAt,
       idempotencyKey: input.idempotencyKey,
+      isPaper: true,
     });
 
     return { status: "recorded", tradeId: trade.id };
@@ -286,6 +287,8 @@ async function bookLedgerEntryForSettledTrade(
       merchantName: tier0.renamedMerchantName ?? merchantName,
       // `isManual` means manually *entered* (§3j) — this was not.
       isManual: false,
+      // Practice money: shown in the ledger list, never in a balance or a total.
+      isPaper: true,
       // A signed receipt is unambiguous by construction, so nothing here
       // is low-confidence the way a categorization guess would be. Only
       // a user's own Tier 0 `flag` action puts it in the review queue.
@@ -347,6 +350,7 @@ export async function settlePaperTradeReceipt(
           currency: input.currency,
           exchangeRate: input.exchangeRate,
           settledAt: input.executedAt,
+          isPaper: true,
         })
       : await executeTradeInTransaction(tx, userId, {
           symbol: input.symbol,
@@ -358,6 +362,7 @@ export async function settlePaperTradeReceipt(
           exchangeRate: input.exchangeRate,
           executedAt: input.executedAt,
           idempotencyKey: input.idempotencyKey,
+          isPaper: true,
         });
 
     if (!execution.ok) return { status: "rejected", reason: "insufficient_shares" };

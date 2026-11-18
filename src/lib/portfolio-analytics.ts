@@ -34,6 +34,8 @@ export type AnalyticsPosition = {
   /** Live per-share price. */
   currentPrice: Agorot;
   nativeCurrentPrice: NativeAmount;
+  /** A position the paper trader built (AGENTS.md §3pppp): shown, but labelled, and never part of real totals. */
+  isPaper?: boolean;
 };
 
 /** A dividend already received on this position — a historical fact. */

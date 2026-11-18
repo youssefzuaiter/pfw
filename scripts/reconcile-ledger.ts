@@ -93,7 +93,7 @@ async function main() {
 
   const admin = createAdminClient();
   const holdings = await admin.portfolioHolding.findMany({
-    where: { userId },
+    where: { userId, isPaper: true },
     select: { symbol: true, quantity: true },
     orderBy: { symbol: "asc" },
   });

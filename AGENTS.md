@@ -10380,45 +10380,88 @@ the balance never fell. Both are fixed, in two separate ways.
   and Prisma selects every column, so until it runs anything that reads debts
   (the Debts page, net worth, Safe to Spend, the advisor) fails.
 
-## 3qqqq. The two dashboard forecasts say what they assume (ad hoc)
+## 3pppp. Paper-trader money stays out of real totals (ad hoc)
 
-A design review pointed at the dashboard showing a 60-day forecast ending at
--$385 and, directly below it, a 30-day one whose median climbed to about $5,000.
-Neither is wrong, and they do start from the same cash (`bankAccounts` and
-`liquidity.liquidAgorot` are the same figure: non-card bank balances). They answer
-different questions, and the screen never said so:
+Found by a design review of the live site, then confirmed in the code: the paper
+trader's fills (§3uu) are booked into the owner's real account. A settled
+receipt wrote a ledger row into the account matching the trade's currency (the
+owner's real QNB USD account) and a `PortfolioHolding`. So paper TSLA sat inside
+real net worth and runway, and each paper BUY LOWERED the real USD balance that
+Safe to Spend, the runway and the balance check read. The same trade moved the
+two in opposite directions, so net worth looked fine while cash was wrong.
 
-- the **60-day** forecast (§3b, §3llll) counts what is known to be coming: bills,
-  regular charges, an average of everyday spending. It assumes no new income
-  unless a deposit was detected as regular, so it is "what if no new money
-  arrives";
-- the **30-day** one (§3dd) learns from the last 90 days of actual NET cash flow,
-  income included, and knows nothing about a specific bill coming due. It is
-  "what if the last 90 days repeat". For an account whose last 90 days netted
-  money in, it drifts up whatever the bills are.
+The owner chose to keep one login and exclude the paper money, over moving the
+trader to a separate account (which would also have hidden Agent Activity and
+the long-term core page behind another sign-in).
 
-- **Both are now labelled by their assumption**: the headings ("60-day forecast:
-  bills and average spending", "30-day forecast: if the last 90 days repeat") and
-  a sentence under each chart.
-- **When they diverge, the 30-day card says why, in money**
-  (`src/lib/forecast-comparison.ts`, `ForecastGapNote`): on the day the 30-day
-  forecast ends, what each shows, and the average daily net of the last 90 days
-  ("about +₪134.24 a day... this forecast carries that on; the one above assumes
-  no new income"). It appears only for a gap of at least ₪100 and at least a tenth
-  of the larger balance involved, and says "disagree on direction" when one ends
-  above today's cash and the other below. The 60-day days are passed to the card
-  as `knownDays` and matched by date; no match, no note.
-- **Deliberately not done**: changing either forecast's maths. Making the model
-  aware of bills would mean retraining it (it learns a pattern, it cannot be
-  handed a schedule), and dropping non-regular income from the 90-day history
-  would make it a worse forecast of an account that really has that income. The
-  60-day chart still has no Y-axis labels; that is its own item.
-- **Verified**: unit tests for the comparison rule (opposite directions, same
-  direction, agreement, the money floor, the share, a missing figure), component
-  tests for the card (labelled, explains a disagreement with the figures and the
-  income, silent on agreement or no matching day, the spending-history wording),
-  each rule broken on purpose and caught, and the real dashboard in a browser,
-  where the demo account produced exactly the case in the review.
+- **Two flags** (migration `20261118120000_paper_trades_flag`):
+  `PortfolioHolding.isPaper` and `NotableTransaction.isPaper`, both default false.
+  `isPaper` is part of the holding's unique key (`userId, symbol, isPaper`), so a
+  paper position and a simulated-desk position in the same ticker are separate
+  rows instead of one mixed quantity. `Trade` has no column of its own: a trade
+  is paper when its holding is.
+- **What now ignores paper money.** Net worth and the liquidity breakdown (so
+  runway, the Monte Carlo start and the dashboard concentration insight), every
+  account balance (`loadAccountBalanceParts`, which Safe to Spend and the Assets
+  page read) and the balance check, and `REAL_MONEY`, so income, spending,
+  envelopes, trends, the monthly review, subscription detection and alerts. The
+  paper ledger rows still appear in the transactions list (category "Paper
+  Trading"); the trading screens still show paper positions, labelled "Paper".
+- **Defaults fail safe.** `listPortfolioHoldings(userId)` returns real positions
+  only; the trading, portfolio and tax screens ask for `{ includePaper: true }`
+  by name. `getPortfolioHoldingBySymbol` is the simulated desk's and never
+  returns a paper row. The paper path passes `isPaper: true` through
+  `createPendingTrade`, `settleExistingTrade`, `executeTradeInTransaction` and
+  the ledger row, so a pending-then-settled receipt lands in one paper holding.
+- **Existing rows** are flagged twice over. The migration's backfill runs only
+  when its role can bypass row-level security (the tables have FORCED RLS, and
+  for a role that cannot, an UPDATE matches nothing and "succeeds"; it says so
+  with a NOTICE and skips). The same logic is `flagExistingPaperRows`
+  (`src/server/paper-trader/flag-existing-paper-rows.ts`, an allowlisted
+  admin-client file), run nightly as the cron's `paperRowFlagging` job and by
+  hand with `npm run flag:paper-rows`. A ledger row is paper when its key starts
+  `paper-trade:`. A holding is paper when it has a `HoldingLot` (only the paper
+  path writes those), a trade that never settled (only the paper path creates
+  pending trades), or a trade whose key is on a paper ledger row. A holding that
+  mixed desk and paper trades in one ticker becomes wholly paper: they could not
+  be told apart before the column existed. If a receipt arrived after the deploy
+  but before the flagging, a ticker can be split across two paper-looking
+  holdings; the sweep will not choose between two cost bases, counts it as
+  `conflicts`, logs it, and the cron reports a failed job so it reaches the
+  operator alert.
+- **Tax simulator fix, found in the same review.** `/trading/tax` said "No open
+  positions" while the portfolio held 1.27 shares of TSLA: the builder skipped
+  every ticker outside the ten mock instruments, because it priced everything
+  from the mock feed. It now prices a holding like every other screen
+  (`resolveHoldingPrices`: mock feed, then a stored real quote or the last fill)
+  and names an unknown ticker by its symbol. It also stops counting orders that
+  never filled (`status` not SETTLED) as purchases and sales.
+- **Verified**: `tests/integration/paper-money-separation.test.ts` (8, real
+  Postgres): a paper fill leaves net worth, the bank balance, the runway cash and
+  every income and spending total exactly as they were; a paper GOOGL and a desk
+  GOOGL are two holdings; a pending-then-settled receipt lands in one paper
+  holding; the paper rows are listed but do not move the balance check; the tax
+  simulator sees paper-bought TSLA; the sweep flags legacy rows, treats a
+  pending-only holding as paper, leaves a desk position alone, is idempotent, and
+  reports a split instead of choosing. Mutation-checked, each caught: net worth
+  counting paper holdings, `REAL_MONEY` ignoring the flag, the balance roll-forward
+  and the balance check counting paper rows, the default holdings list including
+  paper, the ledger row unflagged, the settle path ignoring the flag, the tax
+  builder skipping unknown tickers, and the sweep ignoring a conflict. The
+  migration's backfill was also run against a legacy-shaped copy (a paper
+  holding with a lot, a pending-only holding, a desk holding, a paper and a real
+  ledger row): exactly the paper ones were flagged.
+- **Production needs `deploy-migrations.yml`** for the new migration in the same
+  sitting as the merge (§3eee). Until it runs, the app cannot read
+  `PortfolioHolding` or `NotableTransaction` at all: Prisma selects every column.
+  After it, run the cron once (or `npm run flag:paper-rows`) and check its
+  response for `paperRowFlagging`.
+- **Not done**: a "Paper" badge on ledger rows (the Paper Trading category
+  already names them); keeping the trader's cash out of the real account entirely
+  rather than flagged (the ledger row exists so the trader's activity stays
+  visible); the other review findings (the 30-day forecast ignoring bills,
+  "available to budget" next to Safe to Spend, the Copilot on production, chart
+  axes, the ntfy default).
 
 ## 4. Design system (Phase 0)
 
