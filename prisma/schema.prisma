@@ -851,6 +851,11 @@ model NotableTransaction {
   /// roughly doubling apparent income. Importing the USD side as well
   /// would have counted the same money twice.
   isTransfer            Boolean                     @default(false)
+  /// True for the ledger row a paper-trader fill wrote (AGENTS.md §3pppp).
+  /// Practice money must not move a real account: a row flagged here stays
+  /// in the ledger list, labelled by its Paper Trading category, but is left
+  /// out of every account balance and every earned-or-spent total.
+  isPaper               Boolean                     @default(false)
   /// Set when soft-deleted; null for a live row.
   ///
   /// Soft, not hard: LedgerCommit cascades from this row and is
@@ -1153,11 +1158,17 @@ model PortfolioHolding {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
+  /// True for a position the paper trader built (AGENTS.md §3pppp). Paper
+  /// money is practice money: it never counts in net worth, runway or any
+  /// other real total, so a paper position is kept apart from a simulated-desk
+  /// one even for the same ticker — hence the flag is part of the unique key.
+  isPaper     Boolean    @default(false)
+
   trades      Trade[]
   dividends   Dividend[]
   holdingLots HoldingLot[]
 
-  @@unique([userId, symbol])
+  @@unique([userId, symbol, isPaper])
 }
 
 /// Persisted, per-lot cost-basis tracking for the Tier-0 paper-trading

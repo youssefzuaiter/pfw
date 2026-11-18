@@ -13,12 +13,22 @@ import {
 import { getLatestEquityQuotes } from "./equity-quotes";
 import { withUserScope, type ScopedTransactionClient } from "../db/with-user-scope";
 
-export async function listPortfolioHoldings(userId: string) {
-  return withUserScope(userId, (tx) => tx.portfolioHolding.findMany({ where: { userId }, orderBy: { symbol: "asc" } }));
+/**
+ * Real positions by default. A paper-trader position (`isPaper`) is practice
+ * money and must not reach net worth, runway or any other real total
+ * (AGENTS.md §3pppp), so a caller has to ask for paper positions by name.
+ * Only the trading screens, which show the whole trading world, do.
+ */
+export async function listPortfolioHoldings(userId: string, options: { includePaper?: boolean } = {}) {
+  const paperFilter = options.includePaper ? {} : { isPaper: false };
+  return withUserScope(userId, (tx) =>
+    tx.portfolioHolding.findMany({ where: { userId, ...paperFilter }, orderBy: [{ symbol: "asc" }, { isPaper: "asc" }] }),
+  );
 }
 
+/** The simulated desk's position in `symbol`; never the paper trader's. */
 export async function getPortfolioHoldingBySymbol(userId: string, symbol: string) {
-  return withUserScope(userId, (tx) => tx.portfolioHolding.findFirst({ where: { userId, symbol } }));
+  return withUserScope(userId, (tx) => tx.portfolioHolding.findFirst({ where: { userId, symbol, isPaper: false } }));
 }
 
 export async function listTrades(userId: string) {
@@ -193,6 +203,8 @@ export type ExecuteTradeInput = {
   exchangeRate: number;
   executedAt: Date;
   idempotencyKey?: string;
+  /** True only for a fill the paper trader reported. Keeps the position apart from the simulated desk's and out of every real total. */
+  isPaper?: boolean;
 };
 
 export type ExecuteTradeResult =
@@ -223,9 +235,10 @@ type ApplyTradeResult = { ok: true } & AppliedTrade | { ok: false; error: "insuf
 async function applyTradeToHolding(
   tx: ScopedTransactionClient,
   userId: string,
-  input: Pick<ExecuteTradeInput, "symbol" | "side" | "quantity" | "priceAgorot" | "nativePriceAmount" | "currency">,
+  input: Pick<ExecuteTradeInput, "symbol" | "side" | "quantity" | "priceAgorot" | "nativePriceAmount" | "currency" | "isPaper">,
 ): Promise<ApplyTradeResult> {
-  const existingHolding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol } });
+  const isPaper = input.isPaper === true;
+  const existingHolding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol, isPaper } });
   const totalAgorot = multiplyAgorot(input.priceAgorot, input.quantity);
   const nativeTotalAmount = multiplyNativeAmount(input.nativePriceAmount, input.quantity);
 
@@ -268,6 +281,7 @@ async function applyTradeToHolding(
           userId,
           symbol: input.symbol,
           currency: input.currency,
+          isPaper,
           quantity: nextPosition.quantity.toString(),
           totalCostBasis: BigInt(nextPosition.totalCostBasis),
           nativeCostBasis: BigInt(nextPosition.nativeCostBasis),
@@ -327,7 +341,7 @@ export async function executeTradeInTransaction(
 
 export type PendingTradeInput = Pick<
   ExecuteTradeInput,
-  "symbol" | "side" | "quantity" | "priceAgorot" | "nativePriceAmount" | "currency" | "exchangeRate" | "executedAt" | "idempotencyKey"
+  "symbol" | "side" | "quantity" | "priceAgorot" | "nativePriceAmount" | "currency" | "exchangeRate" | "executedAt" | "idempotencyKey" | "isPaper"
 >;
 
 /**
@@ -352,10 +366,11 @@ export async function createPendingTrade(
   userId: string,
   input: PendingTradeInput,
 ) {
-  let holding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol } });
+  const isPaper = input.isPaper === true;
+  let holding = await tx.portfolioHolding.findFirst({ where: { userId, symbol: input.symbol, isPaper } });
   if (!holding) {
     holding = await tx.portfolioHolding.create({
-      data: { userId, symbol: input.symbol, currency: input.currency, quantity: "0", totalCostBasis: 0n, nativeCostBasis: 0n },
+      data: { userId, symbol: input.symbol, currency: input.currency, isPaper, quantity: "0", totalCostBasis: 0n, nativeCostBasis: 0n },
     });
   }
 
@@ -382,7 +397,7 @@ export async function createPendingTrade(
   });
 }
 
-export type SettleTradeInput = Pick<ExecuteTradeInput, "symbol" | "side" | "quantity" | "currency" | "exchangeRate"> & {
+export type SettleTradeInput = Pick<ExecuteTradeInput, "symbol" | "side" | "quantity" | "currency" | "exchangeRate" | "isPaper"> & {
   /** The REAL fill price/total — not the original pending order's limit price. */
   priceAgorot: Agorot;
   nativePriceAmount: NativeAmount;

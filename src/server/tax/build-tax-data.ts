@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { agorot, subtractAgorot, type Agorot } from "../../lib/money";
 import { nativeAmount, type CurrencyCode } from "../../lib/currency";
-import { getMockInstrument, getMockPriceAgorot, isKnownMockSymbol } from "../../lib/mock-market-data";
+import { findMockInstrument } from "../../lib/mock-market-data";
 import { sumDividendIncome } from "../../lib/portfolio-analytics";
 import {
   replayTaxLots,
@@ -30,7 +30,7 @@ import {
 } from "../../lib/tax-loss-harvesting";
 import { getLatestRateTable } from "../dal/exchange-rates";
 import { listPaidDividends } from "../dal/dividends";
-import { listPortfolioHoldings, listTrades } from "../dal/portfolio";
+import { listPortfolioHoldings, listTrades, resolveHoldingPrices } from "../dal/portfolio";
 
 export type OpenLotRow = OpenTaxLot & {
   symbolName: string;
@@ -106,16 +106,25 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
   };
 
   const [holdings, trades, rateTable, paidDividends] = await Promise.all([
-    listPortfolioHoldings(userId),
+    listPortfolioHoldings(userId, { includePaper: true }),
     listTrades(userId),
     getLatestRateTable(asOf),
     listPaidDividends(userId),
   ]);
 
+  // Priced the way every other screen prices a holding: the mock feed for a
+  // seeded ticker, a stored real quote or the last fill for anything else. A
+  // ticker the paper trader bought (TSLA) used to be skipped here entirely, so
+  // the simulator reported "no open positions" while the portfolio held it.
+  const holdingPrices = await resolveHoldingPrices(userId, holdings, asOf, rateTable.USD);
+  const nameOf = (symbol: string) => findMockInstrument(symbol)?.name ?? symbol;
+
   const currencyBySymbol = new Map<string, CurrencyCode>(holdings.map((h) => [h.symbol, h.currency]));
   const tradesBySymbol = new Map<string, typeof trades>();
   for (const trade of trades) {
-    if (!isKnownMockSymbol(trade.symbol)) continue; // defensive — every trade is placed against a mock symbol via TradeForm
+    // An order still waiting to fill (or one that never did) has no cost-basis
+    // effect, so it is not a purchase or a sale for tax purposes.
+    if (trade.status !== "SETTLED") continue;
     const list = tradesBySymbol.get(trade.symbol) ?? [];
     list.push(trade);
     tradesBySymbol.set(trade.symbol, list);
@@ -150,7 +159,9 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
       }
     }
 
-    const currentPriceAgorot = getMockPriceAgorot(symbol, asOf, rateTable.USD);
+    // listTrades is newest first, so the first entry is the latest fill.
+    const lastTrade = symbolTrades[0];
+    const currentPriceAgorot = holdingPrices.get(symbol)?.priceAgorot ?? agorot(Number(lastTrade.priceAgorot));
     currentPriceBySymbol.set(symbol, currentPriceAgorot);
 
     recentBuyDatesBySymbol.set(
@@ -160,7 +171,7 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
         .map((t) => t.executedAt),
     );
 
-    const symbolName = getMockInstrument(symbol).name;
+    const symbolName = nameOf(symbol);
     for (const lot of openLots) {
       const currentValueAgorot = agorot(Math.round(currentPriceAgorot * lot.quantity));
       const unrealizedGainAgorot = subtractAgorot(currentValueAgorot, lot.costBasisAgorot);
@@ -208,7 +219,7 @@ export const buildTaxSimulation = cache(async function buildTaxSimulation(
     recentBuyDatesBySymbol,
     blendedMarginalRate,
     asOf,
-  ).map((candidate) => ({ ...candidate, symbolName: getMockInstrument(candidate.symbol).name }));
+  ).map((candidate) => ({ ...candidate, symbolName: nameOf(candidate.symbol) }));
 
   return {
     asOf,

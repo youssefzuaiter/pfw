@@ -29,6 +29,8 @@ export type PortfolioRow = PositionReturn & {
   priceCaption: string | null;
   /** Trailing 12-month dividend yield, or null when market value is zero. */
   trailingYield: number | null;
+  /** A paper-trader position: practice money, labelled as such. */
+  isPaper: boolean;
 };
 
 export type PortfolioData = {
@@ -55,7 +57,7 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
   asOf: Date = new Date(),
 ): Promise<PortfolioData> {
   const [holdings, trades, announced, paid, rateTable] = await Promise.all([
-    listPortfolioHoldings(userId),
+    listPortfolioHoldings(userId, { includePaper: true }),
     listTrades(userId),
     listAnnouncedDividends(userId),
     listPaidDividends(userId),
@@ -72,6 +74,7 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
     nativeCostBasis: nativeAmount(Number(holding.nativeCostBasis)),
     currentPrice: holdingPrices.get(holding.symbol)!.priceAgorot,
     nativeCurrentPrice: holdingPrices.get(holding.symbol)!.nativePrice,
+    isPaper: holding.isPaper,
   }));
 
   // Closed-out positions are kept in the DB (deleting one would cascade
@@ -89,6 +92,7 @@ export const buildPortfolioData = cache(async function buildPortfolioData(
       priceSource: holdingPrices.get(position.symbol)!.source,
       priceCaption: describeHoldingPriceSource(holdingPrices.get(position.symbol)!, asOf),
       trailingYield: computeTrailingYield(summary, paid, asOf),
+      isPaper: position.isPaper === true,
     };
   });
 

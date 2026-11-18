@@ -36,7 +36,8 @@ export function rollForwardFilter(account: { balanceAsOf: Date | null; createdAt
  * time, and neither must a transaction the typed figure already reflects.
  * Transfers ARE included: they move a real account's balance, and the two
  * legs of a transfer between the user's own accounts cancel in the total.
- * Soft-deleted rows are not.
+ * Soft-deleted rows are not, and neither are paper-trader rows: practice
+ * money never moves a real balance (AGENTS.md §3pppp).
  *
  * The movement is split by currency: rows entered in the account's own
  * currency are summed natively (exact, and unaffected by exchange-rate
@@ -49,7 +50,7 @@ export async function loadAccountBalanceParts(tx: ScopedTransactionClient, userI
   const accounts = await tx.bankAccount.findMany({ where: { userId }, orderBy: { createdAt: "asc" } });
   const sums = await Promise.all(
     accounts.map(async (account) => {
-      const after = { userId, bankAccountId: account.id, occurredAt: rollForwardFilter(account), ...LIVE };
+      const after = { userId, bankAccountId: account.id, occurredAt: rollForwardFilter(account), isPaper: false, ...LIVE };
       const [same, other] = await Promise.all([
         tx.notableTransaction.aggregate({ where: { ...after, currency: account.currency }, _sum: { nativeAmount: true } }),
         tx.notableTransaction.aggregate({ where: { ...after, currency: { not: account.currency } }, _sum: { amount: true } }),

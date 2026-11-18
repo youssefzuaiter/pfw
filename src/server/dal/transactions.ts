@@ -31,6 +31,9 @@ import { fetchActiveRulesForEvaluation } from "./transaction-rules";
  * between the user's own accounts is not spending, and counting it as
  * such overstated one real month's income by ~100,000 TRY.
  *
+ * It also leaves out paper-trader rows (`isPaper`): practice money is not
+ * income or spending (AGENTS.md §3pppp).
+ *
  * Deliberately NOT applied to listings, search, or the ledger view: a
  * transfer really happened and the balance really moved, so hiding it
  * from the user's own history would be a different lie.
@@ -49,7 +52,7 @@ export const SPLIT_PARTS_SELECT = { select: { categoryId: true, amount: true, na
 export const SPLIT_DISPLAY_INCLUDE = {
   select: { categoryId: true, amount: true, nativeAmount: true, category: { select: { name: true } } },
 } as const;
-export const REAL_MONEY = { deletedAt: null, isTransfer: false } as const;
+export const REAL_MONEY = { deletedAt: null, isTransfer: false, isPaper: false } as const;
 
 export async function getTransactionById(userId: string, id: string) {
   return withUserScope(userId, (tx) =>

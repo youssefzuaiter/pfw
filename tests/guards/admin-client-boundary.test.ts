@@ -104,6 +104,9 @@ describe("guard: nothing under src/ imports the admin DB client, except the auth
       // (§3rrr): every user's rows, no session. Never reads a decrypted value
       // out; it rewrites each one through the extension.
       path.resolve(SRC_ROOT, "server", "crypto", "legacy-plaintext-sweep.ts"),
+      // Flags the paper-trader rows written before `isPaper` existed (§3pppp):
+      // every user's rows, no session. Touches no encrypted column.
+      path.resolve(SRC_ROOT, "server", "paper-trader", "flag-existing-paper-rows.ts"),
       // Account deletion (§3ttt): deletes the User row and its cascade,
       // which no scoped role may do (the append-only tables), and checks
       // that no OTHER user's rows reference this user's, which RLS would hide.
