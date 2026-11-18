@@ -10380,6 +10380,46 @@ the balance never fell. Both are fixed, in two separate ways.
   and Prisma selects every column, so until it runs anything that reads debts
   (the Debts page, net worth, Safe to Spend, the advisor) fails.
 
+## 3qqqq. The two dashboard forecasts say what they assume (ad hoc)
+
+A design review pointed at the dashboard showing a 60-day forecast ending at
+-$385 and, directly below it, a 30-day one whose median climbed to about $5,000.
+Neither is wrong, and they do start from the same cash (`bankAccounts` and
+`liquidity.liquidAgorot` are the same figure: non-card bank balances). They answer
+different questions, and the screen never said so:
+
+- the **60-day** forecast (§3b, §3llll) counts what is known to be coming: bills,
+  regular charges, an average of everyday spending. It assumes no new income
+  unless a deposit was detected as regular, so it is "what if no new money
+  arrives";
+- the **30-day** one (§3dd) learns from the last 90 days of actual NET cash flow,
+  income included, and knows nothing about a specific bill coming due. It is
+  "what if the last 90 days repeat". For an account whose last 90 days netted
+  money in, it drifts up whatever the bills are.
+
+- **Both are now labelled by their assumption**: the headings ("60-day forecast:
+  bills and average spending", "30-day forecast: if the last 90 days repeat") and
+  a sentence under each chart.
+- **When they diverge, the 30-day card says why, in money**
+  (`src/lib/forecast-comparison.ts`, `ForecastGapNote`): on the day the 30-day
+  forecast ends, what each shows, and the average daily net of the last 90 days
+  ("about +₪134.24 a day... this forecast carries that on; the one above assumes
+  no new income"). It appears only for a gap of at least ₪100 and at least a tenth
+  of the larger balance involved, and says "disagree on direction" when one ends
+  above today's cash and the other below. The 60-day days are passed to the card
+  as `knownDays` and matched by date; no match, no note.
+- **Deliberately not done**: changing either forecast's maths. Making the model
+  aware of bills would mean retraining it (it learns a pattern, it cannot be
+  handed a schedule), and dropping non-regular income from the 90-day history
+  would make it a worse forecast of an account that really has that income. The
+  60-day chart still has no Y-axis labels; that is its own item.
+- **Verified**: unit tests for the comparison rule (opposite directions, same
+  direction, agreement, the money floor, the share, a missing figure), component
+  tests for the card (labelled, explains a disagreement with the figures and the
+  income, silent on agreement or no matching day, the spending-history wording),
+  each rule broken on purpose and caught, and the real dashboard in a browser,
+  where the demo account produced exactly the case in the review.
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

@@ -5,6 +5,7 @@ import { Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAx
 import { Badge } from "../../../../components/badge/badge";
 import { Spinner } from "../../../../components/spinner/spinner";
 import { useReportingMoney } from "../../../../components/currency/reporting-currency-provider";
+import { averageDailyNet, compareForecasts } from "../../../../lib/forecast-comparison";
 import { agorot, type Agorot } from "../../../../lib/money";
 import type { ForecastDayResult } from "../../../../workers/forecaster-worker-handlers";
 import { runForecast } from "../../../../workers/forecaster-client";
@@ -63,6 +64,61 @@ function ChartTooltip({
 }
 
 /**
+ * Why this forecast can end somewhere very different from the 60-day one above
+ * it (AGENTS.md §3qqqq). The two start from the same cash; they differ in what
+ * they assume, so when they disagree materially this says so, in money,
+ * instead of leaving two contradicting numbers side by side.
+ */
+function ForecastGapNote({
+  chartData,
+  knownDays,
+  startingLiquidAgorot,
+  dailyNetAgorot,
+}: {
+  chartData: readonly ChartPoint[];
+  knownDays: readonly { date: string; balanceAgorot: number }[];
+  startingLiquidAgorot: Agorot;
+  dailyNetAgorot: readonly number[];
+}) {
+  const money = useReportingMoney();
+  const last = chartData[chartData.length - 1];
+  const known = last ? knownDays.find((d) => d.date === last.date) : undefined;
+  if (!last || !known) return null;
+
+  const knownMinor = money.toMinor(agorot(Math.round(known.balanceAgorot)));
+  const comparison = compareForecasts({ startingMinor: money.toMinor(startingLiquidAgorot), knownMinor, patternMinor: last.p50 });
+  if (!comparison) return null;
+
+  const averageNet = averageDailyNet(dailyNetAgorot);
+  return (
+    <div role="note" className="mt-3 rounded-md border border-border bg-bg p-3 text-xs text-muted">
+      <p className="font-medium text-fg">
+        {comparison.oppositeDirections ? "These two forecasts disagree on direction. " : "These two forecasts end far apart. "}
+        They answer different questions.
+      </p>
+      <p className="mt-1">
+        On {last.date}, the bills-and-spending forecast above shows{" "}
+        <span className="font-tabular-figures tracking-tight text-fg">{money.formatMinor(knownMinor)}</span> and this one&rsquo;s
+        median shows <span className="font-tabular-figures tracking-tight text-fg">{money.formatMinor(last.p50)}</span>.{" "}
+        {averageNet > 0 ? (
+          <>
+            Over the last 90 days more came in than went out, about{" "}
+            <span className="font-tabular-figures tracking-tight text-fg">{money.format(agorot(averageNet), { showPositiveSign: true })}</span>{" "}
+            a day on average. This forecast carries that on; the one above assumes no new income.
+          </>
+        ) : (
+          <>
+            Over the last 90 days your cash flow averaged{" "}
+            <span className="font-tabular-figures tracking-tight text-fg">{money.format(agorot(averageNet), { showPositiveSign: true })}</span>{" "}
+            a day. This forecast carries that on without knowing about specific bills coming due; the one above does.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
  * Client-side stochastic 30-day cash-flow projection (AGENTS.md §3dd) —
  * a small PyTorch-trained LSTM (scripts/train-forecaster.py), run
  * entirely in the browser via ONNX Runtime Web inside
@@ -81,9 +137,12 @@ function ChartTooltip({
 export function RunwayForecastChart({
   startingLiquidAgorot,
   dailyHistory,
+  knownDays = [],
 }: {
   startingLiquidAgorot: Agorot;
   dailyHistory: readonly { dateKey: string; netAgorot: number }[];
+  /** The 60-day (bills and average spending) forecast, by `YYYY-MM-DD` date, so this card can say how it differs. */
+  knownDays?: readonly { date: string; balanceAgorot: number }[];
 }) {
   const money = useReportingMoney();
   const [status, setStatus] = useState<Status>("loading");
@@ -126,7 +185,9 @@ export function RunwayForecastChart({
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-muted">30-Day Cash-Flow Forecast</h2>
+        <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-muted">
+          30-day forecast: if the last 90 days repeat
+        </h2>
         {status === "loading" && <Spinner size="sm" />}
         {status === "ready" && <Badge variant="neutral">experimental</Badge>}
       </div>
@@ -193,10 +254,17 @@ export function RunwayForecastChart({
             </ResponsiveContainer>
           </div>
           <p className="mt-2 text-xs text-muted">
-            Shaded band: 5th-95th percentile across 200 simulated paths. Line: median projection. A small model
-            trained on synthetic cash-flow patterns, not a guarantee — same spirit as the retirement Monte Carlo
-            projection, treat it as a range to plan around, not a prediction to bank on.
+            Shaded band: 5th-95th percentile across 200 simulated paths. Line: median projection. Learned from your
+            actual cash flow over the last 90 days, income included, so it carries on whatever pattern that showed. It
+            does not know about specific bills coming due. A small model trained on synthetic cash-flow patterns, not a
+            guarantee: treat it as a range to plan around, not a prediction to bank on.
           </p>
+          <ForecastGapNote
+            chartData={chartData}
+            knownDays={knownDays}
+            startingLiquidAgorot={startingLiquidAgorot}
+            dailyNetAgorot={dailyHistory.map((d) => d.netAgorot)}
+          />
         </>
       )}
     </div>

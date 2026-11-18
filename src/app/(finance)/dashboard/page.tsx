@@ -128,7 +128,7 @@ export default async function DashboardPage() {
 
       <section className="rounded-lg border border-border bg-surface p-4" aria-labelledby="cash-flow-heading">
         <h2 id="cash-flow-heading" className="mb-3 text-xs font-medium uppercase tracking-wide text-muted">
-          60-day cash-flow forecast
+          60-day forecast: bills and average spending
         </h2>
         <CashFlowChart
           days={data.cashFlowForecast.days.map((d) => ({ date: d.date, balance: d.projectedBalance }))}
@@ -140,6 +140,10 @@ export default async function DashboardPage() {
       <RunwayForecastChart
         startingLiquidAgorot={runwayForecast.startingLiquidAgorot}
         dailyHistory={runwayForecast.dailyHistory}
+        knownDays={data.cashFlowForecast.days.map((d) => ({
+          date: d.date.toISOString().slice(0, 10),
+          balanceAgorot: d.projectedBalance,
+        }))}
       />
 
       <div className="grid gap-4 md:grid-cols-2">
