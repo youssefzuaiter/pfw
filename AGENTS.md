@@ -10517,6 +10517,85 @@ The owner chose to base it on cash.
   and goals are not subtracted here by design, and the two figures stay different
   on purpose; no migration.
 
+## 3qqqq. Two forecasts, two assumptions, and a note when they disagree (ad hoc)
+
+Restored: this section was lost in a merge conflict between #52 and #53, and the
+code (`forecast-comparison.ts`, `runway-forecast-chart.tsx`) still points here.
+Found by a design review of the live site: the dashboard showed a 60-day
+forecast ending at -$385 directly above a 30-day one whose median climbed to
+about $5,000. Both start from the same cash, so neither is wrong.
+
+- **They answer different questions.** The 60-day forecast counts what is known
+  to be coming (bills, regular charges, an average of everyday spending) and
+  assumes no new income unless a deposit was detected as regular: "what if no
+  new money arrives". The 30-day forecast (§3dd) learns from the last 90 days of
+  actual net cash flow, income included, and knows nothing about a specific bill
+  coming due: "what if the last 90 days repeat". The screen now labels each by
+  its assumption (headings and a sentence under each chart).
+- **When they end materially apart, the 30-day card says why, in money**
+  (`compareForecasts`, `src/lib/forecast-comparison.ts`, pure): what each shows on
+  the same day and the average daily net of the last 90 days (`averageDailyNet`).
+  Only for a gap of at least `MINIMUM_NOTEWORTHY_GAP_MINOR` (₪100) and
+  `NOTEWORTHY_GAP_SHARE` (a tenth of the larger balance), so rounding noise never
+  produces a note; `oppositeDirections` changes the wording when one ends above
+  today's cash and the other below.
+- **Neither forecast's maths changed.** Teaching the 30-day model about bills
+  would mean retraining it on data it was not trained on (§3dd).
+- **Verified**: unit tests for the comparison rule and component tests for the
+  card (`runway-forecast-chart.test.tsx`); each rule broken on purpose and a test
+  failed; checked in a browser on the demo account, which produced the same
+  situation as the review. The Playwright suite runs in CI.
+- **No migration.**
+
+## 3ssss. Polling no longer keeps the database awake (ad hoc)
+
+Found while diagnosing a production outage: Neon's free compute allowance
+(100 compute-hours a month) ran out, the database was suspended, and a
+migration run failed with `P1001: Can't reach database server`. Compute is
+billed by time awake, and a Neon database only sleeps after about five minutes
+with no requests. Three client timers meant that any open tab sent a request
+every few seconds or minutes, all day, and every request reaches the database
+(the login check in the `jwt()` callback reads `tokenVersion`, and the durable
+rate limiter writes a bucket row, §3uu). One forgotten browser tab was enough.
+
+- **The timers**: the notification bell polled every 30 s on every page, the
+  "AI engine online" badge on the dashboard every 30 s, and the Agent Activity
+  feed every 4 s.
+- **`usePolling`** (`src/lib/hooks/use-polling.ts`): one hook for all three. A
+  hidden tab makes no requests and refreshes once when it becomes visible; a
+  visible tab with no mouse, key, touch or scroll input for `DEFAULT_IDLE_AFTER_MS`
+  (10 minutes) stops and refreshes once on the next input; `triggerKey` refreshes
+  straight away when it changes; `onPausedChange` lets a screen say it is paused.
+  The timer keeps ticking while paused (that is free) and each tick just skips.
+- **New intervals**: bell 5 min (it also refreshes the moment the route changes,
+  which is what heals the pre-login 401 the old 30 s timer was kept for, so the
+  slow timer is only a safety net), badge 2 min, Agent Activity 10 s. The Agent
+  Activity page shows "Updates are paused while this tab is hidden or unused"
+  instead of silently freezing.
+- **What was deliberately not done**: caching the `tokenVersion` read in memory.
+  It would cut queries while the database is awake but not wake-ups, and compute
+  is billed by time awake, so it would add a revocation delay for no saving. Making
+  the polled routes skip the database was also rejected: they need the login
+  check, and removing it would defeat revocation (§3hh).
+- **Other things that wake the database, not changed here**: the daily Vercel
+  cron (one wake a day), the post-deploy smoke check (one wake per deploy), and
+  the paper trader and long-term core router, which call this app from their own
+  schedules. The trader's hourly reconciliation re-sends the last 24 hours of
+  fills (§3uu) and the core router sends hourly reports (§3fff); each call wakes
+  the database for about five minutes, which by itself could be tens of
+  compute-hours a month. Those live in the separate `paper-trader` repository and
+  are the next thing to look at if the allowance is still used too fast.
+- **Verified**: 9 unit tests for the hook (a visible tab polls on every
+  interval, a hidden tab and an idle tab do not, a mount in a hidden tab waits,
+  input resumes it with one refresh, the trigger key, always the latest poll
+  function, pause and resume reported once each, cleanup) and 8 component tests
+  for the three consumers (bell: once, not every 30 s, refresh on route change,
+  silent when hidden; badge: every 2 minutes, stops when idle, silent when
+  hidden; feed: every 10 s, pauses and says so, resumes on input).
+  Mutation-checked, each caught: the hidden check dropped, the idle check
+  dropped, each of the three intervals put back, the trigger key ignored.
+- **No migration.**
+
 ## 4. Design system (Phase 0)
 
 - **Tokens** (`src/app/globals.css`; originally light/dark each authored

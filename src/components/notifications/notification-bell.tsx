@@ -2,7 +2,8 @@
 
 import { Bell } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { usePolling } from "../../lib/hooks/use-polling";
 import { Badge } from "../badge/badge";
 
 type NotificationItem = {
@@ -27,8 +28,12 @@ type NotificationItem = {
 // target genuinely changes state over time) — polling here isn't about
 // freshness, it's what makes the very next tick after login self-heal
 // this exact race, with no special-case "did auth just change" logic
-// needed at all.
-const POLL_INTERVAL_MS = 30_000;
+// needed at all. Since AGENTS.md §3ssss the route change is the trigger (the
+// bell refreshes the moment the path changes) and the timer is only a slow
+// safety net: every poll reaches the database, and polling every 30 seconds
+// kept the free Neon database awake around the clock. The timer also pauses in
+// a hidden or idle tab (`usePolling`).
+const POLL_INTERVAL_MS = 5 * 60_000;
 
 /**
  * Notification bell, mounted in the sidebar (`Sidebar`, Vercel Cron &
@@ -68,30 +73,29 @@ export function NotificationBell({ compact = false }: { compact?: boolean }) {
   // is exactly the signal this needs and `Sidebar` doesn't otherwise expose.
   const pathname = usePathname();
 
+  const mountedRef = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadNotifications() {
-      try {
-        const response = await fetch("/api/notifications", { cache: "no-store" });
-        if (cancelled) return;
-        if (!response.ok) return; // includes the expected pre-login 401 — the next poll (or navigation) retries
-        const body = await response.json();
-        if (!cancelled) setNotifications(body.notifications ?? []);
-      } catch {
-        // Best-effort — a failed poll just means the bell shows nothing
-        // until the next tick, same as this app's other silent-best-effort
-        // syncs (e.g. the local RAG vector store's own background sync).
-      }
-    }
-
-    void loadNotifications();
-    const interval = setInterval(loadNotifications, POLL_INTERVAL_MS);
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      mountedRef.current = false;
     };
-  }, [pathname]);
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const response = await fetch("/api/notifications", { cache: "no-store" });
+      if (!mountedRef.current) return;
+      if (!response.ok) return; // includes the expected pre-login 401 — the next navigation or tick retries
+      const body = await response.json();
+      if (mountedRef.current) setNotifications(body.notifications ?? []);
+    } catch {
+      // Best-effort — a failed poll just means the bell shows nothing
+      // until the next refresh, same as this app's other silent-best-effort
+      // syncs (e.g. the local RAG vector store's own background sync).
+    }
+  }, []);
+
+  usePolling(loadNotifications, { intervalMs: POLL_INTERVAL_MS, triggerKey: pathname });
 
   useEffect(() => {
     if (!open) return;
