@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePolling } from "../../../lib/hooks/use-polling";
 import { Badge, type BadgeVariant } from "../../../components/badge/badge";
 import { Spinner } from "../../../components/spinner/spinner";
 import { parseTelemetryEvents, type TelemetryAction, type TelemetryEvent } from "../../../lib/agent-telemetry";
@@ -16,7 +17,11 @@ import { parseTelemetryEvents, type TelemetryAction, type TelemetryEvent } from 
  */
 const AGENT_TELEMETRY_URL = "/api/agent/telemetry";
 
-const POLL_INTERVAL_MS = 4000;
+// Every poll reaches the database (login check, rate limiter), so this feed
+// refreshes every 10 seconds, only while the tab is visible and in use, and
+// stops after 10 idle minutes (AGENTS.md §3ssss). It was every 4 seconds, all
+// day, which alone kept the free database from ever sleeping.
+const POLL_INTERVAL_MS = 10_000;
 
 const ACTION_LABEL: Record<TelemetryAction, string> = {
   wake: "Wake",
@@ -75,6 +80,7 @@ export function AgentTelemetryTerminal() {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [isHalting, setIsHalting] = useState(false);
   const [haltResult, setHaltResult] = useState<string | null>(null);
+  const [paused, setPaused] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   /**
@@ -110,36 +116,33 @@ export function AgentTelemetryTerminal() {
     }
   }
 
-  useEffect(() => {
-    async function poll() {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+  const poll = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      try {
-        const response = await fetch(AGENT_TELEMETRY_URL, { signal: controller.signal, cache: "no-store" });
-        if (!response.ok) throw new Error(`Telemetry proxy returned ${response.status}`);
-        const body: unknown = await response.json();
-        const online = typeof body === "object" && body !== null && (body as { online?: unknown }).online === true;
-        if (!online) {
-          setConnection("unreachable");
-          return;
-        }
-        setEvents(parseTelemetryEvents((body as { events?: unknown }).events));
-        setConnection("connected");
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.error(err);
+    try {
+      const response = await fetch(AGENT_TELEMETRY_URL, { signal: controller.signal, cache: "no-store" });
+      if (!response.ok) throw new Error(`Telemetry proxy returned ${response.status}`);
+      const body: unknown = await response.json();
+      const online = typeof body === "object" && body !== null && (body as { online?: unknown }).online === true;
+      if (!online) {
         setConnection("unreachable");
+        return;
       }
+      setEvents(parseTelemetryEvents((body as { events?: unknown }).events));
+      setConnection("connected");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.error(err);
+      setConnection("unreachable");
     }
+  }, []);
 
-    void poll();
-    const interval = setInterval(poll, POLL_INTERVAL_MS);
-    return () => {
-      clearInterval(interval);
-      abortRef.current?.abort();
-    };
+  usePolling(poll, { intervalMs: POLL_INTERVAL_MS, onPausedChange: setPaused });
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
   }, []);
 
   const newestFirst = [...events].reverse();
@@ -164,6 +167,12 @@ export function AgentTelemetryTerminal() {
       </div>
 
       {haltResult && <p className="text-xs text-muted">{haltResult}</p>}
+
+      {paused && (
+        <p role="status" className="text-xs text-muted">
+          Updates are paused while this tab is hidden or unused. Move the mouse or press a key to refresh.
+        </p>
+      )}
 
       {connection === "unreachable" && (
         <p className="rounded-md border border-border bg-bg p-3 text-sm text-muted">

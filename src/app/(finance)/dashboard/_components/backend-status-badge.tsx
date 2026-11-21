@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePolling } from "../../../../lib/hooks/use-polling";
 
 /**
  * Header status for the Tier-0 paper-trading agent, polled from this
- * app's own `GET /api/agent/health` every 30s (that route probes the
- * agent server-side — the browser never touches the agent's origin).
+ * app's own `GET /api/agent/health` every 2 minutes while the tab is visible
+ * and in use (that route probes the agent server-side — the browser never
+ * touches the agent's origin). Polling pauses in a hidden or idle tab, so a
+ * forgotten tab no longer keeps the database awake (AGENTS.md §3ssss).
  *
  * Four states, not two (ad hoc, trader integration hardening): besides
  * up/down, the route now reports whether the account receipts book
@@ -16,7 +19,7 @@ import { useEffect, useState } from "react";
  * missing from the ledger — so they get the amber warning treatment
  * rather than being folded into a reassuring green dot.
  */
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 2 * 60_000;
 
 type BackendStatus = "checking" | "online" | "degraded" | "offline";
 
@@ -73,33 +76,32 @@ export function BackendStatusBadge() {
     label: "AI Engine — checking…",
   });
 
+  const mountedRef = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-
-    async function poll() {
-      try {
-        const response = await fetch("/api/agent/health", { cache: "no-store" });
-        if (cancelled) return;
-        if (!response.ok) {
-          setView({ status: "offline", label: "AI Engine Offline" });
-          return;
-        }
-        const body: unknown = await response.json();
-        if (cancelled) return;
-        const health = parseHealth(body);
-        setView(health ? describe(health) : { status: "offline", label: "AI Engine Offline" });
-      } catch {
-        if (!cancelled) setView({ status: "offline", label: "AI Engine Offline" });
-      }
-    }
-
-    poll();
-    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      mountedRef.current = false;
     };
   }, []);
+
+  const poll = useCallback(async () => {
+    try {
+      const response = await fetch("/api/agent/health", { cache: "no-store" });
+      if (!mountedRef.current) return;
+      if (!response.ok) {
+        setView({ status: "offline", label: "AI Engine Offline" });
+        return;
+      }
+      const body: unknown = await response.json();
+      if (!mountedRef.current) return;
+      const health = parseHealth(body);
+      setView(health ? describe(health) : { status: "offline", label: "AI Engine Offline" });
+    } catch {
+      if (mountedRef.current) setView({ status: "offline", label: "AI Engine Offline" });
+    }
+  }, []);
+
+  usePolling(poll, { intervalMs: POLL_INTERVAL_MS });
 
   return (
     <div className="flex items-center gap-2 text-xs font-medium text-muted" role="status">
